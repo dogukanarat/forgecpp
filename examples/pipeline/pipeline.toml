@@ -1,0 +1,17 @@
+# pipeline example configuration
+
+[pipeline]
+producers = 2           # also: --producers N
+rate = 200              # jobs per second per producer
+job_size = 20000        # work per job (rounds)
+
+[threads]
+workers = 0             # pool size, 0 = number of CPUs
+
+[http]
+enabled = true
+host = "127.0.0.1"
+port = 8080
+
+[web]
+refresh_ms = 250

@@ -1,0 +1,24 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_dependency(Threads)
+find_dependency(spdlog          CONFIG)
+find_dependency(CLI11           CONFIG)
+find_dependency(concurrentqueue CONFIG)
+find_dependency(nlohmann_json   CONFIG)
+find_dependency(tomlplusplus    CONFIG)
+find_dependency(httplib         CONFIG)
+
+# Private dependency, but required by the export set for static builds.
+find_dependency(replxx          CONFIG)
+# Needed for forgecpp::testing.
+if(@FORGECPP_HAS_TESTING@)
+    find_dependency(doctest     CONFIG)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/forgecppTargets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/ForgeHelpers.cmake")
+
+check_required_components(forgecpp)

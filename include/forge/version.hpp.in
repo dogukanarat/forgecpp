@@ -1,0 +1,10 @@
+#pragma once
+
+#define FORGECPP_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define FORGECPP_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define FORGECPP_VERSION_PATCH @PROJECT_VERSION_PATCH@
+#define FORGECPP_VERSION_STRING "@PROJECT_VERSION@"
+
+namespace forge {
+inline constexpr const char* version_string = FORGECPP_VERSION_STRING;
+}  // namespace forge

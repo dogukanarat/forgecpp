@@ -1,0 +1,15 @@
+# thermostat example configuration
+
+[thermostat]
+setpoint = 21.0
+settings_file = "thermostat-settings.json"   # written when settings are saved from the web
+
+[http]
+enabled = true
+host = "127.0.0.1"
+port = 8080
+
+[web]
+title = "Thermostat"
+# root = "web"            # serve web/ from disk while editing the pages
+refresh_ms = 250

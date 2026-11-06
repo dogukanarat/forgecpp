@@ -1,0 +1,61 @@
+/* Thermostat pages: builds on /forge/forge.css (tokens, cards, buttons). */
+.nav a.current { background: var(--forge-surface-2); font-weight: 600; }
+
+.hero { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; align-items: stretch; }
+@media (max-width: 760px) { .hero { grid-template-columns: 1fr; } }
+
+.reading { display: flex; flex-direction: column; justify-content: space-between; min-height: 220px; }
+.reading .room { color: var(--forge-muted); font-weight: 600; }
+.reading .temp { font-size: 72px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.reading .temp small { font-size: 28px; color: var(--forge-muted); font-weight: 600; margin-left: 4px; }
+.reading .meta { display: flex; gap: 16px; flex-wrap: wrap; color: var(--forge-muted); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  background: var(--forge-surface-2); color: var(--forge-muted);
+}
+.chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.chip[data-status="heating"] { color: #d9480f; background: color-mix(in srgb, #d9480f 12%, var(--forge-surface)); }
+.chip[data-status="cooling"] { color: #1c7ed6; background: color-mix(in srgb, #1c7ed6 12%, var(--forge-surface)); }
+.chip[data-status="sensor fault"] { color: var(--forge-danger); background: color-mix(in srgb, var(--forge-danger) 12%, var(--forge-surface)); }
+
+.setpoint { display: flex; flex-direction: column; gap: 18px; }
+.stepper { display: flex; align-items: center; justify-content: center; gap: 18px; }
+.stepper button {
+  width: 52px; height: 52px; border-radius: 50%; font-size: 26px; line-height: 1;
+  border: 1px solid var(--forge-border); background: var(--forge-surface-2); color: var(--forge-text); cursor: pointer;
+}
+.stepper button:hover { border-color: var(--forge-accent); color: var(--forge-accent); }
+.stepper output { font-size: 40px; font-weight: 700; min-width: 4.2ch; text-align: center; font-variant-numeric: tabular-nums; }
+
+.segmented { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--forge-border); border-radius: 8px; overflow: hidden; }
+.segmented label { position: relative; }
+.segmented input { position: absolute; opacity: 0; }
+.segmented span { display: block; text-align: center; padding: 8px 4px; cursor: pointer; font-weight: 600; color: var(--forge-muted); }
+.segmented label + label span { border-left: 1px solid var(--forge-border); }
+.segmented input:checked + span { background: var(--forge-accent); color: #fff; }
+.segmented input:focus-visible + span { outline: 2px solid var(--forge-accent); outline-offset: -2px; }
+
+.chart-card { margin-top: 16px; }
+.chart { width: 100%; height: 240px; display: block; }
+.chart .grid line { stroke: var(--forge-border); }
+.chart .grid text { fill: var(--forge-muted); font-size: 11px; }
+.chart .room { stroke: var(--forge-accent); stroke-width: 2.2; fill: none; }
+.chart .setpoint { stroke: #d9480f; stroke-width: 1.6; stroke-dasharray: 5 4; fill: none; }
+.chart .outside { stroke: var(--forge-muted); stroke-width: 1.4; fill: none; }
+.chart .heat { fill: #d9480f; opacity: 0.12; }
+.legend { display: flex; gap: 16px; font-size: 13px; color: var(--forge-muted); }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+
+/* settings form */
+.form { max-width: 560px; }
+.field { display: grid; grid-template-columns: 180px 1fr; gap: 6px 16px; align-items: center; padding: 10px 0; border-top: 1px solid var(--forge-border); }
+.field:first-of-type { border-top: 0; }
+.field label { font-weight: 600; }
+.field .hint { grid-column: 2; font-size: 12px; color: var(--forge-muted); }
+.field .error { grid-column: 2; font-size: 12px; color: var(--forge-danger); font-weight: 600; }
+.field input { width: 100%; max-width: 240px; }
+.field input[aria-invalid="true"] { border-color: var(--forge-danger); }
+.form-actions { display: flex; gap: 8px; justify-content: flex-end; padding-top: 14px; }
+@media (max-width: 560px) { .field { grid-template-columns: 1fr; } .field .hint, .field .error { grid-column: 1; } }

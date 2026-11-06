@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Thermostat</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/forge/forge.css">
+  <link rel="stylesheet" href="/assets/site.css">
+  <script src="/forge/forge.js"></script>
+  <script src="/assets/overview.js" defer></script>
+</head>
+<body class="forge">
+  <header class="forge-header">
+    <div class="forge-brand">
+      <span class="forge-dot" data-forge-connection></span>
+      <h1>Thermostat</h1>
+    </div>
+    <nav class="nav">
+      <a href="/" class="current">Overview</a>
+      <a href="/settings.html">Settings</a>
+      <a href="/forge/">Control panel</a>
+    </nav>
+    <div class="forge-alarms-host" data-forge-alarms></div>
+  </header>
+
+  <main class="forge-main">
+    <div class="hero">
+      <section class="forge-card reading">
+        <div class="room" data-forge-value="room_name"></div>
+        <div class="temp"><span data-forge-value="temperature" data-forge-precision="1">–</span><small>°C</small></div>
+        <div class="meta">
+          <span class="chip" id="status" data-forge-value="status">–</span>
+          <span>Outside <b data-forge-value="outside" data-forge-precision="1"></b> °C</span>
+        </div>
+      </section>
+
+      <section class="forge-card setpoint">
+        <h2>Setpoint</h2>
+        <div class="stepper">
+          <button type="button" id="down" aria-label="Lower setpoint">−</button>
+          <output id="setpoint" aria-live="polite">–</output>
+          <button type="button" id="up" aria-label="Raise setpoint">+</button>
+        </div>
+        <div class="segmented" role="radiogroup" aria-label="Mode">
+          <label><input type="radio" name="mode" value="off" data-forge-bind="mode"><span>Off</span></label>
+          <label><input type="radio" name="mode" value="heat" data-forge-bind="mode"><span>Heat</span></label>
+          <label><input type="radio" name="mode" value="cool" data-forge-bind="mode"><span>Cool</span></label>
+          <label><input type="radio" name="mode" value="auto" data-forge-bind="mode"><span>Auto</span></label>
+        </div>
+      </section>
+    </div>
+
+    <section class="forge-card chart-card">
+      <header>
+        <h2>Last 10 minutes</h2>
+        <div class="legend">
+          <span><i style="background: var(--forge-accent)"></i>Room</span>
+          <span><i style="background: #d9480f"></i>Setpoint</span>
+          <span><i style="background: var(--forge-muted)"></i>Outside</span>
+        </div>
+      </header>
+      <svg class="chart" id="chart" role="img" aria-label="Temperature history"></svg>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sensor – live view</title>
+  <!-- forgecpp UI kit and client: served by every forgecpp application -->
+  <link rel="stylesheet" href="/forge/forge.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="/forge/forge.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body class="forge">
+  <header class="forge-header">
+    <div class="forge-brand">
+      <span class="forge-dot" data-forge-connection></span>
+      <h1>Sensor – live view</h1>
+    </div>
+    <nav><a href="/forge/">Control panel</a></nav>
+    <div class="forge-alarms-host" data-forge-alarms></div>
+  </header>
+
+  <main class="forge-main">
+    <div class="forge-grid">
+      <section class="forge-card">
+        <h2>Window mean</h2>
+        <div class="big"><span data-forge-value="mean" data-forge-precision="1">–</span></div>
+        <canvas id="chart" height="120" aria-label="mean over time"></canvas>
+        <p class="forge-muted">
+          min <b data-forge-value="min" data-forge-precision="1"></b> ·
+          max <b data-forge-value="max" data-forge-precision="1"></b> ·
+          samples <b data-forge-value="samples"></b>
+        </p>
+      </section>
+
+      <section class="forge-card">
+        <h2>Controls</h2>
+        <div class="forge-row">
+          <span class="forge-label">Rate (<span data-forge-value="rate_hz"></span> Hz)</span>
+          <input type="range" min="1" max="500" step="1" data-forge-bind="rate_hz">
+        </div>
+        <div class="forge-row">
+          <span class="forge-label">Simulate spikes</span>
+          <label class="forge-switch"><input type="checkbox" data-forge-bind="spikes"><span></span></label>
+        </div>
+        <div class="forge-row">
+          <span class="forge-label">Alarm threshold</span>
+          <input type="number" min="0" max="150" step="0.5" data-forge-bind="threshold">
+        </div>
+        <div class="forge-row">
+          <span class="forge-label">Exceedances: <b data-forge-value="exceedances"></b></span>
+          <span>
+            <button class="forge-btn" data-forge-press="test_alarm">Test alarm</button>
+            <button class="forge-btn danger" data-forge-press="reset"
+                    data-forge-confirm="Reset the counters?" data-forge-done="Counters reset">Reset</button>
+          </span>
+        </div>
+        <p class="spike-note" data-forge-show="spikes">⚡ Spike simulation is active</p>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

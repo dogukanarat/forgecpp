@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+# forgecpp-new: create a ready-to-build forgecpp application.
+#
+#   forgecpp-new mydaemon            # creates ./mydaemon
+#   forgecpp-new mydaemon -d ~/src   # creates ~/src/mydaemon
+
+set -euo pipefail
+
+usage() {
+    cat <<EOF
+Usage: forgecpp-new <name> [-d DIR] [--description TEXT] [--force]
+
+Creates a new forgecpp application in DIR/<name> with:
+  CMakeLists.txt, src/main.cpp, web/index.html, config/<name>.toml,
+  systemd/<name>.service.in, tests/test_<name>.cpp, README.md
+
+Options:
+  -d, --dir DIR          Parent directory (default: current directory)
+  --description TEXT     One line description
+  -f, --force            Write into an existing, non-empty directory
+  -h, --help             Show this help
+EOF
+}
+
+NAME=""
+PARENT="."
+DESCRIPTION=""
+FORCE=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -d|--dir)        PARENT="${2:?missing value for $1}"; shift 2 ;;
+        --description)   DESCRIPTION="${2:?missing value for $1}"; shift 2 ;;
+        -f|--force)      FORCE=1; shift ;;
+        -h|--help)       usage; exit 0 ;;
+        -*)              echo "unknown option: $1" >&2; usage >&2; exit 1 ;;
+        *)               [[ -z "${NAME}" ]] || { echo "only one name allowed" >&2; exit 1; }
+                         NAME="$1"; shift ;;
+    esac
+done
+
+[[ -n "${NAME}" ]] || { usage >&2; exit 1; }
+if [[ ! "${NAME}" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
+    echo "invalid name '${NAME}': use letters, digits, '-' and '_' (start with a letter)" >&2
+    exit 1
+fi
+[[ -n "${DESCRIPTION}" ]] || DESCRIPTION="${NAME} service built with forgecpp"
+
+DIR="${PARENT%/}/${NAME}"
+if [[ -e "${DIR}" && ${FORCE} -eq 0 && -n "$(ls -A "${DIR}" 2>/dev/null)" ]]; then
+    echo "${DIR} already exists and is not empty (use --force)" >&2
+    exit 1
+fi
+
+# my-daemon -> MyDaemon, my_daemon -> MyDaemon
+CLASS="$(echo "${NAME}" | sed -E 's/(^|[-_])([a-z])/\U\2/g; s/[-_]//g')"
+IDENT="$(echo "${NAME}" | tr '-' '_')"
+
+mkdir -p "${DIR}/src" "${DIR}/web" "${DIR}/config" "${DIR}/systemd" "${DIR}/tests"
+
+# ---------------------------------------------------------------------------
+cat > "${DIR}/CMakeLists.txt" <<EOF
+cmake_minimum_required(VERSION 3.16)
+project(${IDENT} VERSION 0.1.0 DESCRIPTION "${DESCRIPTION}" LANGUAGES CXX)
+
+include(GNUInstallDirs)
+find_package(forgecpp 0.2 REQUIRED)
+
+configure_file(systemd/${NAME}.service.in "\${CMAKE_CURRENT_BINARY_DIR}/${NAME}.service" @ONLY)
+
+forge_add_app(${NAME}
+    SOURCES src/main.cpp
+    CONFIG  config/${NAME}.toml
+    WEB     web
+    SERVICE "\${CMAKE_CURRENT_BINARY_DIR}/${NAME}.service")
+target_compile_definitions(${NAME} PRIVATE APP_VERSION="\${PROJECT_VERSION}")
+
+include(CTest)
+if(BUILD_TESTING)
+    forge_add_test(${IDENT}_tests SOURCES tests/test_${IDENT}.cpp)
+    target_compile_definitions(${IDENT}_tests PRIVATE
+        APP_CONFIG_FILE="\${CMAKE_CURRENT_SOURCE_DIR}/config/${NAME}.toml")
+endif()
+EOF
+
+# ---------------------------------------------------------------------------
+cat > "${DIR}/src/main.cpp" <<EOF
+// ${NAME}: ${DESCRIPTION}
+//
+// Run it:
+//   ./build/${NAME} -c config/${NAME}.toml        # daemon + web UI (Ctrl-C to stop)
+//   open http://localhost:8080/                   # your page (web/index.html)
+//   open http://localhost:8080/forge/             # generated control panel
+//   ./build/${NAME} -c config/${NAME}.toml -i     # plus the backup console
+//   ./build/${NAME} --help
+
+#include <forge/forge.hpp>
+
+using namespace std::chrono_literals;
+using forge::json;
+
+#ifndef APP_VERSION
+#define APP_VERSION "0.0.0"
+#endif
+
+class ${CLASS} : public forge::Application {
+public:
+    ${CLASS}() : Application({"${NAME}", APP_VERSION, "${DESCRIPTION}"}) {}
+
+protected:
+    // Extra command line options.
+    void setup_cli(CLI::App& cli) override {
+        cli.add_flag("--dry-run", dry_run_, "Do everything except side effects");
+    }
+
+    // Web controls: shown at /forge/, usable from web/index.html through
+    // data-forge-* attributes, and from the console (controls / set / press).
+    void setup_web(forge::web::Dashboard& ui) override {
+        ui.link("Home", "/");
+        auto& g = ui.group("${CLASS}");
+        g.value("ticks", "Ticks", ticks_);
+        g.toggle("paused", "Paused", paused_);
+        g.number("interval_ms", "Interval", [this] { return double(interval_.count()); },
+                 [this](double ms) { set_interval(std::chrono::milliseconds(static_cast<long>(ms))); })
+            .range(100, 60000, 100)
+            .unit("ms");
+        g.text("message", "Message", message_);
+        g.button("reset", "Reset", [this] { ticks_ = 0; }).confirm("Reset the tick counter?");
+    }
+
+    // Your own REST API (served by the same HTTP server).
+    void setup_http(forge::http::Server& server) override {
+        server.get_json("/api/status", [this](const forge::http::Request&) {
+            // HTTP handlers run on server threads: invoke() runs this on the main loop.
+            return invoke([this] { return status(); });
+        });
+    }
+
+    // Interactive console commands (-i); the console is the backup to the web UI.
+    void setup_console(forge::Console& console) override {
+        console.add("ticks", "ticks  show how many times the timer fired",
+                    [this, &console](const forge::Console::Args&) { console.print("{}", ticks_); });
+    }
+
+    void on_start() override {
+        apply(config());
+        set_interval(interval_);
+    }
+
+    void on_reload(const forge::Config& cfg) override {
+        apply(cfg);
+        set_interval(interval_);
+    }
+
+    void on_stop() override { logger()->info("bye after {} ticks", ticks_); }
+
+private:
+    void apply(const forge::Config& cfg) {
+        interval_ = std::chrono::milliseconds(cfg.get_or<int>("${IDENT}.interval_ms", 1000));
+        message_ = cfg.get_or<std::string>("${IDENT}.message", "tick");
+    }
+
+    void set_interval(std::chrono::milliseconds interval) {
+        interval_ = interval;
+        cancel(timer_);
+        timer_ = every(interval_, [this] { tick(); });
+    }
+
+    void tick() {
+        if (paused_) return;
+        ++ticks_;
+        logger()->info("{} #{}{}", message_, ticks_, dry_run_ ? " (dry run)" : "");
+        // Offload heavy work to the thread pool, report back on the main loop:
+        // pool().detach_task([this] { auto r = work(); post([this, r] { use(r); }); });
+    }
+
+    json status() const { return {{"ticks", ticks_}, {"message", message_}}; }
+
+    bool dry_run_ = false;
+    bool paused_ = false;
+    std::chrono::milliseconds interval_{1000};
+    std::string message_;
+    std::uint64_t ticks_ = 0;
+    forge::Scheduler::Id timer_ = 0;
+};
+
+FORGE_MAIN(${CLASS})
+EOF
+
+# ---------------------------------------------------------------------------
+cat > "${DIR}/config/${NAME}.toml" <<EOF
+# ${NAME} configuration
+# Override any key from the command line: ${NAME} -D ${IDENT}.interval_ms=500
+# Reload at runtime with: systemctl reload ${NAME}   (or kill -HUP <pid>)
+
+[${IDENT}]
+interval_ms = 1000
+message = "tick"
+
+[log]
+level = "info"            # trace|debug|info|warn|error|critical|off
+# file = "/var/log/${NAME}/${NAME}.log"
+# max_size_mb = 10
+# max_files = 3
+# syslog = true
+
+[threads]
+workers = 0               # 0 = number of CPUs
+
+[http]
+enabled = true            # web UI at http://<host>:8080/ and /forge/
+host = "0.0.0.0"
+port = 8080
+
+# [http.auth]             # strongly recommended outside the lab
+# user = "admin"
+# password = "change-me"
+# token = "secret-token"  # for scripts: Authorization: Bearer secret-token
+
+[web]
+enabled = true
+# root = "web"            # serve web/ from disk while editing (no rebuild)
+logs = true               # live log on the control panel
+
+[console]
+# prompt = "${NAME}> "
+EOF
+
+# ---------------------------------------------------------------------------
+cat > "${DIR}/systemd/${NAME}.service.in" <<EOF
+[Unit]
+Description=${DESCRIPTION}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/${NAME} --config @CMAKE_INSTALL_FULL_SYSCONFDIR@/${NAME}/${NAME}.toml
+ExecReload=/bin/kill -HUP \$MAINPID
+Restart=on-failure
+RestartSec=2
+WatchdogSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# ---------------------------------------------------------------------------
+cat > "${DIR}/tests/test_${IDENT}.cpp" <<EOF
+#include <forge/forge.hpp>
+#include <forge/testing.hpp>
+
+TEST_CASE("shipped configuration is valid") {
+    const auto cfg = forge::Config::load_file(APP_CONFIG_FILE);
+    CHECK(cfg.get_or<int>("${IDENT}.interval_ms", 0) > 0);
+    CHECK(forge::log::parse_level(cfg.get_or<std::string>("log.level", "info")) <= spdlog::level::off);
+}
+EOF
+
+# ---------------------------------------------------------------------------
+cat > "${DIR}/README.md" <<EOF
+# ${NAME}
+
+${DESCRIPTION}
+
+Built on [forgecpp](https://github.com/dogukanarat/forgecpp).
+
+\`\`\`sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build
+./build/${NAME} -c config/${NAME}.toml      # http://localhost:8080/ and /forge/
+./build/${NAME} -c config/${NAME}.toml -i   # with the backup console
+sudo cmake --install build      # binary (with web/ embedded), /etc config and systemd unit
+\`\`\`
+EOF
+
+# ---------------------------------------------------------------------------
+cat > "${DIR}/web/index.html" <<EOF
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${NAME}</title>
+  <link rel="stylesheet" href="/forge/forge.css">
+  <script src="/forge/forge.js"></script>
+</head>
+<body class="forge">
+  <header class="forge-header">
+    <div class="forge-brand">
+      <span class="forge-dot" data-forge-connection></span>
+      <h1>${NAME}</h1>
+    </div>
+    <nav><a href="/forge/">Control panel</a></nav>
+    <div class="forge-alarms-host" data-forge-alarms></div>
+  </header>
+  <main class="forge-main">
+    <div class="forge-grid">
+      <section class="forge-card">
+        <h2>Status</h2>
+        <div class="forge-row"><span>Ticks</span><b class="forge-value" data-forge-value="ticks">–</b></div>
+        <div class="forge-row"><span>Message</span><span data-forge-value="message"></span></div>
+        <p class="forge-muted" data-forge-show="paused">Paused</p>
+      </section>
+      <section class="forge-card">
+        <h2>Controls</h2>
+        <div class="forge-row">
+          <span>Paused</span>
+          <label class="forge-switch"><input type="checkbox" data-forge-bind="paused"><span></span></label>
+        </div>
+        <div class="forge-row">
+          <span>Interval (ms)</span>
+          <input type="number" min="100" max="60000" step="100" data-forge-bind="interval_ms">
+        </div>
+        <div class="forge-row">
+          <span>Message</span>
+          <input type="text" data-forge-bind="message">
+        </div>
+        <div class="forge-actions">
+          <button class="forge-btn danger" data-forge-press="reset" data-forge-confirm="Reset the tick counter?">Reset</button>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
+EOF
+
+cat > "${DIR}/.gitignore" <<EOF
+/build*/
+EOF
+
+echo "Created ${DIR}"
+echo
+echo "  cd ${DIR}"
+echo "  cmake -B build && cmake --build build -j"
+echo "  ./build/${NAME} -c config/${NAME}.toml -i"

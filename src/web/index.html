@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard</title>
+  <link rel="stylesheet" href="forge.css">
+  <script src="forge.js"></script>
+  <script src="dashboard.js" defer></script>
+</head>
+<body class="forge">
+  <header class="forge-header">
+    <div class="forge-brand">
+      <span class="forge-dot" data-forge-connection></span>
+      <h1 id="forge-title">Dashboard</h1>
+    </div>
+    <nav id="forge-links"></nav>
+    <div class="forge-meta">
+      <span id="forge-host"></span>
+      <span id="forge-version"></span>
+      <span id="forge-uptime" title="uptime"></span>
+    </div>
+    <div class="forge-alarms-host" data-forge-alarms></div>
+  </header>
+
+  <main class="forge-main">
+    <div id="forge-groups" class="forge-grid">
+      <div class="forge-empty forge-wide">Loading…</div>
+    </div>
+
+    <section id="forge-logs" class="forge-card forge-logs forge-wide" hidden style="margin-top:16px">
+      <header>
+        <h2>Logs</h2>
+        <span>
+          <label class="forge-muted"><input type="checkbox" id="forge-follow" checked> follow</label>
+          <button class="forge-btn" id="forge-clear" type="button">Clear</button>
+        </span>
+      </header>
+      <pre id="forge-log-lines" aria-live="polite"></pre>
+    </section>
+  </main>
+</body>
+</html>
