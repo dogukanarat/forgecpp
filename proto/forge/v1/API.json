@@ -1,0 +1,1485 @@
+{
+ "enums": {
+  "forge.v1.AppStatus.State": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "STATE_UNSPECIFIED",
+    "1": "STATE_RUNNING",
+    "2": "STATE_STARTING",
+    "3": "STATE_STOPPED",
+    "4": "STATE_CRASHED",
+    "5": "STATE_FAILED",
+    "6": "STATE_UNRESPONSIVE",
+    "7": "STATE_UNKNOWN"
+   }
+  },
+  "forge.v1.ComponentHealth.State": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "STATE_UNSPECIFIED",
+    "1": "STATE_OK",
+    "2": "STATE_DEGRADED",
+    "3": "STATE_FAILED"
+   }
+  },
+  "forge.v1.Metric.Type": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "TYPE_UNSPECIFIED",
+    "1": "TYPE_COUNTER",
+    "2": "TYPE_GAUGE",
+    "3": "TYPE_HISTOGRAM"
+   }
+  },
+  "forge.v1.RestartPolicy.Mode": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "MODE_UNSPECIFIED",
+    "1": "MODE_NEVER",
+    "2": "MODE_ON_FAILURE",
+    "3": "MODE_ALWAYS"
+   }
+  },
+  "forge.v1.Severity": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "SEVERITY_UNSPECIFIED",
+    "1": "SEVERITY_INFO",
+    "2": "SEVERITY_WARNING",
+    "3": "SEVERITY_ERROR",
+    "4": "SEVERITY_CRITICAL"
+   }
+  },
+  "forge.v1.Unregister.Reason": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "REASON_UNSPECIFIED",
+    "1": "REASON_SIGNAL",
+    "2": "REASON_EXIT"
+   }
+  }
+ },
+ "messages": {
+  "forge.v1.Alarm": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "id",
+     "type": "string"
+    },
+    "10": {
+     "label": "optional",
+     "name": "cleared_unix_ms",
+     "type": "int64"
+    },
+    "11": {
+     "label": "optional",
+     "name": "acknowledged_unix_ms",
+     "type": "int64"
+    },
+    "2": {
+     "label": "optional",
+     "name": "severity",
+     "type": "forge.v1.Severity"
+    },
+    "3": {
+     "label": "optional",
+     "name": "message",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "active",
+     "type": "bool"
+    },
+    "5": {
+     "label": "optional",
+     "name": "acknowledged",
+     "type": "bool"
+    },
+    "6": {
+     "label": "optional",
+     "name": "acknowledged_by",
+     "type": "string"
+    },
+    "7": {
+     "label": "optional",
+     "name": "count",
+     "type": "uint64"
+    },
+    "8": {
+     "label": "optional",
+     "name": "raised_unix_ms",
+     "type": "int64"
+    },
+    "9": {
+     "label": "optional",
+     "name": "last_unix_ms",
+     "type": "int64"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.AlarmList": {
+   "fields": {
+    "1": {
+     "label": "repeated",
+     "name": "alarms",
+     "type": "forge.v1.Alarm"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.AppList": {
+   "fields": {
+    "1": {
+     "label": "repeated",
+     "name": "apps",
+     "type": "forge.v1.AppStatus"
+    },
+    "2": {
+     "label": "optional",
+     "name": "hub",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "boot_id",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.AppRegistration": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "name",
+     "type": "string"
+    },
+    "10": {
+     "label": "optional",
+     "name": "unit",
+     "type": "string"
+    },
+    "11": {
+     "label": "optional",
+     "name": "forgecpp",
+     "type": "string"
+    },
+    "12": {
+     "label": "optional",
+     "name": "critical",
+     "type": "bool"
+    },
+    "2": {
+     "label": "optional",
+     "name": "version",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "description",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "pid",
+     "type": "uint32"
+    },
+    "5": {
+     "label": "optional",
+     "name": "http_port",
+     "type": "uint32"
+    },
+    "6": {
+     "label": "repeated",
+     "name": "endpoints",
+     "type": "forge.v1.AppRegistration.EndpointsEntry"
+    },
+    "8": {
+     "label": "optional",
+     "name": "group",
+     "type": "string"
+    },
+    "9": {
+     "label": "optional",
+     "name": "title",
+     "type": "string"
+    }
+   },
+   "reserved": [
+    [
+     7,
+     7
+    ]
+   ],
+   "reserved_names": []
+  },
+  "forge.v1.AppStatus": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "app",
+     "type": "forge.v1.AppRegistration"
+    },
+    "10": {
+     "label": "optional",
+     "name": "restarts",
+     "type": "uint32"
+    },
+    "12": {
+     "label": "optional",
+     "name": "supervision",
+     "type": "string"
+    },
+    "13": {
+     "label": "optional",
+     "name": "last_seen_unix_ms",
+     "type": "int64"
+    },
+    "14": {
+     "label": "optional",
+     "name": "url",
+     "type": "string"
+    },
+    "15": {
+     "label": "optional",
+     "name": "static_entry",
+     "type": "bool"
+    },
+    "16": {
+     "label": "optional",
+     "name": "policy",
+     "type": "forge.v1.RestartPolicy"
+    },
+    "17": {
+     "label": "optional",
+     "name": "unit_state",
+     "type": "string"
+    },
+    "18": {
+     "label": "optional",
+     "name": "unit_result",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "state",
+     "type": "forge.v1.AppStatus.State"
+    },
+    "3": {
+     "label": "optional",
+     "name": "message",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "health",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "name": "alarms_active",
+     "type": "uint32"
+    },
+    "6": {
+     "label": "optional",
+     "name": "alarms_highest",
+     "type": "string"
+    },
+    "7": {
+     "label": "optional",
+     "name": "uptime_s",
+     "type": "uint64"
+    },
+    "8": {
+     "label": "optional",
+     "name": "cpu_percent",
+     "type": "double"
+    },
+    "9": {
+     "label": "optional",
+     "name": "rss_bytes",
+     "type": "uint64"
+    }
+   },
+   "reserved": [
+    [
+     11,
+     11
+    ]
+   ],
+   "reserved_names": []
+  },
+  "forge.v1.AuditList": {
+   "fields": {
+    "1": {
+     "label": "repeated",
+     "name": "records",
+     "type": "forge.v1.AuditRecord"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.AuditRecord": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "time_unix_ns",
+     "type": "int64"
+    },
+    "10": {
+     "label": "optional",
+     "name": "error",
+     "type": "string"
+    },
+    "11": {
+     "label": "optional",
+     "name": "trace",
+     "type": "forge.v1.TraceContext"
+    },
+    "2": {
+     "label": "optional",
+     "name": "channel",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "client",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "user",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "name": "action",
+     "type": "string"
+    },
+    "6": {
+     "label": "optional",
+     "name": "target",
+     "type": "string"
+    },
+    "7": {
+     "label": "optional",
+     "name": "old_value",
+     "type": "google.protobuf.Value"
+    },
+    "8": {
+     "label": "optional",
+     "name": "new_value",
+     "type": "google.protobuf.Value"
+    },
+    "9": {
+     "label": "optional",
+     "name": "ok",
+     "type": "bool"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Command": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "id",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "label",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "help",
+     "type": "string"
+    },
+    "4": {
+     "label": "repeated",
+     "name": "params",
+     "type": "forge.v1.Parameter"
+    },
+    "5": {
+     "label": "optional",
+     "name": "role",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.ComponentHealth": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "name",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "state",
+     "type": "forge.v1.ComponentHealth.State"
+    },
+    "3": {
+     "label": "optional",
+     "name": "message",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "critical",
+     "type": "bool"
+    },
+    "5": {
+     "label": "optional",
+     "name": "since_unix_ms",
+     "type": "int64"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Control": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "id",
+     "type": "string"
+    },
+    "10": {
+     "label": "optional",
+     "name": "max",
+     "type": "double"
+    },
+    "11": {
+     "label": "optional",
+     "name": "step",
+     "type": "double"
+    },
+    "12": {
+     "label": "optional",
+     "name": "precision",
+     "type": "int32"
+    },
+    "13": {
+     "label": "repeated",
+     "name": "options",
+     "type": "string"
+    },
+    "14": {
+     "label": "optional",
+     "name": "readonly",
+     "type": "bool"
+    },
+    "15": {
+     "label": "optional",
+     "name": "role",
+     "type": "string"
+    },
+    "16": {
+     "label": "optional",
+     "name": "persistent",
+     "type": "bool"
+    },
+    "17": {
+     "label": "optional",
+     "name": "lease_holder",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "group",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "label",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "kind",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "name": "value",
+     "type": "google.protobuf.Value"
+    },
+    "6": {
+     "label": "optional",
+     "name": "unit",
+     "type": "string"
+    },
+    "7": {
+     "label": "optional",
+     "name": "help",
+     "type": "string"
+    },
+    "8": {
+     "label": "optional",
+     "name": "has_range",
+     "type": "bool"
+    },
+    "9": {
+     "label": "optional",
+     "name": "min",
+     "type": "double"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Header": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "source",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "host",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "pid",
+     "type": "uint32"
+    },
+    "4": {
+     "label": "optional",
+     "name": "topic",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "name": "seq",
+     "type": "uint64"
+    },
+    "6": {
+     "label": "optional",
+     "name": "time_unix_ns",
+     "type": "int64"
+    },
+    "7": {
+     "label": "optional",
+     "name": "type",
+     "type": "string"
+    },
+    "8": {
+     "label": "optional",
+     "name": "trace",
+     "type": "forge.v1.TraceContext"
+    },
+    "9": {
+     "label": "repeated",
+     "name": "attributes",
+     "type": "forge.v1.Header.AttributesEntry"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Health": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "state",
+     "type": "forge.v1.ComponentHealth.State"
+    },
+    "2": {
+     "label": "repeated",
+     "name": "components",
+     "type": "forge.v1.ComponentHealth"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.HubReply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "ok",
+     "type": "bool"
+    },
+    "2": {
+     "label": "optional",
+     "name": "error",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "hub",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "instance",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.HubRequest": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "register",
+     "oneof": "kind",
+     "type": "forge.v1.AppRegistration"
+    },
+    "2": {
+     "label": "optional",
+     "name": "unregister",
+     "oneof": "kind",
+     "type": "forge.v1.Unregister"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Info": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "name",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "version",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "description",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "forgecpp",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "name": "host",
+     "type": "string"
+    },
+    "6": {
+     "label": "optional",
+     "name": "pid",
+     "type": "uint32"
+    },
+    "7": {
+     "label": "optional",
+     "name": "uptime_s",
+     "type": "int64"
+    },
+    "8": {
+     "label": "repeated",
+     "name": "endpoints",
+     "type": "forge.v1.Info.EndpointsEntry"
+    },
+    "9": {
+     "label": "optional",
+     "name": "protocol",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.LogList": {
+   "fields": {
+    "1": {
+     "label": "repeated",
+     "name": "records",
+     "type": "forge.v1.LogRecord"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.LogRecord": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "time_unix_ns",
+     "type": "int64"
+    },
+    "2": {
+     "label": "optional",
+     "name": "level",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "logger",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "message",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "name": "thread",
+     "type": "uint64"
+    },
+    "6": {
+     "label": "optional",
+     "name": "trace",
+     "type": "forge.v1.TraceContext"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Metric": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "name",
+     "type": "string"
+    },
+    "10": {
+     "label": "repeated",
+     "name": "labels",
+     "type": "forge.v1.Metric.LabelsEntry"
+    },
+    "2": {
+     "label": "optional",
+     "name": "help",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "type",
+     "type": "forge.v1.Metric.Type"
+    },
+    "4": {
+     "label": "optional",
+     "name": "unit",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "name": "value",
+     "type": "double"
+    },
+    "6": {
+     "label": "repeated",
+     "name": "bounds",
+     "type": "double"
+    },
+    "7": {
+     "label": "repeated",
+     "name": "buckets",
+     "type": "uint64"
+    },
+    "8": {
+     "label": "optional",
+     "name": "count",
+     "type": "uint64"
+    },
+    "9": {
+     "label": "optional",
+     "name": "sum",
+     "type": "double"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.MetricsSnapshot": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "time_unix_ns",
+     "type": "int64"
+    },
+    "2": {
+     "label": "repeated",
+     "name": "metrics",
+     "type": "forge.v1.Metric"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Parameter": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "name",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "type",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "help",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "default_value",
+     "type": "google.protobuf.Value"
+    },
+    "5": {
+     "label": "repeated",
+     "name": "options",
+     "type": "string"
+    },
+    "6": {
+     "label": "optional",
+     "name": "required",
+     "type": "bool"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Reply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "ok",
+     "type": "bool"
+    },
+    "10": {
+     "label": "optional",
+     "name": "info",
+     "oneof": "result",
+     "type": "forge.v1.Info"
+    },
+    "11": {
+     "label": "optional",
+     "name": "schema",
+     "oneof": "result",
+     "type": "forge.v1.Schema"
+    },
+    "12": {
+     "label": "optional",
+     "name": "state",
+     "oneof": "result",
+     "type": "forge.v1.Values"
+    },
+    "13": {
+     "label": "optional",
+     "name": "value",
+     "oneof": "result",
+     "type": "google.protobuf.Value"
+    },
+    "14": {
+     "label": "optional",
+     "name": "alarms",
+     "oneof": "result",
+     "type": "forge.v1.AlarmList"
+    },
+    "15": {
+     "label": "optional",
+     "name": "logs",
+     "oneof": "result",
+     "type": "forge.v1.LogList"
+    },
+    "16": {
+     "label": "optional",
+     "name": "metrics",
+     "oneof": "result",
+     "type": "forge.v1.MetricsSnapshot"
+    },
+    "17": {
+     "label": "optional",
+     "name": "trace_dump",
+     "oneof": "result",
+     "type": "forge.v1.TraceDump"
+    },
+    "18": {
+     "label": "optional",
+     "name": "audit",
+     "oneof": "result",
+     "type": "forge.v1.AuditList"
+    },
+    "19": {
+     "label": "optional",
+     "name": "health",
+     "oneof": "result",
+     "type": "forge.v1.Health"
+    },
+    "2": {
+     "label": "optional",
+     "name": "status",
+     "type": "int32"
+    },
+    "20": {
+     "label": "optional",
+     "name": "streams",
+     "oneof": "result",
+     "type": "forge.v1.StreamList"
+    },
+    "21": {
+     "label": "optional",
+     "name": "count",
+     "oneof": "result",
+     "type": "uint32"
+    },
+    "3": {
+     "label": "optional",
+     "name": "error",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "trace",
+     "type": "forge.v1.TraceContext"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "client",
+     "type": "string"
+    },
+    "10": {
+     "label": "optional",
+     "name": "ping",
+     "oneof": "kind",
+     "type": "forge.v1.Request.Ping"
+    },
+    "11": {
+     "label": "optional",
+     "name": "info",
+     "oneof": "kind",
+     "type": "forge.v1.Request.GetInfo"
+    },
+    "12": {
+     "label": "optional",
+     "name": "schema",
+     "oneof": "kind",
+     "type": "forge.v1.Request.GetSchema"
+    },
+    "13": {
+     "label": "optional",
+     "name": "state",
+     "oneof": "kind",
+     "type": "forge.v1.Request.GetState"
+    },
+    "14": {
+     "label": "optional",
+     "name": "get",
+     "oneof": "kind",
+     "type": "forge.v1.Request.Get"
+    },
+    "15": {
+     "label": "optional",
+     "name": "set",
+     "oneof": "kind",
+     "type": "forge.v1.Request.Set"
+    },
+    "16": {
+     "label": "optional",
+     "name": "press",
+     "oneof": "kind",
+     "type": "forge.v1.Request.Press"
+    },
+    "17": {
+     "label": "optional",
+     "name": "call",
+     "oneof": "kind",
+     "type": "forge.v1.Request.Call"
+    },
+    "18": {
+     "label": "optional",
+     "name": "alarms",
+     "oneof": "kind",
+     "type": "forge.v1.Request.GetAlarms"
+    },
+    "19": {
+     "label": "optional",
+     "name": "ack",
+     "oneof": "kind",
+     "type": "forge.v1.Request.Ack"
+    },
+    "2": {
+     "label": "optional",
+     "name": "token",
+     "type": "string"
+    },
+    "20": {
+     "label": "optional",
+     "name": "logs",
+     "oneof": "kind",
+     "type": "forge.v1.Request.GetLogs"
+    },
+    "21": {
+     "label": "optional",
+     "name": "metrics",
+     "oneof": "kind",
+     "type": "forge.v1.Request.GetMetrics"
+    },
+    "22": {
+     "label": "optional",
+     "name": "trace_dump",
+     "oneof": "kind",
+     "type": "forge.v1.Request.GetTrace"
+    },
+    "23": {
+     "label": "optional",
+     "name": "audit",
+     "oneof": "kind",
+     "type": "forge.v1.Request.GetAudit"
+    },
+    "24": {
+     "label": "optional",
+     "name": "lease",
+     "oneof": "kind",
+     "type": "forge.v1.Request.Lease"
+    },
+    "25": {
+     "label": "optional",
+     "name": "release",
+     "oneof": "kind",
+     "type": "forge.v1.Request.Release"
+    },
+    "26": {
+     "label": "optional",
+     "name": "health",
+     "oneof": "kind",
+     "type": "forge.v1.Request.GetHealth"
+    },
+    "27": {
+     "label": "optional",
+     "name": "streams",
+     "oneof": "kind",
+     "type": "forge.v1.Request.GetStreams"
+    },
+    "28": {
+     "label": "optional",
+     "name": "log_level",
+     "oneof": "kind",
+     "type": "forge.v1.Request.SetLogLevel"
+    },
+    "3": {
+     "label": "optional",
+     "name": "trace",
+     "type": "forge.v1.TraceContext"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.Ack": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "id",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.Call": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "id",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "args",
+     "type": "google.protobuf.Struct"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.Get": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "id",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.GetAlarms": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.GetAudit": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "limit",
+     "type": "uint32"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.GetHealth": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.GetInfo": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.GetLogs": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "limit",
+     "type": "uint32"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.GetMetrics": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "prefix",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.GetSchema": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.GetState": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.GetStreams": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.GetTrace": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "seconds",
+     "type": "uint32"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.Lease": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "id",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "seconds",
+     "type": "uint32"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.Ping": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.Press": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "id",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.Release": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "id",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.Set": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "id",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "value",
+     "type": "google.protobuf.Value"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Request.SetLogLevel": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "logger",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "level",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.RestartPolicy": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "mode",
+     "type": "forge.v1.RestartPolicy.Mode"
+    },
+    "2": {
+     "label": "optional",
+     "name": "max_restarts",
+     "type": "uint32"
+    },
+    "3": {
+     "label": "optional",
+     "name": "window_s",
+     "type": "uint32"
+    },
+    "4": {
+     "label": "optional",
+     "name": "delay_s",
+     "type": "uint32"
+    },
+    "6": {
+     "label": "optional",
+     "name": "watchdog_s",
+     "type": "uint32"
+    },
+    "7": {
+     "label": "optional",
+     "name": "restart",
+     "type": "string"
+    }
+   },
+   "reserved": [
+    [
+     5,
+     5
+    ]
+   ],
+   "reserved_names": []
+  },
+  "forge.v1.Schema": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "title",
+     "type": "string"
+    },
+    "2": {
+     "label": "repeated",
+     "name": "controls",
+     "type": "forge.v1.Control"
+    },
+    "3": {
+     "label": "repeated",
+     "name": "commands",
+     "type": "forge.v1.Command"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.StreamInfo": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "name",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "endpoint",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "topic",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "type",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "name": "policy",
+     "type": "string"
+    },
+    "6": {
+     "label": "optional",
+     "name": "max_rate_hz",
+     "type": "double"
+    },
+    "7": {
+     "label": "optional",
+     "name": "subscribers",
+     "type": "uint64"
+    },
+    "8": {
+     "label": "optional",
+     "name": "sent",
+     "type": "uint64"
+    },
+    "9": {
+     "label": "optional",
+     "name": "dropped",
+     "type": "uint64"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.StreamList": {
+   "fields": {
+    "1": {
+     "label": "repeated",
+     "name": "streams",
+     "type": "forge.v1.StreamInfo"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.TraceContext": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "trace_id",
+     "type": "bytes"
+    },
+    "2": {
+     "label": "optional",
+     "name": "span_id",
+     "type": "bytes"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.TraceDump": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "chrome_json",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "events",
+     "type": "uint64"
+    },
+    "3": {
+     "label": "optional",
+     "name": "dropped",
+     "type": "uint64"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Unregister": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "name",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "pid",
+     "type": "uint32"
+    },
+    "3": {
+     "label": "optional",
+     "name": "reason",
+     "type": "forge.v1.Unregister.Reason"
+    },
+    "4": {
+     "label": "optional",
+     "name": "exit_code",
+     "type": "int32"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.v1.Values": {
+   "fields": {
+    "1": {
+     "label": "repeated",
+     "name": "values",
+     "type": "forge.v1.Values.ValuesEntry"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  }
+ }
+}

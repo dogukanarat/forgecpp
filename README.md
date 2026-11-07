@@ -100,7 +100,7 @@ One-liner (clones into a temporary directory, installs and cleans up):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh | bash
-curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh | bash -s -- --prefix /opt/forgecpp --ref v0.2.0
+curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh | bash -s -- --prefix /opt/forgecpp --ref v0.3.0
 ```
 
 `install.sh` builds every dependency as its own CMake project and installs it
@@ -848,6 +848,15 @@ projects (`cmake -S examples/radio_controller -B build
 and systemd unit; their Yocto recipes in `yocto/recipes-connectivity` build
 them that way. Both use `examples/common/ad936x` (libiio backend, simulator,
 FFT/windows).
+
+## Versions
+
+Semantic versions, changes in [CHANGELOG.md](CHANGELOG.md). Until 1.0 a minor
+version may change the C++ API: `libforgecpp.so.<major>.<minor>` and
+`find_package(forgecpp 0.3)` accepts 0.3.x only. The forge.v1 protocol only
+changes compatibly (new fields and messages; removed numbers reserved): CI
+checks it against the last release's API (`proto/forge/v1/API.json`) with
+`tools/proto-compat.py`, which also records it at a release (`--update`).
 
 ## Updating dependencies
 

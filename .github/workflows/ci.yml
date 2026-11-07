@@ -40,6 +40,8 @@ jobs:
           ./install.sh --prefix "$HOME/forgecpp" --tests --examples ${{ matrix.flags }} \
             --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           ccache --show-stats
+      - name: forge.v1 stays compatible with the released API
+        run: python3 tools/proto-compat.py --protoc "$HOME/forgecpp/bin/protoc"
       - name: Smoke-test the example applications
         working-directory: build/forgecpp/examples
         run: |

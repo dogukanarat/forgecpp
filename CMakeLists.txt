@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(forgecpp
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "Batteries-included C++17 framework for Linux daemons and services"
     HOMEPAGE_URL "https://github.com/dogukanarat/forgecpp"
     LANGUAGES CXX)

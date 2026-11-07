@@ -27,7 +27,7 @@ LIC_FILES_CHKSUM = " \
 SRC_URI = "gitsm://github.com/dogukanarat/forgecpp.git;protocol=https;branch=master"
 # Pin a release commit for reproducible builds.
 SRCREV ?= "${AUTOREV}"
-PV = "0.2.0+git${SRCPV}"
+PV = "0.3.0+git${SRCPV}"
 
 S = "${WORKDIR}/git"
 

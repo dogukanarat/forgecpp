@@ -75,7 +75,7 @@ cmake_minimum_required(VERSION 3.16)
 project(${IDENT} VERSION 0.1.0 DESCRIPTION "${DESCRIPTION}" LANGUAGES CXX)
 
 include(GNUInstallDirs)
-find_package(forgecpp 0.2 REQUIRED)
+find_package(forgecpp 0.3 REQUIRED)
 
 # The application's messages (forge.v1 framing, see proto/): C++ for the app
 # and its tests, Python modules for clients.

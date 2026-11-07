@@ -157,7 +157,7 @@ Build a tarball with an SDK toolchain and unpack it on the target:
 ```sh
 source /opt/poky/environment-setup-cortexa53-poky-linux
 ./install.sh --package --prefix /usr --toolchain $OECORE_NATIVE_SYSROOT/usr/share/cmake/OEToolchainConfig.cmake --arch aarch64
-scp build/forgecpp-0.2.0-aarch64.tar.gz target:/tmp && ssh target tar -xzf /tmp/forgecpp-0.2.0-aarch64.tar.gz -C /
+scp build/forgecpp-0.3.0-aarch64.tar.gz target:/tmp && ssh target tar -xzf /tmp/forgecpp-0.3.0-aarch64.tar.gz -C /
 ```
 
 ## What has been verified
