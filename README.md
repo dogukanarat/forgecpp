@@ -577,8 +577,12 @@ s = pump_pb2.Sample(); s.ParseFromString(body)
 Lower-level pieces: `Publisher`/`Stream` (thread-safe PUB with per-topic
 subscriber counts), `Sender` (PUB/PUSH from one thread), `Receiver` (SUB/PULL
 thread), `Server` (ROUTER + worker threads), `serve_control(service, endpoint, workers)` for extra control
-endpoints. The control endpoint also accepts the older JSON commands
-(`{"cmd":"set","id":"speed","value":1500}`) for existing scripts.
+endpoints. The control endpoint still accepts the older JSON commands
+(`{"cmd":"set","id":"speed","value":1500}`), deprecated: each one is counted
+in `forge.control.legacy_json`, every client that sends them is named in a
+warning once, and `[forge].legacy_json = false` refuses them (status 410).
+They will be off by default in 0.4 and removed in 0.5; move scripts to
+forge.v1 (`forgectl`, `forge::zmq::Client`, `forge_msg.py`).
 
 ### Access control, leases and the audit trail
 

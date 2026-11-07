@@ -310,3 +310,22 @@ TEST_CASE("zmq: an application's control endpoint (forge.v1 and the older JSON) 
     CHECK(r->freq == 2400.0);
     CHECK(r->presses == 1);
 }
+
+TEST_CASE("zmq: the older JSON protocol is counted, and refused with [forge].legacy_json = false") {
+    auto& counter = forge::metrics::registry().counter("forge.control.legacy_json", "");
+    {
+        forge::testing::AppRunner<ControlledApp> r({"-D", "forge.control=tcp://127.0.0.1:*"});
+        fz::Client c(r->endpoints().at("control"), 3s);
+        const auto before = counter.value();
+        CHECK(c.request_json({{"cmd", "get"}, {"id", "freq"}})["value"] == 100.0);
+        CHECK(c.request_json({{"cmd", "ping"}})["ok"] == true);
+        CHECK(counter.value() == before + 2);
+    }
+    forge::testing::AppRunner<ControlledApp> r(
+        {"-D", "forge.control=tcp://127.0.0.1:*", "-D", "forge.legacy_json=false"});
+    fz::Client c(r->endpoints().at("control"), 3s);
+    const auto reply = c.request_json({{"cmd", "get"}, {"id", "freq"}});
+    CHECK(reply["ok"] == false);
+    CHECK(reply["status"] == 410);
+    CHECK(c.get("freq") == 100.0);  // forge.v1 is not affected
+}

@@ -348,6 +348,7 @@ int Application::run(int argc, char** argv) {
         request_timeout_ms_ = cfg.value<int>("forge.request_timeout_ms");
         start_observability(cfg);
         control_ = std::make_unique<ControlService>(*this);
+        control_->set_legacy_json(cfg.value<bool>("forge.legacy_json"));
 
         // The control registry exists even without HTTP: the console and
         // other channels (ZeroMQ, forgectl, telnet) use it too.
@@ -560,6 +561,7 @@ void Application::do_reload() {
         config_ = fresh;
     }
     request_timeout_ms_ = fresh.value<int>("forge.request_timeout_ms");
+    if (control_) control_->set_legacy_json(fresh.value<bool>("forge.legacy_json"));
     if (auto level = fresh.get<std::string>("log.level")) {
         try {
             log::set_level(*level);
@@ -722,6 +724,8 @@ void Application::declare_framework_config(config::Schema& s) {
     s.string("forge.events", "", "PUB: state, alarms, log, audit, health, metrics, e.g. \"tcp://*:5559\"");
     s.string("forge.data", "", "PUB: the application's streams (empty: an ephemeral port when used)");
     s.integer("forge.metrics_interval_s", 5, "Metrics event interval").range(1, 3600).unit("s");
+    s.boolean("forge.legacy_json", true,
+              "Accept the older JSON commands ({\"cmd\": ...}) on [forge].control (deprecated; off by default in 0.4)");
     s.integer("forge.control_workers", 2, "Requests on [forge].control handled at the same time").range(1, 16);
     s.integer("forge.request_timeout_ms", 2000,
               "How long a request (forge.v1, HTTP) waits for a busy main loop before answering 503")

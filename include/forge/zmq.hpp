@@ -358,7 +358,8 @@ public:
     json call_command(const std::string& id, const json& args = json::object());
     v1::Info info();
 
-    /// Older JSON commands ({"cmd": ...}); kept for scripts written for them.
+    /// Older JSON commands ({"cmd": ...}). Deprecated: the server counts and
+    /// warns about them, and refuses them with [forge].legacy_json = false.
     json request_json(const json& request);
 
 private:

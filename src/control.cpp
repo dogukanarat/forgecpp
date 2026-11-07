@@ -470,6 +470,24 @@ std::string ControlService::handle_bytes(std::string_view bytes, const Caller& t
 }
 
 json ControlService::handle_legacy_json(const json& req, const Caller& transport) {
+    static auto& counter = metrics::registry().counter(
+        "forge.control.legacy_json", "Requests in the older JSON protocol (deprecated: use forge.v1)");
+    counter.inc();
+    const auto who = req.value("client", transport.client.empty() ? transport.channel : transport.client);
+    if (!legacy_json_) {
+        return {{"ok", false},
+                {"status", 410},
+                {"error", "the older JSON protocol is off ([forge].legacy_json = false): use forge.v1 "
+                          "(forgectl, forge::zmq::Client, forge_msg.py)"}};
+    }
+    {
+        std::lock_guard lock(legacy_mutex_);
+        if (legacy_clients_.size() < 1000 && legacy_clients_.insert(who).second) {
+            app_.logger()->warn("control: '{}' uses the older JSON protocol ({{\"cmd\": ...}}), which is deprecated "
+                                "and will be off by default in forgecpp 0.4: move it to forge.v1",
+                                who);
+        }
+    }
     try {
         const auto cmd = req.value("cmd", std::string());
         Caller caller = identify(transport.channel, req.value("client", transport.client),

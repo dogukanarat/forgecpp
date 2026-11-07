@@ -16,10 +16,12 @@
 #include "forge/json.hpp"
 #include "forge/proto.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 
 namespace forge {
@@ -40,7 +42,10 @@ public:
     /// Serialized Request -> serialized Reply (transports).
     std::string handle_bytes(std::string_view request, const Caller& caller, std::string_view peer = {});
     /// Older JSON commands ({"cmd":"set","id":..,"value":..}) -> JSON reply.
+    /// Deprecated: counted in forge.control.legacy_json, a warning once per
+    /// client; refused (410) with [forge].legacy_json = false. Use forge.v1.
     json handle_legacy_json(const json& request, const Caller& caller);
+    void set_legacy_json(bool enabled) { legacy_json_ = enabled; }
 
     // --- typed calls; throw forge::Error(status, message) --------------------------
     json get(const std::string& id, const Caller& caller);
@@ -75,6 +80,9 @@ private:
     };
     mutable std::mutex lease_mutex_;
     std::map<std::string, LeaseEntry> leases_;
+    std::atomic<bool> legacy_json_{true};
+    std::mutex legacy_mutex_;
+    std::set<std::string> legacy_clients_;  ///< already warned about
 };
 
 }  // namespace forge
