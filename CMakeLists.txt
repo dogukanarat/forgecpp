@@ -21,7 +21,6 @@ option(FORGECPP_BUILD_TESTS     "Build the unit tests (needs doctest)"  ${FORGEC
 option(FORGECPP_INSTALL_TOOLS   "Install the forgecpp-new scaffolder"   ON)
 option(FORGECPP_WARNINGS        "Enable extra compiler warnings"        ${FORGECPP_TOP_LEVEL})
 set(FORGECPP_WITH_ZMQ AUTO CACHE STRING "Build forgecpp::zmq (ON, OFF or AUTO = if ZeroMQ is found)")
-option(FORGECPP_BUILD_APPS      "Build the bundled daemons in apps/"    OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -161,7 +160,7 @@ endif()
 # Examples / tests / apps
 # ---------------------------------------------------------------------------
 
-# enable_testing() must come before the subdirectories that add tests (apps/).
+# enable_testing() must come before the subdirectories that add tests (examples/).
 if(FORGECPP_BUILD_TESTS AND NOT doctest_FOUND)
     message(WARNING "doctest not found: unit tests are disabled")
     set(FORGECPP_BUILD_TESTS OFF)
@@ -172,10 +171,6 @@ endif()
 
 if(FORGECPP_BUILD_EXAMPLES)
     add_subdirectory(examples)
-endif()
-
-if(FORGECPP_BUILD_APPS)
-    add_subdirectory(apps)
 endif()
 
 if(FORGECPP_BUILD_TESTS)

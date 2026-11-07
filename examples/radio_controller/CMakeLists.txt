@@ -1,11 +1,16 @@
 # radio-controller: AD9364 (AD936x) control and IQ streaming over ZeroMQ.
 #
-# Standalone:  cmake -S apps/radio-controller -B build -DCMAKE_PREFIX_PATH=<forgecpp prefix>
-# In-tree:     forgecpp with -DFORGECPP_BUILD_APPS=ON (install.sh --apps)
+# In-tree:     one of the forgecpp examples (install.sh --examples); not installed.
+# Standalone:  cmake -S examples/radio_controller -B build -DCMAKE_PREFIX_PATH=<forgecpp prefix>
+#              installs the daemon, its config, systemd unit and clients (used by Yocto).
 cmake_minimum_required(VERSION 3.16)
 project(radio-controller VERSION 1.0.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
+set(RADIO_STANDALONE OFF)
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    set(RADIO_STANDALONE ON)
+endif()
 if(NOT TARGET forgecpp::forgecpp)
     find_package(forgecpp 0.2 REQUIRED)
 endif()
@@ -63,17 +68,27 @@ endif()
 configure_file(systemd/radio-controller.service.in
                "${CMAKE_CURRENT_BINARY_DIR}/radio-controller.service" @ONLY)
 
+set(_install_mode)
+if(NOT RADIO_STANDALONE)
+    set(_install_mode NO_INSTALL)  # like the other examples
+endif()
 forge_add_app(radio-controller
     SOURCES src/main.cpp
     LIBS    radio_core
     CONFIG  config/radio-controller.toml
     WEB     web
-    SERVICE "${CMAKE_CURRENT_BINARY_DIR}/radio-controller.service")
+    SERVICE "${CMAKE_CURRENT_BINARY_DIR}/radio-controller.service"
+    ${_install_mode})
 
-install(PROGRAMS clients/rx_capture.py clients/tx_tone.py clients/radioctl.py
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/radio-controller/clients)
+# Run it from the build dir with its config next to it.
+configure_file(config/radio-controller.toml "${CMAKE_CURRENT_BINARY_DIR}/radio-controller.toml" COPYONLY)
 
-if(PROJECT_IS_TOP_LEVEL OR CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+if(RADIO_STANDALONE)
+    install(PROGRAMS clients/rx_capture.py clients/tx_tone.py clients/radioctl.py
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/radio-controller/clients)
+endif()
+
+if(RADIO_STANDALONE)
     include(CTest)  # standalone build; in-tree, forgecpp enables testing
 endif()
 if(BUILD_TESTING OR FORGECPP_BUILD_TESTS)

@@ -12,7 +12,7 @@ SRC_URI = "git://github.com/dogukanarat/forgecpp.git;protocol=https;branch=maste
 SRCREV ?= "${AUTOREV}"
 PV = "1.0.0+git${SRCPV}"
 
-S = "${WORKDIR}/git/apps/radio-controller"
+S = "${WORKDIR}/git/examples/radio_controller"
 
 # forgecpp provides forgecpp::zmq and libiio (built from its submodules).
 DEPENDS = "forgecpp"

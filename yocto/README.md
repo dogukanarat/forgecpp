@@ -23,7 +23,7 @@ because they are GPL-2.0-or-later.
 ## radio-controller
 
 `recipes-connectivity/radio-controller/radio-controller_git.bb` builds the
-AD9364 daemon from `apps/radio-controller` and configures it for the on-board
+AD9364 daemon from `examples/radio_controller` and configures it for the on-board
 radio (`backend = "iio"`, `uri = "local:"`) with its state kept in
 `/var/lib/radio-controller`. Override with `RADIO_URI = "ip:192.168.2.1"` etc.
 

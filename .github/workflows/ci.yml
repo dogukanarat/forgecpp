@@ -25,7 +25,7 @@ jobs:
       - name: Install
         env:
           CXX: ${{ matrix.cxx }}
-        run: ./install.sh --prefix "$HOME/forgecpp" --tests --examples --apps ${{ matrix.flags }}
+        run: ./install.sh --prefix "$HOME/forgecpp" --tests --examples ${{ matrix.flags }}
       - name: Smoke-test the example applications
         working-directory: build/forgecpp/examples
         run: |
@@ -42,7 +42,7 @@ jobs:
             wait $pid
           }
           ./hello --version
-          run_app 18105 "$HOME/forgecpp/bin/radio-controller" --backend sim -D http.enabled=true -D radio.sample_rate_hz=5e6
+          run_app 18105 ./radio_controller/radio-controller --backend sim -D http.enabled=true -D radio.sample_rate_hz=5e6
           run_app 18101 ./sensor_service -c sensor_service.toml
           run_app 18102 ./pipeline -c pipeline.toml --producers 2
           run_app 18103 ./thermostat -c thermostat.toml -D thermostat.settings_file=/tmp/thermostat.json

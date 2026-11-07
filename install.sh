@@ -32,7 +32,6 @@ WITH_ZLIB="auto"
 WITH_ZMQ="ON"
 WITH_IIO="ON"
 IIO_USB="OFF"
-BUILD_APPS="OFF"
 BUILD_TESTS="OFF"
 RUN_TESTS="OFF"
 BUILD_EXAMPLES="OFF"
@@ -80,7 +79,6 @@ Build
 Extras
   --tests               Build and run the forgecpp unit tests
   --examples            Build the example applications (in the build dir)
-  --apps                Build and install the bundled daemons (apps/, e.g. radio-controller)
   --package             Do not touch the system; stage into the build dir and
                         create forgecpp-<version>-<arch>.tar.gz (extract with tar -C /)
   --arch NAME           Architecture name used in the package file name
@@ -154,7 +152,6 @@ while [[ $# -gt 0 ]]; do
         --without-zmq)  WITH_ZMQ="OFF"; shift ;;
         --without-iio)  WITH_IIO="OFF"; shift ;;
         --iio-usb)      IIO_USB="ON"; shift ;;
-        --apps)         BUILD_APPS="ON"; shift ;;
         --with-zlib)    WITH_ZLIB="ON"; shift ;;
         --no-rpath)     RPATH="OFF"; shift ;;
         --rpath)        RPATH="ON"; shift ;;
@@ -443,7 +440,6 @@ if [[ "${DEPS_ONLY}" != "ON" ]]; then
         "-DFORGECPP_BUILD_TESTS=${BUILD_TESTS}" \
         "-DFORGECPP_BUILD_EXAMPLES=${BUILD_EXAMPLES}" \
         "-DFORGECPP_WITH_ZMQ=${WITH_ZMQ}" \
-        "-DFORGECPP_BUILD_APPS=${BUILD_APPS}" \
         "-DFORGECPP_WARNINGS=ON"
 
     if [[ "${RUN_TESTS}" == "ON" ]]; then

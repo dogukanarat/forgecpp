@@ -120,12 +120,20 @@ TX→RX loopback (`[radio.sim].loopback`).
 
 ## Building
 
-In-tree with forgecpp: `./install.sh --apps`. Standalone against an
-installed forgecpp:
+As a forgecpp example (built when forgecpp has ZeroMQ, not installed):
 
 ```sh
-cmake -S apps/radio-controller -B build -DCMAKE_PREFIX_PATH=<forgecpp prefix>
-cmake --build build && ctest --test-dir build
+./install.sh --examples
+cd build/forgecpp/examples/radio_controller
+./radio-controller -c radio-controller.toml
+```
+
+Standalone against an installed forgecpp; this installs the daemon, its
+config, the systemd unit and the clients (the Yocto recipe builds it this way):
+
+```sh
+cmake -S examples/radio_controller -B build -DCMAKE_PREFIX_PATH=<forgecpp prefix>
+cmake --build build && ctest --test-dir build && sudo cmake --install build
 ```
 
 Without libiio only the simulator is built. The libiio backend targets the
