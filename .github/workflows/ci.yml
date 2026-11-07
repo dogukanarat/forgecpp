@@ -171,6 +171,58 @@ jobs:
         run: ./install.sh --uninstall --prefix "$HOME/forgecpp" && test -z "$(find "$HOME/forgecpp" -type f)"
 
   # Everything (the bundled libraries too) built with sanitizers, all tests run.
+  # Zynq-7000 (Z7020: Cortex-A9, armhf): cross build of everything with a host protoc, then
+  # the ARM binaries run under QEMU user emulation.
+  cross-armhf:
+    name: cross (armhf, Zynq-7000)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache g++-arm-linux-gnueabihf qemu-user
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-armhf-${{ github.sha }}
+          restore-keys: ccache-armhf-
+      - name: Cross build and package
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 400M
+        run: |
+          ./install.sh --toolchain cmake/toolchains/zynq7000-armhf.cmake --package --arch armhf \
+            --without-ssl --without-zlib --without-iio --examples \
+            --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          [[ "$(file build/forgecpp/examples/radio-controller/radio-controller)" == *"ARM, EABI5"* ]]
+      - name: Run the ARM binaries under QEMU
+        run: |
+          root=$PWD/armhf-root
+          mkdir -p "$root" && tar -xzf build/forgecpp-*-armhf.tar.gz -C "$root"
+          export QEMU_LD_PREFIX=/usr/arm-linux-gnueabihf LD_LIBRARY_PATH=$root/usr/local/lib
+          cd build/forgecpp/examples
+          qemu-arm ./radio-controller/radio-controller -c radio-controller/radio-controller.toml --backend sim \
+            -D hub.register=false -D http.enabled=true -D http.port=18300 -D radio.sample_rate_hz=2.5e6 \
+            -D 'forge.control="tcp://127.0.0.1:15757"' -D 'forge.data="tcp://127.0.0.1:15755"' -D 'forge.events=""' \
+            -D 'zmq.tx="tcp://127.0.0.1:15756"' -D 'console.telnet=""' > /tmp/rc.log 2>&1 &
+          pid=$!
+          for _ in $(seq 120); do curl -fs http://127.0.0.1:18300/health -o /tmp/health.json && break; sleep 0.5; done
+          cat /tmp/health.json
+          [[ "$(cat /tmp/health.json)" == *'"status":"ok"'* ]]
+          out=$(qemu-arm "$root/usr/local/bin/forgectl" -e tcp://127.0.0.1:15757 get rx_lo_mhz)
+          echo "forgectl (armhf): rx_lo_mhz = $out"
+          [ "$out" = 2412 ]
+          kill -TERM $pid
+          wait $pid
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forgecpp-armhf
+          path: build/forgecpp-*-armhf.tar.gz
+          retention-days: 7
+
   # The applications as real systemd units: restarts, start-limit-hit, forge-hub's view and buttons.
   systemd:
     name: systemd units and forge-hub

@@ -20,22 +20,19 @@ pre-production security work: forgecpp is used in the lab for now.
 | Two control protocols (forge.v1 and `{"cmd": ...}` JSON) | 0.3: the JSON one is counted (`forge.control.legacy_json`), each client is named in a warning once, `[forge].legacy_json = false` refuses it (410). 0.4: off by default. 0.5: removed. |
 | Python clients found the generated modules with `sys.path` searches | `forge-v1` package (`forge.v1.*_pb2`, `forge.v1.framing`) installed into site-packages (`FORGE_PYTHON_SITEDIR`: the interpreter's directory for the prefix; Yocto `python3-forge-v1`); applications use `forge_install_python()` for theirs (radio.v1, sa.v1, the scaffolder's). Clients import normally; `forge_msg.py` and every path search are gone. |
 | No versions or compatibility rules | 0.3.0 with a CHANGELOG; SOVERSION and `find_package` compatibility follow the minor version until 1.0. `proto/forge/v1/API.json` records the released forge.v1 API; `tools/proto-compat.py` fails CI on renumbered, retyped, renamed or unreserved removed fields and enum values. |
+| Restarts, start limits and the hub's view only tested against a fake systemd | CI job `systemd`: forge-hub and radio-controller installed as real units; crash -> restart -> the hub counts it, the start limit -> failed -> the hub says it gave up, the hub's restart and stop buttons. It found two bugs (the Result after an automatic restart is refused, NOTIFY_SOCKET leaking into the hub's children). |
+| No Yocto build in CI | `yocto/` is a layer; `yocto/kas/qemuarm64.yml` builds an image from the checkout and boots it with runtime tests; nightly workflow `yocto`. |
+| Zynq-7000 (armhf) build not verified | `cmake/toolchains/zynq7000-armhf.cmake`; CI job `cross-armhf` cross-builds everything (host protoc), packages it and runs radio-controller and forgectl under QEMU user emulation. |
 
 ## Plan
 
 Ordered by risk to the running system. Each step lands on its own with tests,
 without changing behaviour that is not named.
 
-### 9. Test the paths that are not tested yet
+### 9. Deterministic time in applications
 
-- **systemd.** GitHub runners have systemd: a CI job installs radio-controller
-  and forge-hub as units, kills the application, and checks the restart, the
-  hub's view, `start-limit-hit` and the hub's restart button.
-- **Yocto.** A nightly job builds `forgecpp`, `forgecpp-hub` and the example
-  recipes with kas for qemuarm64 and boots the image in QEMU.
-- **Deterministic time in applications.** Let `Application` take a
-  `Scheduler::manual_clock` in tests, so timer-driven logic (alarms with
-  hysteresis, rate limits) is tested without sleeping.
+Let `Application` take a `Scheduler::manual_clock` in tests, so timer-driven
+logic (alarms with hysteresis, rate limits) is tested without sleeping.
 
 ### 10. forge-hub follow-ups
 
