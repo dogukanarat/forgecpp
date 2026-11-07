@@ -91,8 +91,10 @@ jobs:
           EOF
           export FORGE_PYTHONPATH="$HOME/forgecpp/share/forgecpp/python:$PWD/radio_controller/ad936x/python:$PWD/spectrum_analyzer/python"
           export PYTHONDONTWRITEBYTECODE=1
-          python3 ../../../examples/radio_controller/clients/rx_capture.py tcp://127.0.0.1:5555 --seconds 0.5 | grep -q "blocks"
-          python3 ../../../examples/spectrum_analyzer/clients/spectrum_watch.py tcp://127.0.0.1:5566 --count 2 | grep -q fixed
+          python3 ../../../examples/radio_controller/clients/rx_capture.py tcp://127.0.0.1:5555 --seconds 0.5 > /tmp/rx.txt
+          grep -q "blocks" /tmp/rx.txt
+          python3 ../../../examples/spectrum_analyzer/clients/spectrum_watch.py tcp://127.0.0.1:5566 --count 2 > /tmp/sw.txt
+          grep -q fixed /tmp/sw.txt
           kill -TERM $pid $rc
           wait $pid
           wait $rc

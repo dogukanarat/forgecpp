@@ -348,7 +348,8 @@ else
     COMMON_ARGS+=("-DCMAKE_PREFIX_PATH=${STAGE}")
 fi
 if [[ "${RPATH}" == "ON" ]]; then
-    COMMON_ARGS+=('-DCMAKE_INSTALL_RPATH=$ORIGIN')
+    # Libraries find each other next to themselves, programs in bin/ one level up.
+    COMMON_ARGS+=("-DCMAKE_INSTALL_RPATH=\$ORIGIN;\$ORIGIN/../${LIBDIR:-lib}")
 fi
 if [[ -n "${SANITIZE}" ]]; then
     # Instrument the dependencies as well (ThreadSanitizer needs it to see their locks).
