@@ -146,14 +146,14 @@ void ControlService::audit(const Caller& caller, const std::string& action, cons
 
 json ControlService::get(const std::string& id, const Caller& caller) {
     require(Role::viewer, caller, "reading '" + id + "'");
-    return app_.invoke([&] { return app_.dashboard()->get(id); });
+    return app_.invoke_for(app_.request_timeout(), [&] { return app_.dashboard()->get(id); });
 }
 
 json ControlService::set(const std::string& id, const json& value, const Caller& caller) {
     json old;
     try {
         auto* d = app_.dashboard();
-        const auto& c = app_.invoke([&]() -> const web::detail::ControlDef& { return d->control(id); });
+        const auto& c = app_.invoke_for(app_.request_timeout(), [&]() -> const web::detail::ControlDef& { return d->control(id); });
         if (c.kind == web::Kind::button) {
             press(id, caller);
             return nullptr;
@@ -161,7 +161,7 @@ json ControlService::set(const std::string& id, const json& value, const Caller&
         require(c.role, caller, "changing '" + id + "'");
         check_lease(id, caller);
         json now;
-        app_.invoke([&] {
+        app_.invoke_for(app_.request_timeout(), [&] {
             old = d->get(id);
             d->set(id, value);
             now = d->get(id);
@@ -181,10 +181,10 @@ json ControlService::set(const std::string& id, const json& value, const Caller&
 void ControlService::press(const std::string& id, const Caller& caller) {
     try {
         auto* d = app_.dashboard();
-        const auto& c = app_.invoke([&]() -> const web::detail::ControlDef& { return d->control(id); });
+        const auto& c = app_.invoke_for(app_.request_timeout(), [&]() -> const web::detail::ControlDef& { return d->control(id); });
         require(c.role, caller, "pressing '" + id + "'");
         check_lease(id, caller);
-        app_.invoke([&] { d->press(id); });
+        app_.invoke_for(app_.request_timeout(), [&] { d->press(id); });
         audit(caller, "press", id, nullptr, nullptr, true, {});
         app_.control_changed(id, false);
     } catch (const HttpError& e) {
@@ -199,10 +199,10 @@ void ControlService::press(const std::string& id, const Caller& caller) {
 json ControlService::call(const std::string& id, const json& args, const Caller& caller) {
     try {
         auto* d = app_.dashboard();
-        const auto role = app_.invoke([&] { return d->command(id).role; });
+        const auto role = app_.invoke_for(app_.request_timeout(), [&] { return d->command(id).role; });
         require(role, caller, "calling '" + id + "'");
         check_lease(id, caller);
-        json result = app_.invoke([&] { return d->call(id, args); });
+        json result = app_.invoke_for(app_.request_timeout(), [&] { return d->call(id, args); });
         audit(caller, "call", id, nullptr, args, true, {});
         app_.control_changed(id, false);
         return result;
@@ -234,7 +234,7 @@ std::chrono::seconds ControlService::lease(const std::string& id, unsigned secon
     require(Role::operator_, caller, "leasing '" + id + "'");
     auto* d = app_.dashboard();
     const bool group = id.rfind("group:", 0) == 0;
-    if (!group && !app_.invoke([&] { return d->contains(id) || d->has_command(id); })) {
+    if (!group && !app_.invoke_for(app_.request_timeout(), [&] { return d->contains(id) || d->has_command(id); })) {
         throw HttpError(404, "unknown control '" + id + "'");
     }
     const auto duration = std::chrono::seconds(seconds == 0 ? 60 : std::min(seconds, 3600u));
@@ -281,7 +281,7 @@ void ControlService::set_log_level(const std::string& logger, const std::string&
 }
 
 v1::Schema ControlService::schema() const {
-    return app_.invoke([this] {
+    return app_.invoke_for(app_.request_timeout(), [this] {
         v1::Schema s;
         const auto j = app_.dashboard()->schema();
         s.set_title(j.value("title", std::string()));
@@ -384,7 +384,7 @@ v1::Reply ControlService::dispatch(const v1::Request& r, const Caller& caller) {
             break;
         case v1::Request::kState: {
             require(Role::viewer, caller, "state");
-            const auto st = app_.invoke([this] { return app_.dashboard()->state(); });
+            const auto st = app_.invoke_for(app_.request_timeout(), [this] { return app_.dashboard()->state(); });
             auto* v = out.mutable_state()->mutable_values();
             for (const auto& [k, val] : st.items()) (*v)[k] = proto::to_value(val);
             break;
@@ -495,11 +495,11 @@ json ControlService::handle_legacy_json(const json& req, const Caller& transport
         }
         if (cmd == "ui") {
             require(Role::viewer, caller, "ui");
-            return {{"ok", true}, {"ui", app_.invoke([this] { return app_.dashboard()->schema(); })}};
+            return {{"ok", true}, {"ui", app_.invoke_for(app_.request_timeout(), [this] { return app_.dashboard()->schema(); })}};
         }
         if (cmd == "state") {
             require(Role::viewer, caller, "state");
-            return {{"ok", true}, {"state", app_.invoke([this] { return app_.dashboard()->state(); })}};
+            return {{"ok", true}, {"state", app_.invoke_for(app_.request_timeout(), [this] { return app_.dashboard()->state(); })}};
         }
         if (cmd == "get") {
             const auto id = need_id();

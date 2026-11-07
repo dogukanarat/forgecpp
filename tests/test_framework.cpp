@@ -498,6 +498,60 @@ TEST_CASE("framework: invoke() runs on the main loop and carries errors back as 
     CHECK_THROWS_WITH_AS(r->invoke([] { throw 42; }), "unknown exception", std::runtime_error);
 }
 
+TEST_CASE("framework: a blocked main loop does not hang requests (invoke_for, 503 main loop busy)") {
+    forge::testing::AppRunner<RolesApp> r({"-D", "http.enabled=true", "-D", "http.port=0", "-D",
+                                           "http.host=\"127.0.0.1\"", "-D", "forge.request_timeout_ms=150"});
+    CHECK(r->request_timeout() == 150ms);
+    httplib::Client http("127.0.0.1", r->http()->port());
+    http.set_read_timeout(5, 0);
+
+    // Not busy: answers as usual.
+    CHECK(r->invoke_for(50ms, [] { return 7; }) == 7);
+    CHECK(http.Get("/forge/api/state")->status == 200);
+
+    std::mutex m;
+    std::condition_variable cv;
+    bool release = false, blocked = false;
+    r->post([&] {
+        std::unique_lock lock(m);
+        blocked = true;
+        cv.notify_all();
+        cv.wait(lock, [&] { return release; });
+    });
+    {
+        std::unique_lock lock(m);
+        cv.wait(lock, [&] { return blocked; });
+    }
+
+    const auto t0 = std::chrono::steady_clock::now();
+    auto res = http.Get("/forge/api/state");
+    REQUIRE(res);
+    CHECK(res->status == 503);
+    CHECK(res->body.find("main loop busy") != std::string::npos);
+    CHECK(std::chrono::steady_clock::now() - t0 < 2s);
+    CHECK(http.Get("/forge/api/controls/gain")->status == 503);
+    res = http.Post("/forge/api/controls/gain", R"({"value": 50})", "application/json");
+    CHECK(res->status == 503);
+    res = http.Post("/forge/api/rpc", R"({"get":{"id":"gain"}})", "application/json");
+    REQUIRE(res);
+    const auto rpc = json::parse(res->body);
+    CHECK_FALSE(rpc.value("ok", false));
+    CHECK(rpc["status"] == 503);
+    CHECK_THROWS_AS(r->invoke_for(20ms, [] { return 1; }), forge::http::HttpError);
+    // What does not need the main loop still answers.
+    CHECK(http.Get("/health")->status == 200);
+    CHECK(http.Get("/metrics")->body.find("forge_control_timeouts ") != std::string::npos);
+
+    {
+        std::lock_guard lock(m);
+        release = true;
+    }
+    cv.notify_all();
+    // The request that timed out was not applied later.
+    CHECK(r->invoke([&] { return r->gain; }) == 10);
+    CHECK(http.Get("/forge/api/state")->status == 200);
+}
+
 TEST_CASE("web: card layouts are stored on the device and survive a restart") {
     forge::testing::TempDir dir;
     const auto file = (dir / "state" / "web-layout.json").string();

@@ -12,26 +12,12 @@ pre-production security work: forgecpp is used in the lab for now.
 | Slow, timing-dependent hub tests (60 s) | systemd behind an interface with a fake in tests, 20 ms ticks, sleep processes instead of applications: 2 s. Whole suite: 66 s -> 5 s. |
 | Sanitizers only run by hand | CI job `sanitizers`: ASan+UBSan and TSan, the bundled libraries instrumented too, all tests. ccache for every CI job. |
 | `invoke()` shared exception objects between threads (TSan) | Errors are described on the main loop and thrown anew on the caller's thread. |
+| A stuck main loop hung forgectl and the panel | `invoke_for(timeout, fn)`: forge.v1 and the framework's HTTP routes wait at most `[forge].request_timeout_ms` (2000) for the main loop, then answer `503 main loop busy` with the loop's lag (metric `forge.control.timeouts`); a request that timed out is never applied later. info, health, metrics, logs, audit, trace, alarms and streams do not need the loop. |
 
 ## Plan
 
 Ordered by risk to the running system. Each step lands on its own with tests,
 without changing behaviour that is not named.
-
-### 1. The main loop must not take the control channels down with it
-
-*Problem.* `invoke()` waits without a limit. A stuck main loop blocks every
-forge.v1 request and every HTTP handler that needs it (8 HTTP threads): the
-panel and forgectl stop answering exactly when they are needed for diagnosis.
-
-*Plan.*
-- `invoke_for(timeout, fn)`; `ControlService` uses it with
-  `[forge].request_timeout_ms` (default 2000) and answers `503 main loop busy`
-  (with the loop's lag) instead of waiting.
-- Read-only requests that do not need the loop (info, health, metrics, logs,
-  audit, trace, streams) stop going through it.
-- Metric `forge.control.timeouts`; test: a blocked main loop, forgectl and the
-  panel still answer within the timeout.
 
 ### 2. One slow request must not block the control endpoint
 

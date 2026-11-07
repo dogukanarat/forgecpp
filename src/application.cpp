@@ -217,6 +217,20 @@ void Application::stop(int exit_code) {
     tasks_.push([] {});  // wake the main loop
 }
 
+void Application::loop_busy() const {
+    static auto& timeouts = metrics::registry().counter(
+        "forge.control.timeouts", "Requests that gave up waiting for a busy main loop");
+    timeouts.inc();
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+    const auto tick = loop_tick_ms_.load();
+    const auto lag = tick > 0 ? std::max<std::int64_t>(now - tick, 0) : 0;
+    throw http::HttpError(503, fmt::format("main loop busy (last heartbeat {} ms ago)", lag),
+                          json{{"error", "main loop busy"}, {"loop_age_ms", lag},
+                               {"timeout_ms", request_timeout_ms_.load()}});
+}
+
 void Application::reload() {
     post([this] { do_reload(); });
 }
@@ -386,6 +400,7 @@ int Application::run(int argc, char** argv) {
         trace::set_thread_name("main");
 
         auth_.load(cfg);
+        request_timeout_ms_ = cfg.get_or<int>("forge.request_timeout_ms", 2000);
         start_observability(cfg);
         control_ = std::make_unique<ControlService>(*this);
 
@@ -613,7 +628,13 @@ void Application::create_web(const Config& cfg) {
     web_events_ = std::make_shared<http::EventStream>(cfg.get_or<std::size_t>("web.max_clients", 8));
     web_events_->on_connect([this] {
         std::vector<http::EventStream::Message> greeting;
-        if (!stopping()) greeting.push_back({"state", invoke([this] { return dashboard_->state(); })});
+        if (!stopping()) {
+            try {
+                greeting.push_back({"state", invoke_for(request_timeout(), [this] { return dashboard_->state(); })});
+            } catch (const std::exception&) {
+                // main loop busy: the next state event brings the values
+            }
+        }
         greeting.push_back({"alarms", alarms_.to_json()});
         return greeting;
     });
@@ -649,11 +670,11 @@ void Application::create_web(const Config& cfg) {
                     {"protocol", "forge.v1"},
                     {"endpoints", endpoints()}};
     });
-    http_->get_json(api + "/ui", [this](const http::Request&) { return invoke([this] { return dashboard_->schema(); }); });
-    http_->get_json(api + "/state", [this](const http::Request&) { return invoke([this] { return dashboard_->state(); }); });
+    http_->get_json(api + "/ui", [this](const http::Request&) { return invoke_for(request_timeout(), [this] { return dashboard_->schema(); }); });
+    http_->get_json(api + "/state", [this](const http::Request&) { return invoke_for(request_timeout(), [this] { return dashboard_->state(); }); });
     http_->get_json(api + "/controls/:id", [this](const http::Request& req) {
         const auto id = req.path_params.at("id");
-        return json{{"id", id}, {"value", invoke([this, &id] { return dashboard_->get(id); })}};
+        return json{{"id", id}, {"value", invoke_for(request_timeout(), [this, &id] { return dashboard_->get(id); })}};
     });
     auto web_caller = [this](const http::Request& req) {
         return control_->identify("web", req.remote_addr, {}, req.get_header_value("Authorization"));
@@ -661,7 +682,7 @@ void Application::create_web(const Config& cfg) {
     http_->post_json(api + "/controls/:id", [this, web_caller](const http::Request& req, const json& body) {
         const auto id = req.path_params.at("id");
         const auto caller = web_caller(req);
-        const bool button = invoke([&] { return dashboard_->control(id).kind == web::Kind::button; });
+        const bool button = invoke_for(request_timeout(), [&] { return dashboard_->control(id).kind == web::Kind::button; });
         if (button) {
             control_->press(id, caller);
         } else {
@@ -992,6 +1013,7 @@ void Application::do_reload() {
         std::lock_guard lock(config_mutex_);
         config_ = fresh;
     }
+    request_timeout_ms_ = fresh.get_or<int>("forge.request_timeout_ms", 2000);
     if (auto level = fresh.get<std::string>("log.level")) {
         try {
             log::set_level(*level);
@@ -1203,6 +1225,10 @@ void Application::declare_framework_config(config::Schema& s) {
     s.string("forge.events", "", "PUB: state, alarms, log, audit, health, metrics, e.g. \"tcp://*:5559\"");
     s.string("forge.data", "", "PUB: the application's streams (empty: an ephemeral port when used)");
     s.integer("forge.metrics_interval_s", 5, "Metrics event interval").range(1, 3600).unit("s");
+    s.integer("forge.request_timeout_ms", 2000,
+              "How long a request (forge.v1, HTTP) waits for a busy main loop before answering 503")
+        .range(10, 600000)
+        .unit("ms");
 
     s.section("auth", "Users and roles");
     s.boolean("auth.enabled", false, "Require credentials for changes (roles)");

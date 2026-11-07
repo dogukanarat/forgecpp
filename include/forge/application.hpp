@@ -175,76 +175,24 @@ public:
     /// object is thrown there, none is shared between threads.
     template <class F>
     auto invoke(F&& fn) -> std::invoke_result_t<std::decay_t<F>> {
-        using R = std::invoke_result_t<std::decay_t<F>>;
-        if (on_main_loop()) return fn();
-        struct Waiter {
-            std::mutex mutex;
-            std::condition_variable cv;
-            bool done = false;
-            // references are kept as pointers
-            using Stored = std::conditional_t<std::is_reference_v<R>, std::remove_reference_t<R>*, R>;
-            std::conditional_t<std::is_void_v<R>, bool, std::optional<Stored>> value{};
-            detail::LoopError error;
-            void finish() {
-                {
-                    std::lock_guard lock(mutex);
-                    done = true;
-                }
-                cv.notify_all();
-            }
-        };
-        // Finishes the wait even when the task is discarded (application stopping).
-        struct Guard {
-            explicit Guard(std::shared_ptr<Waiter> waiter) : w(std::move(waiter)) {}
-            Guard(const Guard&) = delete;
-            Guard& operator=(const Guard&) = delete;
-            std::shared_ptr<Waiter> w;
-            ~Guard() {
-                bool pending;
-                {
-                    std::lock_guard lock(w->mutex);
-                    pending = !w->done;
-                    if (pending) w->error.set_stopped();
-                }
-                if (pending) w->finish();
-            }
-        };
-        auto w = std::make_shared<Waiter>();
-        auto f = std::make_shared<std::decay_t<F>>(std::forward<F>(fn));
-        auto guard = std::make_shared<Guard>(w);
-        post([w, f, guard] {
-            detail::LoopError error;
-            try {
-                if constexpr (std::is_void_v<R>) {
-                    (*f)();
-                } else if constexpr (std::is_reference_v<R>) {
-                    auto* r = &(*f)();
-                    std::lock_guard lock(w->mutex);
-                    w->value.emplace(r);
-                } else {
-                    auto r = (*f)();
-                    std::lock_guard lock(w->mutex);
-                    w->value.emplace(std::move(r));
-                }
-            } catch (...) {
-                error.capture();
-            }
-            {
-                std::lock_guard lock(w->mutex);
-                w->error = std::move(error);
-            }
-            w->finish();
-        });
-        guard.reset();
-        std::unique_lock lock(w->mutex);
-        w->cv.wait(lock, [&] { return w->done; });
-        if (w->error) w->error.rethrow();
-        if constexpr (std::is_reference_v<R>) {
-            return static_cast<R>(**w->value);
-        } else if constexpr (!std::is_void_v<R>) {
-            return std::move(*w->value);
-        }
+        return invoke_until(std::nullopt, std::forward<F>(fn));
     }
+
+    /// invoke() that gives up when the main loop has not started `fn` within
+    /// `timeout`: throws http::HttpError 503 "main loop busy" (with the loop's
+    /// lag) and `fn` never runs. Once `fn` has started it is waited for, so it
+    /// may refer to the caller's locals. The framework's request handlers
+    /// (forge.v1, HTTP) use it with request_timeout().
+    template <class F>
+    auto invoke_for(std::chrono::milliseconds timeout, F&& fn) -> std::invoke_result_t<std::decay_t<F>> {
+        return invoke_until(std::chrono::steady_clock::now() + timeout, std::forward<F>(fn));
+    }
+
+    /// [forge].request_timeout_ms: how long a request waits for the main loop.
+    std::chrono::milliseconds request_timeout() const {
+        return std::chrono::milliseconds(request_timeout_ms_.load());
+    }
+
     /// True on the thread running the main loop.
     bool on_main_loop() const { return std::this_thread::get_id() == main_thread_.load(); }
 
@@ -363,6 +311,91 @@ protected:
     virtual void on_reload(const Config& config);
 
 private:
+    template <class F>
+    auto invoke_until(std::optional<std::chrono::steady_clock::time_point> deadline, F&& fn)
+        -> std::invoke_result_t<std::decay_t<F>> {
+        using R = std::invoke_result_t<std::decay_t<F>>;
+        if (on_main_loop()) return fn();
+        enum class Phase { pending, running, done, abandoned };
+        struct Waiter {
+            std::mutex mutex;
+            std::condition_variable cv;
+            Phase phase = Phase::pending;
+            // references are kept as pointers
+            using Stored = std::conditional_t<std::is_reference_v<R>, std::remove_reference_t<R>*, R>;
+            std::conditional_t<std::is_void_v<R>, bool, std::optional<Stored>> value{};
+            detail::LoopError error;
+        };
+        // Finishes the wait even when the task is discarded (application stopping).
+        struct Guard {
+            explicit Guard(std::shared_ptr<Waiter> waiter) : w(std::move(waiter)) {}
+            Guard(const Guard&) = delete;
+            Guard& operator=(const Guard&) = delete;
+            std::shared_ptr<Waiter> w;
+            ~Guard() {
+                bool waiting;
+                {
+                    std::lock_guard lock(w->mutex);
+                    waiting = w->phase == Phase::pending || w->phase == Phase::running;
+                    if (waiting) {
+                        w->error.set_stopped();
+                        w->phase = Phase::done;
+                    }
+                }
+                if (waiting) w->cv.notify_all();
+            }
+        };
+        auto w = std::make_shared<Waiter>();
+        auto f = std::make_shared<std::decay_t<F>>(std::forward<F>(fn));
+        auto guard = std::make_shared<Guard>(w);
+        post([w, f, guard] {
+            {
+                std::lock_guard lock(w->mutex);
+                if (w->phase == Phase::abandoned) return;  // the caller gave up: do not run
+                w->phase = Phase::running;
+            }
+            detail::LoopError error;
+            try {
+                if constexpr (std::is_void_v<R>) {
+                    (*f)();
+                } else if constexpr (std::is_reference_v<R>) {
+                    auto* r = &(*f)();
+                    std::lock_guard lock(w->mutex);
+                    w->value.emplace(r);
+                } else {
+                    auto r = (*f)();
+                    std::lock_guard lock(w->mutex);
+                    w->value.emplace(std::move(r));
+                }
+            } catch (...) {
+                error.capture();
+            }
+            {
+                std::lock_guard lock(w->mutex);
+                w->error = std::move(error);
+                w->phase = Phase::done;
+            }
+            w->cv.notify_all();
+        });
+        guard.reset();
+        std::unique_lock lock(w->mutex);
+        const auto finished = [&] { return w->phase == Phase::done; };
+        if (deadline && !w->cv.wait_until(lock, *deadline, finished) && w->phase == Phase::pending) {
+            w->phase = Phase::abandoned;
+            lock.unlock();
+            loop_busy();
+        }
+        w->cv.wait(lock, finished);
+        if (w->error) w->error.rethrow();
+        if constexpr (std::is_reference_v<R>) {
+            return static_cast<R>(**w->value);
+        } else if constexpr (!std::is_void_v<R>) {
+            return std::move(*w->value);
+        }
+    }
+    /// Counts the timeout and throws 503 "main loop busy".
+    [[noreturn]] void loop_busy() const;
+
     struct Hooks {
         std::vector<Hook> start, stop, reload;
         std::vector<std::function<void(Application&, http::Server&)>> http;
@@ -454,6 +487,7 @@ private:
     std::string layout_file_;
     bool hub_registration_ = true;
     std::atomic<int> stop_signal_{0};                 ///< signal that asked us to stop (0 = none)
+    std::atomic<int> request_timeout_ms_{2000};       ///< [forge].request_timeout_ms
     std::atomic<std::int64_t> loop_tick_ms_{0};       ///< last main loop heartbeat (steady clock)
     int log_listener_ = -1;
     std::string state_file_;

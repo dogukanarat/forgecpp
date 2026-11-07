@@ -200,6 +200,7 @@ pool().detach_task([this] {
 | `post(fn)` | Run `fn` on the main loop (from any thread) |
 | `call(fn) -> std::future<R>` | Run on the main loop, get the result as a future |
 | `invoke(fn) -> R` | Run on the main loop and wait for the result (runs inline if already on the main loop; use this in HTTP handlers) |
+| `invoke_for(timeout, fn) -> R` | Same, but gives up with `HttpError(503, "main loop busy")` when the main loop has not started `fn` in time (`fn` then never runs). The framework's request handlers use it with `request_timeout()` (`[forge].request_timeout_ms`) |
 | `after(d, fn)`, `every(d, fn)`, `cancel(id)` | Timers (run on the main loop) |
 | `emit(Event{...})`, `events().subscribe<Event>(...)` | Typed event bus |
 | `config()` | Snapshot of the effective configuration |
@@ -279,6 +280,7 @@ control = ""             # REP: requests (forgectl, panels), e.g. "tcp://*:5557"
 events = ""              # PUB: state, alarms, log, audit, health, metrics
 data = ""                # PUB: the application's streams (ephemeral port when empty and used)
 metrics_interval_s = 5
+request_timeout_ms = 2000 # requests waiting for a busy main loop answer 503 after this
 
 [auth]                   # users and roles for web, forge.v1 and telnet (see below)
 enabled = false
