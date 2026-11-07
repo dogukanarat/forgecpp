@@ -1,9 +1,9 @@
 [Unit]
 Description=AD9364 spectrum analyzer (forgecpp)
-After=network-online.target
+After=network-online.target radio-controller.service
 Wants=network-online.target
-# Both daemons use the AD9364 RX path: run one or the other.
-Conflicts=radio-controller.service
+# backend = "radio": RX2 comes from radio-controller (started first if both are enabled).
+# backend = "iio": the analyzer owns the RX path; do not run radio-controller then.
 
 [Service]
 Type=notify

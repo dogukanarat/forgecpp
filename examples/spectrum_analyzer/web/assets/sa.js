@@ -510,7 +510,11 @@
     text('#a-det', optionLabel('detector', f.detector));
     text('#a-gain', f.gain.toFixed(0) + ' dB');
     text('#a-sweep', f.sweep_ms.toFixed(1) + ' ms');
-    text('#a-mode', f.swept ? 'SWEPT · ' + f.segments + ' seg · FFT ' + f.fft : 'REALTIME · FFT ' + f.fft + ' @ ' + (f.rate / 1e6).toFixed(2) + ' MSPS');
+    const rate = (f.rate / 1e6).toFixed(2) + ' MSPS';
+    text('#a-mode', f.fixed ? 'RX2 · LO ' + fmtHz(f.lo, 3) + ' · ' + rate + ' (radio-controller) · FFT ' + f.fft
+      : f.swept ? 'SWEPT · ' + f.segments + ' seg · FFT ' + f.fft : 'REALTIME · FFT ' + f.fft + ' @ ' + rate);
+    $('#a-mode').title = f.fixed ? 'RX2 shares LO and sample rate with RX1: tune them in radio-controller. ' +
+      'Here you can zoom inside its band and set the RX2 gain.' : '';
     const digits = axisDigits(f.stop - f.start, f.stop) + 1;
     text('#a-start', fmtHz(f.start, digits));
     text('#a-center', fmtHz((f.start + f.stop) / 2, digits));

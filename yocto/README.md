@@ -38,16 +38,19 @@ HDL cores), so that the kernel exposes `ad9361-phy`, `cf-ad9361-lpc` and
 ## spectrum-analyzer
 
 `recipes-connectivity/spectrum-analyzer/spectrum-analyzer_git.bb` builds the
-AD9364 spectrum analyzer from `examples/spectrum_analyzer`, set up the same way
-(`backend = "iio"`, `uri = "local:"`, state in `/var/lib/spectrum-analyzer`;
-override with `SA_URI`). It uses the same RX path as radio-controller and its
-unit conflicts with it: install both and set
-`SYSTEMD_AUTO_ENABLE:radio-controller = "disable"` (or the other way round)
-if you want to switch between them at run time.
+spectrum analyzer from `examples/spectrum_analyzer` (web UI on port 8081, state
+in `/var/lib/spectrum-analyzer`). By default (`SA_BACKEND = "radio"`) it
+analyzes RX2 of an AD9361/AD9363 through radio-controller, so both daemons
+run together; the unit starts after radio-controller.
 
 ```
-IMAGE_INSTALL:append = " spectrum-analyzer"
+IMAGE_INSTALL:append = " radio-controller spectrum-analyzer"
 ```
+
+For a 2R2T transceiver the device tree must not force 1R1T mode
+(`adi,1rx-1tx-mode-enable`), so that `cf-ad9361-lpc` has `voltage0` – `voltage3`.
+On an AD9364 board set `SA_BACKEND = "iio"`: the analyzer then owns the RX
+path (and can sweep) and radio-controller must not run.
 
 ## Application recipes
 

@@ -1,5 +1,5 @@
-SUMMARY = "AD9364 radio controller daemon"
-DESCRIPTION = "Controls an AD9364 (AD936x) transceiver through libiio and streams IQ \
+SUMMARY = "AD936x radio controller daemon"
+DESCRIPTION = "Controls an AD936x (AD9364, AD9361/AD9363) transceiver through libiio and streams IQ \
 samples over ZeroMQ. Web UI, console and ZeroMQ control share the same controls. \
 Built on forgecpp."
 HOMEPAGE = "https://github.com/dogukanarat/forgecpp"

@@ -57,6 +57,19 @@ jobs:
           curl -fs http://127.0.0.1:18107/api/iq.cs16 -o /tmp/sa.cs16 && test -s /tmp/sa.cs16
           kill -TERM $pid
           wait $pid
+          # both on one board: the analyzer on RX2 of radio-controller (simulated AD9361)
+          ./radio_controller/radio-controller -c radio_controller/radio-controller.toml --backend sim \
+            -D http.port=18108 -D log.console=false -D radio.sample_rate_hz=5e6 &
+          rc=$!
+          ./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml --backend radio \
+            -D http.port=18109 -D log.console=false &
+          pid=$!
+          for _ in $(seq 150); do curl -fs http://127.0.0.1:18109/api/frame -o /tmp/sa.json && grep -q '"fixed":true' /tmp/sa.json && break; sleep 0.1; done
+          grep -q '"fixed":true' /tmp/sa.json
+          curl -fs http://127.0.0.1:18108/forge/api/controls/rx2_enabled | grep -q true
+          kill -TERM $pid $rc
+          wait $pid
+          wait $rc
           run_app 18101 ./sensor_service -c sensor_service.toml
           run_app 18102 ./pipeline -c pipeline.toml --producers 2
           run_app 18103 ./thermostat -c thermostat.toml -D thermostat.settings_file=/tmp/thermostat.json

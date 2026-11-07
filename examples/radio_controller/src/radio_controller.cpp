@@ -23,6 +23,8 @@ constexpr const char* kDeviceAlarm = "radio.device";
 constexpr const char* kOverflowAlarm = "radio.rx_overflow";
 constexpr const char* kUnderflowAlarm = "radio.tx_underflow";
 constexpr const char* kTemperatureAlarm = "radio.temperature";
+constexpr const char* kRx2Alarm = "radio.rx2";
+constexpr int kRx2SettleBuffers = 2;  ///< RX2 buffers skipped after a retune (still queued with the old LO)
 
 std::int64_t now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
@@ -75,6 +77,7 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
                   control("RX LO", [&] { backend_->set_rx_lo(hz); });
                   settings_.rx_lo_hz = hz;
                   rx_lo_hz_ = hz;
+                  ++tuning_version_;
               })
         .range(Limits::lo_min_hz / 1e6, Limits::lo_max_hz / 1e6, 0.001)
         .unit("MHz")
@@ -85,6 +88,7 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
                   control("sample rate", [&] { backend_->set_sample_rate(hz); });
                   settings_.sample_rate_hz = hz;
                   rate_hz_ = hz;
+                  ++tuning_version_;
               })
         .range(Limits::rate_min_hz / 1e6, Limits::rate_max_hz / 1e6, 0.001)
         .unit("MSPS")
@@ -94,6 +98,7 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
                   const double hz = round_to(mhz * 1e6, 1);
                   control("RX bandwidth", [&] { backend_->set_rx_bandwidth(hz); });
                   settings_.rx_bandwidth_hz = hz;
+                  ++tuning_version_;
               })
         .range(Limits::bw_min_hz / 1e6, Limits::bw_max_hz / 1e6, 0.001)
         .unit("MHz")
@@ -123,6 +128,41 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
     rx.value("rx_rate_msps", "Measured rate", rx_rate_msps_).unit("MSPS").precision(3);
     rx.value("rx_overflows", "Overflows", [this] { return rx_overflows_.load(); });
     rx.value("subscriptions", "IQ subscribers", [this] { return subscriptions_.load(); });
+
+    auto& rx2 = ui.group("RX2");
+    rx2.toggle("rx2_enabled", "RX2", [this] { return rx2_enabled_.load(); },
+               [this](bool on) {
+                   if (on && connected_ && rx_channel_count_ < 2) {
+                       throw HttpError(409, "this transceiver has one RX channel (AD9364); RX2 needs an AD9361/AD9363");
+                   }
+                   rx2_enabled_ = on;
+                   restart_rx_ = true;  // the DMA buffer carries both channels
+                   std::shared_lock lock(backend_mutex_);
+                   if (backend_) backend_->cancel_rx();
+                   logger()->info("RX2 {}", on ? "enabled" : "disabled");
+                   mark_dirty();
+               })
+        .help("AD9361/AD9363: RX2 shares the RX LO and sample rate with RX1; its samples go to the RX2 socket "
+              "(spectrum analyzer). Toggling restarts RX streaming.");
+    rx2.select("rx2_gain_mode", "RX2 gain control", gain_modes(), [this] { return settings_.rx2_gain_mode; },
+               [this](const std::string& mode) {
+                   control("RX2 gain mode", [&] { backend_->set_gain_mode(mode, 1); });
+                   settings_.rx2_gain_mode = mode;
+               });
+    rx2.slider("rx2_gain_db", "RX2 gain", [this] { return rx2_gain_actual_.load(); },
+               [this](double db) {
+                   if (settings_.rx2_gain_mode != "manual") {
+                       throw HttpError(409, "RX2 gain is controlled by the AGC; set rx2_gain_mode to manual first");
+                   }
+                   control("RX2 gain", [&] { backend_->set_rx_gain(db, 1); });
+                   settings_.rx2_gain_db = db;
+                   rx2_gain_actual_ = db;
+               },
+               Limits::rx_gain_min_db, Limits::rx_gain_max_db, 1)
+        .unit("dB")
+        .precision(0);
+    rx2.value("rx2_blocks", "Blocks sent", [this] { return rx2_blocks_.load(); });
+    rx2.value("rx2_subscriptions", "RX2 subscribers", [this] { return rx2_subscriptions_.load(); });
 
     auto& tx = ui.group("Transmitter");
     tx.toggle("tx_enabled", "TX enabled", [this] { return tx_enabled_.load(); },
@@ -185,8 +225,9 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
         if (device_info_.contains("attrs") && device_info_["attrs"].contains("hw_model")) {
             return device_info_["attrs"]["hw_model"].get<std::string>();
         }
-        return device_info_.value("model", std::string("AD9364"));
+        return device_info_.value("model", std::string("AD936x"));
     });
+    dev.value("rx_channels", "RX channels", [this] { return rx_channel_count_.load(); });
     dev.value("temperature_c", "Temperature", [this] { return temperature_ ? json(*temperature_) : json(nullptr); })
         .unit("°C")
         .precision(1);
@@ -209,6 +250,7 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
 
     auto& net = ui.group("ZeroMQ");
     net.value("zmq_rx", "IQ stream (PUB)", rx_endpoint_);
+    net.value("zmq_rx2", "RX2 blocks (PUB)", rx2_endpoint_);
     net.value("zmq_tx", "TX input (PULL)", [this] { return tx_endpoint(); });
     net.value("zmq_control", "Control (REP)", [this] { return control_endpoint(); });
 }
@@ -236,6 +278,13 @@ void RadioController::load_settings(const forge::Config& cfg) {
     if (!dsp::is_power_of_two(spectrum_size_)) throw forge::ConfigError("radio.spectrum_size must be a power of two");
     temperature_alarm_c_ = cfg.get_or<double>("radio.temperature_alarm_c", 75);
     sim_loopback_ = cfg.get_or<bool>("radio.sim.loopback", true);
+    sim_rx_channels_ = std::clamp(cfg.get_or<unsigned>("radio.sim.rx_channels", 1), 1u, 2u);
+    sim_loopback_rx_ = std::clamp(cfg.get_or<unsigned>("radio.sim.loopback_rx", 1), 1u, 2u) - 1;
+    rx2_tap_hz_ = std::clamp(cfg.get_or<double>("radio.rx2_tap_hz", 20.0), 0.0, 1000.0);
+    rx2_tap_samples_ = cfg.get_or<std::size_t>("radio.rx2_tap_samples", 65536);
+    if (rx2_tap_samples_ < 1024 || rx2_tap_samples_ > (1u << 22)) {
+        throw forge::ConfigError("radio.rx2_tap_samples must be between 1024 and 4194304");
+    }
 
     json j = cfg.section("radio").to_json();
     // The state file (last values set at runtime) wins over the config file.
@@ -252,6 +301,7 @@ void RadioController::load_settings(const forge::Config& cfg) {
     buffer_size_ = j.value("buffer_size", std::size_t{65536});
     rx_enabled_ = j.value("rx_enabled", true);
     tx_enabled_ = j.value("tx_enabled", false);
+    rx2_enabled_ = j.value("rx2_enabled", false);
     rx_lo_hz_ = settings_.rx_lo_hz;
     rate_hz_ = settings_.sample_rate_hz;
 }
@@ -261,10 +311,12 @@ void RadioController::on_start() {
 
     // Sockets first, so clients can connect even while the radio is absent.
     running_ = true;
-    std::promise<std::string> bound;
+    std::promise<Endpoints> bound;
     auto rx_bound = bound.get_future();
     rx_thread_ = std::thread([this, p = std::move(bound)]() mutable { rx_loop(std::move(p)); });
-    rx_endpoint_ = rx_bound.get();
+    const auto endpoints = rx_bound.get();
+    rx_endpoint_ = endpoints.rx;
+    rx2_endpoint_ = endpoints.rx2;
 
     forge::zmq::Receiver::Options tx_opts;
     tx_opts.bind = true;
@@ -273,8 +325,8 @@ void RadioController::on_start() {
         forge::zmq::Receiver::Kind::pull, cfg.get_or<std::string>("zmq.tx", "tcp://*:5556"),
         [this](forge::zmq::Message&& m) { on_tx_frame(std::move(m)); }, tx_opts);
     control_server_ = forge::zmq::serve_application(*this, cfg.get_or<std::string>("zmq.control", "tcp://*:5557"));
-    logger()->info("zmq: IQ stream on {}, TX input on {}, control on {}", rx_endpoint_, tx_endpoint(),
-                   control_endpoint());
+    logger()->info("zmq: IQ stream on {}, RX2 blocks on {}, TX input on {}, control on {}", rx_endpoint_,
+                   rx2_endpoint_, tx_endpoint(), control_endpoint());
 
     open_backend();
 
@@ -312,6 +364,7 @@ void RadioController::on_reload(const forge::Config& cfg) {
     } else if (backend_) {
         try {
             backend_->apply(settings_);
+            ++tuning_version_;
         } catch (const DeviceError& e) {
             device_lost(e.what());
         }
@@ -327,10 +380,14 @@ void RadioController::open_backend() {
         } else {
             SimOptions opts;
             opts.loopback = sim_loopback_;
+            opts.loopback_rx = sim_loopback_rx_;
+            opts.rx_channels = sim_rx_channels_;
             b = make_sim_backend(opts);
         }
         b->apply(settings_);
         rx_gain_actual_ = b->rx_gain();
+        rx_channel_count_ = b->rx_channel_count();
+        if (b->rx_channel_count() > 1) rx2_gain_actual_ = b->rx_gain(1);
         device_info_ = b->describe();
     } catch (const DeviceError& e) {
         if (connected_ || !alarms().active(kDeviceAlarm)) logger()->error("radio: {}", e.what());
@@ -347,8 +404,16 @@ void RadioController::open_backend() {
     tx_mode_ = TxMode::idle;
     tx_reset_ = true;
     alarms().clear(kDeviceAlarm);
-    logger()->info("radio: connected to {} (RX {:.3f} MHz, {:.3f} MSPS)", backend_->name(), settings_.rx_lo_hz / 1e6,
-                   settings_.sample_rate_hz / 1e6);
+    ++tuning_version_;
+    logger()->info("radio: connected to {} (RX {:.3f} MHz, {:.3f} MSPS, {} RX channel{})", backend_->name(),
+                   settings_.rx_lo_hz / 1e6, settings_.sample_rate_hz / 1e6, rx_channel_count_.load(),
+                   rx_channel_count_ > 1 ? "s" : "");
+    if (rx2_enabled_ && rx_channel_count_ < 2) {
+        alarms().raise(kRx2Alarm, forge::Severity::warning,
+                       "RX2 is enabled but the transceiver has one RX channel (AD9364): streaming RX1 only");
+    } else {
+        alarms().clear(kRx2Alarm);
+    }
 }
 
 void RadioController::close_backend() {
@@ -382,24 +447,35 @@ void RadioController::device_lost(const std::string& why) {
 // ---------------------------------------------------------------------------
 // RX thread: device -> ZeroMQ PUB
 
-void RadioController::rx_loop(std::promise<std::string> bound) {
-    std::unique_ptr<forge::zmq::Sender> pub;
+void RadioController::rx_loop(std::promise<Endpoints> bound) {
+    std::unique_ptr<forge::zmq::Sender> pub, pub2;
     try {
         forge::zmq::SocketOptions so;
         so.send_hwm = 32;  // frames queued per subscriber before that subscriber drops
         pub = std::make_unique<forge::zmq::Sender>(forge::zmq::Sender::Kind::pub,
                                                     config().get_or<std::string>("zmq.rx", "tcp://*:5555"), true, so);
-        bound.set_value(pub->endpoint());
+        so.send_hwm = 4;   // RX2 blocks: a slow reader only ever wants the newest
+        pub2 = std::make_unique<forge::zmq::Sender>(forge::zmq::Sender::Kind::pub,
+                                                     config().get_or<std::string>("zmq.rx2", "tcp://*:5558"), true, so);
+        bound.set_value({pub->endpoint(), pub2->endpoint()});
     } catch (...) {
         bound.set_exception(std::current_exception());
         return;
     }
 
-    std::vector<std::int16_t> buf;
+    std::vector<std::int16_t> buf, buf2;
     std::uint64_t seq = 0;
     std::uint64_t generation_seen = ~0ull;
     bool streaming = false;
+    unsigned channels = 1;
     auto next_snapshot = std::chrono::steady_clock::now();
+
+    // RX2 blocks: the start of one DMA buffer (contiguous even when samples
+    // are lost between buffers), at most rx2_tap_hz_ blocks per second.
+    std::uint64_t block_seq = 0;
+    std::uint64_t tuning_seen = ~0ull;
+    int settle = 0;
+    auto next_block = std::chrono::steady_clock::now();
 
     while (running_) {
         subscriptions_ = pub->subscriptions();
@@ -421,13 +497,19 @@ void RadioController::rx_loop(std::promise<std::string> bound) {
 
         const std::size_t size = buffer_size_;
         std::size_t n = 0;
+        bool want_rx2 = false;
         try {
             if (!streaming) {
+                channels = rx2_enabled_ && b->rx_channel_count() > 1 ? 2 : 1;
                 buf.resize(2 * size);
-                b->start_rx(size);
+                buf2.resize(channels > 1 ? 2 * size : 0);
+                b->start_rx(size, channels);
                 streaming = true;
             }
-            n = b->read_rx(buf.data(), size);
+            // RX2 is only converted when a block is due and someone listens.
+            want_rx2 = channels > 1 && rx2_subscriptions_ > 0 && settle == 0 &&
+                       std::chrono::steady_clock::now() >= next_block;
+            n = b->read_rx(buf.data(), want_rx2 ? buf2.data() : nullptr, size);
             if (b->take_rx_overflow()) ++rx_overflows_;
         } catch (const DeviceError& e) {
             streaming = false;
@@ -459,6 +541,34 @@ void RadioController::rx_loop(std::promise<std::string> bound) {
         }
 
         const auto now = std::chrono::steady_clock::now();
+        rx2_subscriptions_ = channels > 1 ? pub2->subscriptions() : 0;
+        if (channels > 1 && rx2_subscriptions_ > 0) {
+            // Buffers queued before a retune carry the old LO: skip a few.
+            if (const auto tv = tuning_version_.load(); tv != tuning_seen) {
+                tuning_seen = tv;
+                settle = kRx2SettleBuffers;
+                want_rx2 = false;
+            }
+            if (settle > 0) {
+                --settle;
+            } else if (want_rx2 && n > 0) {
+                const std::size_t samples = std::min(n, rx2_tap_samples_);
+                const json header{{"seq", ++block_seq},
+                                  {"timestamp_ns", now_ns()},
+                                  {"samples", samples},
+                                  {"format", "cs16"},
+                                  {"channel", 2},
+                                  {"sample_rate", rate_hz_.load()},
+                                  {"center_freq", rx_lo_hz_.load()},
+                                  {"rx_gain_db", rx2_gain_actual_.load()}};
+                pub2->send("iq", header, buf2.data(), samples * 2 * sizeof(std::int16_t));
+                ++rx2_blocks_;
+                if (rx2_tap_hz_ > 0) {
+                    next_block = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                           std::chrono::duration<double>(1.0 / rx2_tap_hz_));
+                }
+            }
+        }
         if (now >= next_snapshot && n >= spectrum_size_) {
             std::lock_guard l(snapshot_mutex_);
             snapshot_.assign(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(2 * spectrum_size_));
@@ -542,6 +652,7 @@ void RadioController::telemetry() {
     if (backend_) {
         try {
             rx_gain_actual_ = backend_->rx_gain();
+            if (rx_channel_count_ > 1) rx2_gain_actual_ = backend_->rx_gain(1);
             temperature_ = backend_->temperature_c();
         } catch (const DeviceError& e) {
             device_lost(e.what());
@@ -604,6 +715,7 @@ void RadioController::save_state() {
     j["buffer_size"] = buffer_size_.load();
     j["rx_enabled"] = rx_enabled_.load();
     j["tx_enabled"] = tx_enabled_.load();
+    j["rx2_enabled"] = rx2_enabled_.load();
     try {
         forge::save_json(state_file_, j);
     } catch (const std::exception& e) {

@@ -164,8 +164,19 @@ bool Engine::tune(double lo, double rate, double rf_bw, std::size_t buffer, std:
 }
 
 bool Engine::sweep(const Settings& s, Frame& frame) {
-    const auto plan = plan_for(s, limits_);
     const auto window = radio::dsp::parse_window(s.window);
+    auto* fixed = dynamic_cast<FixedTuning*>(backend_.get());
+    Tuning tuning;
+    Plan plan;
+    if (fixed) {
+        tuning = fixed->tuning();  // radio-controller decides LO and rate
+        if (tuning.rate_hz <= 0 || tuning.block_samples == 0) return false;  // cancelled
+        plan = make_fixed_plan(s.center_hz, s.span_hz, s.rbw_hz, window, tuning.lo_hz, tuning.rate_hz,
+                               tuning.block_samples, limits_);
+    } else {
+        plan = plan_for(s, limits_);
+    }
+
     static thread_local std::size_t fft_n = 0;
     static thread_local radio::dsp::Window fft_window = radio::dsp::Window::rectangular;
     static thread_local std::unique_ptr<radio::dsp::Fft> fft;
@@ -177,8 +188,13 @@ bool Engine::sweep(const Settings& s, Frame& frame) {
         fft_window = window;
     }
 
-    const std::size_t frames = std::clamp<std::size_t>(s.vbw_averages, 1, 256);
-    const std::size_t buffer = std::max<std::size_t>(plan.fft_size * frames, 1024);
+    // Video averaging needs `ffts` FFTs per segment. They are read in chunks
+    // of at most kMaxBufferSamples, so a DMA buffer stays small (the kernel
+    // keeps several of them in CMA memory) whatever the RBW and averaging.
+    const std::size_t ffts = std::clamp<std::size_t>(s.vbw_averages, 1, 256);
+    const std::size_t chunk_ffts = std::clamp<std::size_t>(kMaxBufferSamples / plan.fft_size, 1, ffts);
+    const std::size_t buffer =
+        fixed ? tuning.block_samples : std::max<std::size_t>(plan.fft_size * chunk_ffts, 1024);
     std::uint64_t version;
     {
         std::lock_guard lock(mutex_);
@@ -186,24 +202,53 @@ bool Engine::sweep(const Settings& s, Frame& frame) {
     }
 
     Bins bins;
-    std::vector<double> spectrum;
+    std::vector<double> spectrum, part;
     bool overload = false;
+    std::size_t last_ffts = 0;
     for (const auto& seg : plan.segments) {
         {
             std::lock_guard lock(mutex_);
             if (!running_ || settings_version_ != version || reconnect_requested_) return false;  // restart with new settings
         }
-        if (!tune(seg.lo_hz, plan.sample_rate_hz, plan.rf_bandwidth_hz, buffer, s.settle_buffers)) return false;
-        if (backend_->read_rx(iq_.data(), buffer) < buffer) return false;  // cancelled
-        overload = overload || radio::dsp::peak_magnitude(iq_.data(), plan.fft_size * frames) >= 0.99;
-        radio::dsp::power_spectrum(iq_.data(), frames, *fft, window_info, spectrum);
+        if (fixed) {
+            if (!streaming_ || buffer != buffer_size_) {
+                backend_->start_rx(buffer);
+                buffer_size_ = buffer;
+                streaming_ = true;
+                iq_.resize(2 * buffer);
+            }
+        } else if (!tune(seg.lo_hz, plan.sample_rate_hz, plan.rf_bandwidth_hz, buffer, s.settle_buffers)) {
+            return false;
+        }
+
+        spectrum.assign(plan.fft_size, 0.0);
+        std::size_t got = 0;
+        while (got < ffts) {
+            const std::size_t n = backend_->read_rx(iq_.data(), buffer);
+            if (n == 0) return false;  // cancelled
+            if (fixed && fixed->last_read() != tuning) return false;  // retuned meanwhile: plan again
+            const std::size_t k = std::min(n / plan.fft_size, ffts - got);
+            if (k == 0) throw radio::DeviceError("capture shorter than one FFT");
+            overload = overload || radio::dsp::peak_magnitude(iq_.data(), plan.fft_size * k) >= 0.99;
+            radio::dsp::power_spectrum(iq_.data(), k, *fft, window_info, part);
+            for (std::size_t i = 0; i < spectrum.size(); ++i) spectrum[i] += part[i] * static_cast<double>(k);
+            got += k;
+            last_ffts = k;
+        }
+        for (auto& v : spectrum) v /= static_cast<double>(got);
         append_bins(bins, spectrum, seg.lo_hz, plan.sample_rate_hz, seg.from_hz, seg.to_hz);
     }
     if (!plan.swept) {
         std::lock_guard lock(mutex_);
-        capture_.iq.assign(iq_.begin(), iq_.begin() + static_cast<std::ptrdiff_t>(2 * plan.fft_size * frames));
+        capture_.iq.assign(iq_.begin(), iq_.begin() + static_cast<std::ptrdiff_t>(2 * plan.fft_size * last_ffts));
         capture_.sample_rate_hz = plan.sample_rate_hz;
         capture_.center_hz = plan.segments.front().lo_hz;
+    }
+    // A different window or resolution (e.g. radio-controller retuned) makes the held traces meaningless.
+    if (plan.start_hz != last_plan_.start_hz || plan.stop_hz != last_plan_.stop_hz ||
+        plan.fft_size != last_plan_.fft_size || plan.sample_rate_hz != last_plan_.sample_rate_hz) {
+        for (auto& t : traces_) t.reset();
+        last_plan_ = plan;
     }
     frame.plan = plan;
     frame.overload = overload;

@@ -37,6 +37,7 @@ struct Plan {
     double rbw_hz = 0;        ///< actual resolution bandwidth (window ENBW * bin width)
     double enbw_bins = 1;
     bool swept = false;
+    bool fixed = false;       ///< LO and rate set by someone else (radio-controller RX2)
     std::vector<Segment> segments;
 };
 
@@ -44,6 +45,13 @@ struct Plan {
 /// an automatic RBW (about span / 500).
 Plan make_plan(double center_hz, double span_hz, double rbw_hz, radio::dsp::Window window,
                const HardwareLimits& limits = {});
+
+/// Plan for a source tuned by someone else (LO and sample rate given): the
+/// window is moved and shrunk into the usable band (LO +- rate * usable / 2);
+/// a window outside the band is replaced by the whole band. The FFT is at
+/// most `max_fft` (the block size of the source).
+Plan make_fixed_plan(double center_hz, double span_hz, double rbw_hz, radio::dsp::Window window, double lo_hz,
+                     double rate_hz, std::size_t max_fft, const HardwareLimits& limits = {});
 
 // --- bins, detectors, traces -------------------------------------------------
 

@@ -53,6 +53,7 @@ private:
     std::string backend_kind_ = "sim";
     std::string uri_;
     std::string cli_backend_, cli_uri_;
+    RadioTapOptions tap_;           ///< backend "radio": RX2 of radio-controller
     unsigned timeout_ms_ = 2000;
     std::string state_file_;
     HardwareLimits limits_;

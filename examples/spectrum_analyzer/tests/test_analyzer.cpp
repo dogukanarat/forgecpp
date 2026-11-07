@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <fstream>
 #include <functional>
 #include <future>
 #include <mutex>
@@ -150,7 +151,9 @@ TEST_CASE("sa engine: a failing backend is reported and retried") {
 TEST_CASE("sa app: controls over ZeroMQ, spectrum stream, persistence") {
     forge::testing::TempDir dir;
     const auto state = (dir / "state.json").string();
-    std::vector<std::string> args{"spectrum-analyzer",
+    const auto empty = (dir / "empty.toml").string();
+    { std::ofstream(empty) << "# no spectrum-analyzer.toml from the working directory\n"; }
+    std::vector<std::string> args{"spectrum-analyzer", "-c", empty,
                                   "--backend", "sim",
                                   "-D", "log.console=false",
                                   "-D", "http.enabled=false",

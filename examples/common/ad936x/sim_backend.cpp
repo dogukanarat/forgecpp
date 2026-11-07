@@ -1,11 +1,14 @@
-// Simulated AD9364 for development and tests without hardware.
+// Simulated AD9364 (or AD9361 with two RX channels) for development and tests
+// without hardware.
 //
 // The "air" contains a few carriers at fixed RF frequencies. Whatever falls
 // inside the tuned band (LO +- min(rate, bandwidth)/2) shows up at its offset
 // from the LO, scaled by the RX gain, on top of a noise floor that also follows
 // the gain. Samples are paced in real time like the real device: a reader that
 // falls behind by more than a buffer gets an overflow. With loopback enabled,
-// transmitted samples are mixed into RX, shifted by (TX LO - RX LO).
+// transmitted samples are mixed into one RX channel (`loopback_rx`, like a
+// TX1 -> RX2 cable), shifted by (TX LO - RX LO). RX1 and RX2 share LO and
+// rate, have their own gain / AGC and independent noise.
 
 #include "backend.hpp"
 
@@ -49,15 +52,19 @@ public:
         std::normal_distribution<float> n(0.0f, std::sqrt(0.5f));
         noise_.resize(1 << 16);
         for (auto& v : noise_) v = {n(rng_), n(rng_)};
-        phases_.assign(carriers().size(), {1.0, 0.0});
+        options_.rx_channels = std::clamp(options_.rx_channels, 1u, 2u);
+        options_.loopback_rx = std::min(options_.loopback_rx, options_.rx_channels - 1);
+        for (auto& p : phases_) p.assign(carriers().size(), {1.0, 0.0});
     }
 
     std::string name() const override { return "sim"; }
 
     nlohmann::json describe() const override {
         return {{"backend", "sim"},
-                {"model", "Simulated AD9364"},
+                {"model", options_.rx_channels > 1 ? "Simulated AD9361" : "Simulated AD9364"},
+                {"rx_channels", options_.rx_channels},
                 {"loopback", options_.loopback},
+                {"loopback_rx", options_.loopback_rx + 1},
                 {"carriers_mhz", [] {
                      nlohmann::json a = nlohmann::json::array();
                      for (const auto& c : carriers()) a.push_back(c.hz / 1e6);
@@ -71,33 +78,39 @@ public:
     void set_sample_rate(double hz) override { set(&State::rate, hz); }
     void set_rx_bandwidth(double hz) override { set(&State::rx_bw, hz); }
     void set_tx_bandwidth(double hz) override { set(&State::tx_bw, hz); }
-    void set_gain_mode(const std::string& mode) override {
+    void set_gain_mode(const std::string& mode, unsigned ch) override {
+        check_channel(ch);
         std::lock_guard lock(mutex_);
-        state_.gain_mode = mode;
+        state_.gain_mode[ch] = mode;
     }
-    void set_rx_gain(double db) override {
+    void set_rx_gain(double db, unsigned ch) override {
+        check_channel(ch);
         std::lock_guard lock(mutex_);
-        if (state_.gain_mode != "manual") throw DeviceError("RX gain can only be set in manual gain mode");
-        state_.gain = db;
+        if (state_.gain_mode[ch] != "manual") throw DeviceError("RX gain can only be set in manual gain mode");
+        state_.gain[ch] = db;
     }
     void set_tx_attenuation(double db) override { set(&State::tx_atten, std::round(db * 4) / 4); }
-    double rx_gain() override {
+    double rx_gain(unsigned ch) override {
+        check_channel(ch);
         std::lock_guard lock(mutex_);
-        return state_.gain;
+        return state_.gain[ch];
     }
+    unsigned rx_channel_count() const override { return options_.rx_channels; }
     std::optional<double> temperature_c() override {
         const auto t = std::chrono::duration<double>(Clock::now().time_since_epoch()).count();
         return 41.5 + 1.5 * std::sin(t / 60.0);
     }
 
     // --- RX ------------------------------------------------------------------------
-    void start_rx(std::size_t samples) override {
+    void start_rx(std::size_t samples, unsigned channels) override {
+        if (channels > options_.rx_channels) throw DeviceError("this transceiver has one RX channel (AD9364)");
+        rx_channels_ = channels;
         rx_samples_ = std::max<std::size_t>(samples, 64);
         cancelled_ = false;
         deadline_ = Clock::now();
     }
 
-    std::size_t read_rx(std::int16_t* iq, std::size_t max_samples) override {
+    std::size_t read_rx(std::int16_t* rx1, std::int16_t* rx2, std::size_t max_samples) override {
         if (cancelled_) return 0;
         const State s = snapshot();
         const std::size_t n = std::min(max_samples, rx_samples_);
@@ -115,7 +128,10 @@ public:
             std::this_thread::sleep_for(std::min<Clock::duration>(deadline_ - Clock::now(), std::chrono::milliseconds(20)));
         }
 
-        generate(s, iq, n);
+        // RX1 is always produced (AGC state); RX2 only when someone reads it.
+        scratch_.resize(2 * n);
+        generate(s, 0, rx1 ? rx1 : scratch_.data(), n);
+        if (rx_channels_ > 1 && rx2) generate(s, 1, rx2, n);
         return n;
     }
 
@@ -183,9 +199,14 @@ public:
 private:
     struct State {
         double rx_lo = 2400e6, tx_lo = 2400e6, rate = 30.72e6, rx_bw = 18e6, tx_bw = 18e6;
-        double gain = 30, tx_atten = 10;
-        std::string gain_mode = "slow_attack";
+        double gain[2] = {30, 30};
+        double tx_atten = 10;
+        std::string gain_mode[2] = {"slow_attack", "slow_attack"};
     };
+
+    void check_channel(unsigned ch) const {
+        if (ch >= options_.rx_channels) throw DeviceError("this transceiver has one RX channel (AD9364)");
+    }
 
     void set(double State::*field, double value) {
         std::lock_guard lock(mutex_);
@@ -197,10 +218,10 @@ private:
         return state_;
     }
 
-    void generate(const State& s, std::int16_t* iq, std::size_t n) {
+    void generate(const State& s, unsigned ch, std::int16_t* iq, std::size_t n) {
         buffer_.assign(n, {});
         const double half_band = std::min(s.rate, s.rx_bw) / 2.0;
-        const double gain_amp = db_to_amp(s.gain);
+        const double gain_amp = db_to_amp(s.gain[ch]);
 
         // noise (random start in a precomputed table)
         const float noise_amp = static_cast<float>(db_to_amp(kNoiseDbfsAt0dB) * gain_amp);
@@ -217,7 +238,7 @@ private:
             const double amp = db_to_amp(carriers()[c].dbfs_at_0db) * gain_amp;
             const double w = 2 * M_PI * offset / s.rate;
             const std::complex<double> step(std::cos(w), std::sin(w));
-            auto& ph = phases_[c];
+            auto& ph = phases_[ch][c];
             for (auto& v : buffer_) {
                 v += cfloat(static_cast<float>(ph.real() * amp), static_cast<float>(ph.imag() * amp));
                 ph *= step;
@@ -225,16 +246,16 @@ private:
             ph /= std::abs(ph);  // keep the rotator on the unit circle
         }
 
-        if (options_.loopback) mix_tx(s, gain_amp);
+        if (options_.loopback && ch == options_.loopback_rx) mix_tx(s, gain_amp);
 
         // AGC: steer the peak towards -12 dBFS (fast_attack reacts quicker)
         float peak = 0;
         for (const auto& v : buffer_) peak = std::max(peak, std::max(std::abs(v.real()), std::abs(v.imag())));
-        if (s.gain_mode != "manual" && peak > 0) {
+        if (s.gain_mode[ch] != "manual" && peak > 0) {
             const double err = -12.0 - 20 * std::log10(peak);
-            const double step = s.gain_mode == "fast_attack" ? 0.5 : 0.1;
+            const double step = s.gain_mode[ch] == "fast_attack" ? 0.5 : 0.1;
             std::lock_guard lock(mutex_);
-            state_.gain = std::clamp(state_.gain + err * step, Limits::rx_gain_min_db, Limits::rx_gain_max_db);
+            state_.gain[ch] = std::clamp(state_.gain[ch] + err * step, Limits::rx_gain_min_db, Limits::rx_gain_max_db);
         }
 
         for (std::size_t i = 0; i < n; ++i) {
@@ -271,8 +292,10 @@ private:
     SimOptions options_;
     std::mt19937 rng_;
     std::vector<cfloat> noise_;
-    std::vector<std::complex<double>> phases_;
+    std::vector<std::complex<double>> phases_[2];
     std::vector<cfloat> buffer_;
+    std::vector<std::int16_t> scratch_;
+    unsigned rx_channels_ = 1;
 
     std::mutex mutex_;
     State state_;

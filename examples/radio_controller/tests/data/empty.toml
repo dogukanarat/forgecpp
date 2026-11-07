@@ -1,0 +1,2 @@
+# Empty configuration: tests set everything with -D and must not pick up
+# radio-controller.toml from the working directory (ctest runs in the build dir).

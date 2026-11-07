@@ -1,7 +1,7 @@
 # spectrum-analyzer
 
-A spectrum analyzer on the **AD9364** RX path (any AD936x on ADI's `ad9361`
-driver), operated from the browser. Built on forgecpp: every setting is a
+A spectrum analyzer for the **AD936x** transceivers on ADI's `ad9361` driver
+(AD9364, AD9361, AD9363), operated from the browser. Built on forgecpp: every setting is a
 dashboard control, so the analyzer page, the generic control panel
 (`/forge/`), the console and the ZeroMQ control socket all drive the same
 instrument.
@@ -17,17 +17,54 @@ ad9361-phy     <--  LO / rate / bandwidth / gain per segment              ZeroMQ
 
 ```sh
 spectrum-analyzer --backend sim                         # simulated AD9364, no hardware needed
-spectrum-analyzer --backend iio --uri local:            # on the board (in-kernel IIO devices)
+spectrum-analyzer --backend radio                       # RX2 of radio-controller (AD9361/AD9363), see below
+spectrum-analyzer --backend iio --uri local:            # on the board, owning the RX path
 spectrum-analyzer --backend iio --uri ip:192.168.2.1    # remote, via iiod on the board
 spectrum-analyzer -c spectrum-analyzer.toml -i          # + backup console (peaks, markers, set, press)
 ```
 
-Open `http://<host>:8080/`. The simulator has carriers at 433.92, 868.3, 915,
+Open `http://<host>:8081/` (radio-controller has 8080). The simulator has carriers at 433.92, 868.3, 915,
 1575.42, 2412, 2418.5, 2437 and 5800 MHz over a noise floor, so every
 feature can be tried without hardware.
 
-The analyzer and `radio-controller` both use the RX path: run one of them at
-a time (the systemd units conflict).
+## Running next to radio-controller (AD9361/AD9363, `backend = "radio"`)
+
+With a 2R2T transceiver both daemons run on the board at the same time:
+radio-controller drives RX1/TX1 (your modem or test traffic) and the analyzer
+looks at RX2.
+
+```
+                    ad9361-phy, cf-ad9361-lpc (RX1+RX2), TX DMA
+                                     |
+radio-controller  (owner: RX LO, sample rate, bandwidth, RX1/TX1, RX2 gain)
+   [zmq].rx2  tcp://*:5558  RX2 blocks  ------>  spectrum-analyzer (backend = "radio")
+   [zmq].control tcp://*:5557  <------  RX2 gain, rx2_enabled
+```
+
+- RX1 and RX2 of the AD9361 share the RX LO, the sample rate and the RF
+  bandwidth, and arrive in one DMA buffer that only one process can open.
+  So the analyzer does not tune: it shows the band radio-controller is tuned
+  to (LO ± 80 % of the sample rate / 2) and you can zoom inside it (center,
+  span, RBW, markers, everything else works). A window outside the band is
+  replaced by the whole band; when radio-controller retunes, the display
+  follows and the traces restart. The annotation bar shows
+  `RX2 · LO … (radio-controller)`.
+- The analyzer turns `rx2_enabled` on in radio-controller and owns RX2's gain
+  (`gain_mode`, `rx_gain_db` act on RX2). dBm readings use the RX2 gain that
+  comes with every block.
+- The largest FFT is the block size (`rx2_tap_samples`, at most radio-controller's
+  `buffer_size`; 65536 by default), so the finest RBW is about
+  `2 × sample rate / 65536`.
+- radio-controller missing, an AD9364, or no blocks for `radio_timeout_ms`
+  raise `analyzer.device` with the reason; the analyzer retries every 2 s.
+
+Loopback (TX1 → RX2 cable): put an attenuator in the cable (30 dB or more);
+the TX output must stay well below the RX input's maximum level, and
+`ADC OVERLOAD` on the display means the RX2 gain is too high.
+
+With `backend = "iio"` the analyzer opens the RX DMA itself and can sweep
+70 MHz – 6 GHz, but then radio-controller must not run (one buffer per
+device).
 
 ## Features
 
@@ -42,7 +79,7 @@ a time (the systemd units conflict).
 | **Measurements** | Channel power (with power density) over a channel bandwidth at the center, occupied bandwidth (99 % or any percentage), peak table (top 10 above a threshold), limit line with an alarm |
 | **Display** | Spectrum with graticule, trace legend, marker readout and peak labels; waterfall (turbo, viridis, inferno, grayscale; auto or fixed range); drag to zoom, wheel to zoom, double-click to center; keyboard shortcuts |
 | **Export** | Traces as CSV (`/api/trace.csv`), screenshot as PNG, last raw capture as cs16 (`/api/iq.cs16`, realtime spans) |
-| **Operation** | Device reconnect with an alarm, overload / limit alarms, settings persisted in `state_file`, systemd watchdog, temperature readout |
+| **Operation** | Device reconnect with an alarm, overload / limit alarms, settings persisted in `state_file`, systemd watchdog, temperature readout; captures are read in chunks of at most 256 k samples (1 MB DMA buffers), so a narrow RBW with heavy averaging does not exhaust CMA memory on a Zynq |
 
 Keyboard: <kbd>P</kbd> peak search, <kbd>N</kbd> next peak, <kbd>←</kbd>/<kbd>→</kbd>
 peak left/right, <kbd>C</kbd> marker → center, <kbd>Space</kbd> run/hold,
@@ -133,11 +170,13 @@ second per segment.
 |---|---|
 | `src/spectrum.*` | planning (realtime / swept segments, FFT size for an RBW), bin stitching, detectors, traces, peak search, channel power, OBW: pure functions, unit tested |
 | `src/engine.*` | the acquisition thread: owns the radio, retunes per segment, builds `Frame`s; reconnects on errors |
+| `src/radio_tap.*` | `backend = "radio"`: RX2 blocks from radio-controller, RX2 gain over its control socket (fixed tuning) |
 | `src/analyzer.*` | the forgecpp application: controls, markers, alarms, HTTP routes, ZeroMQ, persistence |
 | `web/` | the analyzer page (canvas spectrum and waterfall, no dependencies) |
 | `../common/ad936x` | AD936x access through libiio, the simulator, FFT and windows (shared with radio_controller) |
 
 Tests (`tests/`) cover the DSP scaling, plans, detectors, traces, peaks and
 measurements, the engine on the simulator (realtime and swept spans, markers,
-peak track, single sweep, device errors) and the whole application over
-ZeroMQ.
+peak track, single sweep, device errors, bounded DMA buffers), the RX2 mode
+against a stand-in and against the real radio-controller (TX1 → RX2 loopback
+on a simulated AD9361) and the whole application over ZeroMQ.

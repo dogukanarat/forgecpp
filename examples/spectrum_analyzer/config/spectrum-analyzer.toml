@@ -3,8 +3,15 @@
 # from the web UI; with state_file set, those changes survive restarts.
 
 [analyzer]
-backend = "sim"               # sim | iio  (also: --backend)
+# sim   simulated AD9364
+# iio   own the RX path through libiio (radio-controller must not run)
+# radio RX2 of an AD9361/AD9363 that radio-controller streams ([zmq].rx2):
+#       both daemons run together; LO and sample rate are radio-controller's
+backend = "sim"               # also: --backend
 uri = ""                      # iio: "local:" (on the board), "ip:192.168.2.1", "usb:1.2.5"; "" = libiio default
+radio_tap = "tcp://127.0.0.1:5558"      # radio: radio-controller [zmq].rx2
+radio_control = "tcp://127.0.0.1:5557"  # radio: radio-controller [zmq].control
+radio_enable_rx2 = true                 # radio: turn RX2 on in radio-controller
 timeout_ms = 2000
 state_file = ""               # e.g. "/var/lib/spectrum-analyzer/state.json"
 sweep_rate_hz = 61440000      # sample rate of swept (wide) spans; lower it on slow links (USB/network)
@@ -35,7 +42,7 @@ control = "tcp://*:5567"      # REP: JSON commands (same controls as the web UI)
 [http]
 enabled = true
 host = "0.0.0.0"
-port = 8080
+port = 8081                   # radio-controller has 8080
 
 [log]
 level = "info"

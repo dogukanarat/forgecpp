@@ -4,10 +4,11 @@
 //   ad9361-phy               transceiver control
 //     altvoltage0 (out)        RX LO: frequency
 //     altvoltage1 (out)        TX LO: frequency
-//     voltage0 (in)            RX: sampling_frequency, rf_bandwidth, gain_control_mode, hardwaregain
+//     voltage0 (in)            RX1: sampling_frequency, rf_bandwidth, gain_control_mode, hardwaregain
+//     voltage1 (in)            RX2: gain_control_mode, hardwaregain (AD9361/AD9363 only)
 //     voltage0 (out)           TX: rf_bandwidth, hardwaregain (= -attenuation)
 //     temp0 (in)               input (milli-degree C)
-//   cf-ad9361-lpc            RX DMA (voltage0 = I, voltage1 = Q)
+//   cf-ad9361-lpc            RX DMA (voltage0/1 = RX1 I/Q, voltage2/3 = RX2 I/Q on 2R parts)
 //   cf-ad9361-dds-core-lpc   TX DMA (voltage0 = I, voltage1 = Q)
 //
 // Over/underflows are read from the AXI AD9361 core status register 0x80000088
@@ -17,6 +18,7 @@
 
 #include <iio.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cmath>
@@ -70,11 +72,17 @@ public:
         temp_ = iio_device_find_channel(phy_, "temp0", false);  // optional
         rx_i_ = channel(rx_dev_, "voltage0", false);
         rx_q_ = channel(rx_dev_, "voltage1", false);
+        // RX2 exists on AD9361/AD9363 in 2R2T mode (optional)
+        rx2_i_ = iio_device_find_channel(rx_dev_, "voltage2", false);
+        rx2_q_ = iio_device_find_channel(rx_dev_, "voltage3", false);
+        rx2_ = iio_device_find_channel(phy_, "voltage1", false);
+        if (!rx2_i_ || !rx2_q_ || !rx2_) rx2_i_ = rx2_q_ = rx2_ = nullptr;
         tx_i_ = channel(tx_dev_, "voltage0", true);
         tx_q_ = channel(tx_dev_, "voltage1", true);
 
         char mode[64] = {};
-        if (iio_channel_attr_read(rx_, "gain_control_mode", mode, sizeof(mode)) > 0) gain_mode_ = mode;
+        if (iio_channel_attr_read(rx_, "gain_control_mode", mode, sizeof(mode)) > 0) gain_mode_[0] = mode;
+        if (rx2_ && iio_channel_attr_read(rx2_, "gain_control_mode", mode, sizeof(mode)) > 0) gain_mode_[1] = mode;
     }
 
     ~IioBackend() override {
@@ -86,7 +94,7 @@ public:
     std::string name() const override { return "iio:" + (uri_.empty() ? std::string("default") : uri_); }
 
     nlohmann::json describe() const override {
-        nlohmann::json j{{"backend", "iio"}, {"uri", uri_}};
+        nlohmann::json j{{"backend", "iio"}, {"uri", uri_}, {"rx_channels", rx_channel_count()}};
         const char* desc = iio_context_get_description(ctx_);
         if (desc) j["description"] = desc;
         for (unsigned i = 0; i < iio_context_get_attrs_count(ctx_); ++i) {
@@ -107,19 +115,20 @@ public:
     void set_rx_bandwidth(double hz) override { write_ll(rx_, "rf_bandwidth", hz, "RX bandwidth"); }
     void set_tx_bandwidth(double hz) override { write_ll(tx_, "rf_bandwidth", hz, "TX bandwidth"); }
 
-    void set_gain_mode(const std::string& mode) override {
+    void set_gain_mode(const std::string& mode, unsigned ch) override {
         std::lock_guard lock(ctrl_mutex_);
-        if (const auto r = iio_channel_attr_write(rx_, "gain_control_mode", mode.c_str()); r < 0) {
-            fail("cannot set gain mode '" + mode + "'", static_cast<int>(r));
+        if (const auto r = iio_channel_attr_write(rx_phy(ch), "gain_control_mode", mode.c_str()); r < 0) {
+            fail("cannot set RX" + std::to_string(ch + 1) + " gain mode '" + mode + "'", static_cast<int>(r));
         }
-        gain_mode_ = mode;
+        gain_mode_[ch] = mode;
     }
 
-    void set_rx_gain(double db) override {
+    void set_rx_gain(double db, unsigned ch) override {
         std::lock_guard lock(ctrl_mutex_);
-        if (gain_mode_ != "manual") throw DeviceError("RX gain can only be set in manual gain mode");
-        if (int r = iio_channel_attr_write_double(rx_, "hardwaregain", db); r < 0) {
-            fail("cannot set RX gain to " + std::to_string(db) + " dB", r);
+        auto* c = rx_phy(ch);
+        if (gain_mode_[ch] != "manual") throw DeviceError("RX gain can only be set in manual gain mode");
+        if (int r = iio_channel_attr_write_double(c, "hardwaregain", db); r < 0) {
+            fail("cannot set RX" + std::to_string(ch + 1) + " gain to " + std::to_string(db) + " dB", r);
         }
     }
 
@@ -131,12 +140,14 @@ public:
         }
     }
 
-    double rx_gain() override {
+    double rx_gain(unsigned ch) override {
         std::lock_guard lock(ctrl_mutex_);
         double v = 0;
-        if (int r = iio_channel_attr_read_double(rx_, "hardwaregain", &v); r < 0) fail("cannot read RX gain", r);
+        if (int r = iio_channel_attr_read_double(rx_phy(ch), "hardwaregain", &v); r < 0) fail("cannot read RX gain", r);
         return v;
     }
+
+    unsigned rx_channel_count() const override { return rx2_ ? 2 : 1; }
 
     std::optional<double> temperature_c() override {
         if (!temp_) return std::nullopt;
@@ -147,10 +158,21 @@ public:
     }
 
     // --- RX ------------------------------------------------------------------------
-    void start_rx(std::size_t samples) override {
+    void start_rx(std::size_t samples, unsigned channels) override {
         stop_rx();
+        if (channels > rx_channel_count()) throw DeviceError(no_rx2_message());
         iio_channel_enable(rx_i_);
         iio_channel_enable(rx_q_);
+        if (rx2_i_) {
+            if (channels > 1) {
+                iio_channel_enable(rx2_i_);
+                iio_channel_enable(rx2_q_);
+            } else {
+                iio_channel_disable(rx2_i_);
+                iio_channel_disable(rx2_q_);
+            }
+        }
+        rx_channels_ = channels;
         auto* buf = iio_device_create_buffer(rx_dev_, samples, false);
         if (!buf) fail("cannot create RX buffer of " + std::to_string(samples) + " samples", errno);
         const auto* fmt = iio_channel_get_data_format(rx_i_);
@@ -162,7 +184,7 @@ public:
         rx_buf_ = buf;
     }
 
-    std::size_t read_rx(std::int16_t* iq, std::size_t max_samples) override {
+    std::size_t read_rx(std::int16_t* rx1, std::int16_t* rx2, std::size_t max_samples) override {
         iio_buffer* buf;
         {
             std::lock_guard lock(rx_mutex_);
@@ -176,15 +198,21 @@ public:
         }
         check_status(rx_dev_, kRxOverflow, rx_overflow_, rx_status_ok_);
 
+        // One sample of every enabled channel per step: I1 Q1 [I2 Q2].
         const auto step = iio_buffer_step(buf);
-        auto* p = static_cast<const std::uint8_t*>(iio_buffer_first(buf, rx_i_));
+        const auto* first = static_cast<const std::uint8_t*>(iio_buffer_first(buf, rx_i_));
         const auto* end = static_cast<const std::uint8_t*>(iio_buffer_end(buf));
-        std::size_t n = 0;
-        for (; p < end && n < max_samples; p += step, ++n) {
-            const auto* s = reinterpret_cast<const std::int16_t*>(p);
-            iq[2 * n] = to_full_scale(s[0], rx_bits_, rx_shift_);
-            iq[2 * n + 1] = to_full_scale(s[1], rx_bits_, rx_shift_);
-        }
+        const std::size_t available = step > 0 ? static_cast<std::size_t>(end - first) / static_cast<std::size_t>(step) : 0;
+        const std::size_t n = std::min(available, max_samples);
+        auto convert = [&](const std::uint8_t* p, std::int16_t* out) {
+            for (std::size_t i = 0; i < n; ++i, p += step) {
+                const auto* s = reinterpret_cast<const std::int16_t*>(p);
+                out[2 * i] = to_full_scale(s[0], rx_bits_, rx_shift_);
+                out[2 * i + 1] = to_full_scale(s[1], rx_bits_, rx_shift_);
+            }
+        };
+        if (rx1) convert(first, rx1);
+        if (rx2 && rx_channels_ > 1) convert(static_cast<const std::uint8_t*>(iio_buffer_first(buf, rx2_i_)), rx2);
         return n;
     }
 
@@ -244,6 +272,17 @@ public:
     bool take_tx_underflow() override { return tx_underflow_.exchange(false); }
 
 private:
+    std::string no_rx2_message() const {
+        return "this transceiver has one RX channel (AD9364, or an AD9361 in 1R1T mode); RX2 needs an "
+               "AD9361/AD9363 in 2R2T mode";
+    }
+
+    iio_channel* rx_phy(unsigned ch) {
+        if (ch == 0) return rx_;
+        if (ch == 1 && rx2_) return rx2_;
+        throw DeviceError(no_rx2_message());
+    }
+
     iio_channel* channel(iio_device* dev, const char* id, bool output) {
         auto* ch = iio_device_find_channel(dev, id, output);
         if (!ch) {
@@ -295,7 +334,9 @@ private:
     iio_device* tx_dev_ = nullptr;
     iio_channel *rx_lo_ = nullptr, *tx_lo_ = nullptr, *rx_ = nullptr, *tx_ = nullptr, *temp_ = nullptr;
     iio_channel *rx_i_ = nullptr, *rx_q_ = nullptr, *tx_i_ = nullptr, *tx_q_ = nullptr;
-    std::string gain_mode_ = "slow_attack";
+    iio_channel *rx2_ = nullptr, *rx2_i_ = nullptr, *rx2_q_ = nullptr;
+    std::string gain_mode_[2] = {"slow_attack", "slow_attack"};
+    unsigned rx_channels_ = 1;
 
     std::mutex ctrl_mutex_;
     std::mutex rx_mutex_;

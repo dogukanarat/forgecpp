@@ -7,6 +7,7 @@
 // Frames with it, so no hardware call ever runs on the main loop.
 
 #include "backend.hpp"
+#include "radio_tap.hpp"
 #include "spectrum.hpp"
 
 #include <array>
@@ -25,6 +26,8 @@
 namespace sa {
 
 constexpr std::size_t kTraces = 3;
+/// Largest capture read at once (cs16 samples): 1 MB per DMA buffer.
+constexpr std::size_t kMaxBufferSamples = std::size_t{1} << 18;
 constexpr std::size_t kMarkers = 4;
 
 struct MarkerSettings {
@@ -171,6 +174,7 @@ private:
     std::size_t buffer_size_ = 0;
     bool streaming_ = false;
     std::array<Trace, kTraces> traces_;
+    Plan last_plan_;
     std::uint64_t seq_ = 0;
     std::vector<std::int16_t> iq_;
     std::chrono::steady_clock::time_point next_temperature_{};

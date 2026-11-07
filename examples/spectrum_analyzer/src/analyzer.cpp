@@ -81,8 +81,9 @@ json settings_json(const Settings& s, double ref, double scale, bool limit_on, d
 Analyzer::Analyzer() : Application({"spectrum-analyzer", SA_VERSION, "AD9364 spectrum analyzer"}) {}
 
 void Analyzer::setup_cli(CLI::App& cli) {
-    cli.add_option("--backend", cli_backend_, "Radio backend: sim | iio (overrides [analyzer].backend)")
-        ->check(CLI::IsMember({"sim", "iio"}));
+    cli.add_option("--backend", cli_backend_,
+                   "sim | iio (own the RX path) | radio (RX2 of radio-controller); overrides [analyzer].backend")
+        ->check(CLI::IsMember({"sim", "iio", "radio"}));
     cli.add_option("--uri", cli_uri_, "libiio context URI, e.g. ip:192.168.2.1, local:");
 }
 
@@ -93,6 +94,13 @@ void Analyzer::load(const forge::Config& cfg) {
     backend_kind_ = cli_backend_.empty() ? cfg.get_or<std::string>("analyzer.backend", "sim") : cli_backend_;
     uri_ = cli_uri_.empty() ? cfg.get_or<std::string>("analyzer.uri", "") : cli_uri_;
     timeout_ms_ = cfg.get_or<unsigned>("analyzer.timeout_ms", 2000);
+    if (backend_kind_ != "sim" && backend_kind_ != "iio" && backend_kind_ != "radio") {
+        throw forge::ConfigError("analyzer.backend must be sim, iio or radio");
+    }
+    tap_.tap = cfg.get_or<std::string>("analyzer.radio_tap", "tcp://127.0.0.1:5558");
+    tap_.control = cfg.get_or<std::string>("analyzer.radio_control", "tcp://127.0.0.1:5557");
+    tap_.timeout = std::chrono::milliseconds(std::max(cfg.get_or<unsigned>("analyzer.radio_timeout_ms", 3000), 500u));
+    tap_.enable_rx2 = cfg.get_or<bool>("analyzer.radio_enable_rx2", true);
     state_file_ = cfg.get_or<std::string>("analyzer.state_file", "");
     limits_.sweep_rate_hz = std::clamp(cfg.get_or<double>("analyzer.sweep_rate_hz", 61.44e6), 2.083334e6, 61.44e6);
     limits_.usable_fraction = std::clamp(cfg.get_or<double>("analyzer.usable_fraction", 0.8), 0.3, 0.95);
@@ -233,6 +241,10 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
     fq.value("sweep_mode", "Mode", [this] {
         const auto f = engine_ ? engine_->latest() : nullptr;
         if (!f) return std::string("-");
+        if (f->plan.fixed) {
+            return fmt::format("RX2 of radio-controller (LO {:.3f} MHz, {:.3f} MSPS)", f->plan.segments.front().lo_hz / 1e6,
+                               f->plan.sample_rate_hz / 1e6);
+        }
         return f->plan.swept ? fmt::format("swept, {} segments", f->plan.segments.size()) : std::string("realtime");
     });
 
@@ -605,6 +617,8 @@ json Analyzer::frame_json(const Frame& f) const {
            {"fft", f.plan.fft_size},
            {"rate", f.plan.sample_rate_hz},
            {"swept", f.plan.swept},
+           {"fixed", f.plan.fixed},
+           {"lo", f.plan.segments.empty() ? 0.0 : f.plan.segments.front().lo_hz},
            {"segments", f.plan.segments.size()},
            {"sweep_ms", std::round(f.sweep_ms * 10) / 10},
            {"overload", f.overload},
@@ -710,9 +724,11 @@ void Analyzer::on_start() {
     const auto kind = backend_kind_;
     const auto uri = uri_;
     const auto timeout = timeout_ms_;
+    const auto tap = tap_;
     engine_ = std::make_unique<Engine>(
-        [kind, uri, timeout]() -> std::unique_ptr<radio::Backend> {
+        [kind, uri, timeout, tap]() -> std::unique_ptr<radio::Backend> {
             if (kind == "iio") return radio::make_iio_backend(uri, timeout);
+            if (kind == "radio") return make_radio_tap_backend(tap);
             radio::SimOptions o;
             o.loopback = false;
             return radio::make_sim_backend(o);
@@ -756,6 +772,15 @@ void Analyzer::publish_frame() {
         }
     }
     if (f->track_center_hz && settings_.signal_track) set_frequency(*f->track_center_hz, settings_.span_hz);
+    // RX2 of radio-controller: the window was fitted into its band; show what is measured.
+    if (f->plan.fixed) {
+        const double center = (f->start_hz + f->stop_hz) / 2, span = f->stop_hz - f->start_hz;
+        if (std::abs(center - settings_.center_hz) > 1 || std::abs(span - settings_.span_hz) > 1) {
+            settings_.center_hz = std::round(center);
+            settings_.span_hz = std::round(span);
+            changed();
+        }
+    }
 
     // Limit line (display unit).
     if (limit_on_ && !f->live.empty()) {

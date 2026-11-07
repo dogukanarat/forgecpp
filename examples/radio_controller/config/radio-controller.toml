@@ -18,18 +18,29 @@ gain_mode = "slow_attack"     # manual | slow_attack | fast_attack | hybrid
 rx_gain_db = 30               # used in manual gain mode
 tx_attenuation_db = 10        # 0 .. 89.75
 
+# RX2 (AD9361/AD9363 in 2R2T mode): shares RX LO and sample rate with RX1, own gain.
+# Its samples go to [zmq].rx2 in blocks (the spectrum analyzer's input).
+rx2_enabled = false           # spectrum-analyzer (backend = "radio") turns it on
+rx2_gain_mode = "slow_attack"
+rx2_gain_db = 30
+rx2_tap_samples = 65536       # samples per block, at most buffer_size (= the analyzer's largest FFT)
+rx2_tap_hz = 20               # blocks per second (0 = every buffer)
+
 state_file = ""               # e.g. "/var/lib/radio-controller/state.json": keep runtime changes across restarts
 spectrum_size = 1024          # FFT size for the web spectrum
 spectrum_hz = 5
 temperature_alarm_c = 75
 
 [radio.sim]
+rx_channels = 2               # 1 = AD9364, 2 = AD9361 (RX1 + RX2)
 loopback = true               # transmitted samples appear in RX (shifted by TX LO - RX LO)
+loopback_rx = 2               # RX channel TX1 is cabled to (1 or 2)
 
 [zmq]
 rx = "tcp://*:5555"           # PUB: topic "iq", header JSON + cs16 samples
 tx = "tcp://*:5556"           # PULL: header JSON + cs16 samples ({"cyclic": true} repeats the frame)
 control = "tcp://*:5557"      # REP: JSON commands
+rx2 = "tcp://*:5558"          # PUB: topic "iq", RX2 blocks (header has "channel": 2)
 
 [http]
 enabled = true

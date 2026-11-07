@@ -12,7 +12,9 @@ nlohmann::json to_json(const Settings& s) {
             {"tx_bandwidth_hz", s.tx_bandwidth_hz},
             {"gain_mode", s.gain_mode},
             {"rx_gain_db", s.rx_gain_db},
-            {"tx_attenuation_db", s.tx_attenuation_db}};
+            {"tx_attenuation_db", s.tx_attenuation_db},
+            {"rx2_gain_mode", s.rx2_gain_mode},
+            {"rx2_gain_db", s.rx2_gain_db}};
 }
 
 Settings settings_from_json(const nlohmann::json& j, Settings s) {
@@ -27,10 +29,14 @@ Settings settings_from_json(const nlohmann::json& j, Settings s) {
     num("tx_bandwidth_hz", s.tx_bandwidth_hz, Limits::bw_min_hz, Limits::bw_max_hz);
     num("rx_gain_db", s.rx_gain_db, Limits::rx_gain_min_db, Limits::rx_gain_max_db);
     num("tx_attenuation_db", s.tx_attenuation_db, Limits::tx_atten_min_db, Limits::tx_atten_max_db);
-    if (j.contains("gain_mode") && j["gain_mode"].is_string()) {
-        const auto mode = j["gain_mode"].get<std::string>();
-        if (std::find(gain_modes().begin(), gain_modes().end(), mode) != gain_modes().end()) s.gain_mode = mode;
-    }
+    num("rx2_gain_db", s.rx2_gain_db, Limits::rx_gain_min_db, Limits::rx_gain_max_db);
+    auto mode = [&](const char* key, std::string& out) {
+        if (!j.contains(key) || !j[key].is_string()) return;
+        const auto m = j[key].get<std::string>();
+        if (std::find(gain_modes().begin(), gain_modes().end(), m) != gain_modes().end()) out = m;
+    };
+    mode("gain_mode", s.gain_mode);
+    mode("rx2_gain_mode", s.rx2_gain_mode);
     return s;
 }
 
@@ -42,8 +48,12 @@ void Backend::apply(const Settings& s) {
     set_tx_bandwidth(s.tx_bandwidth_hz);
     set_rx_lo(s.rx_lo_hz);
     set_tx_lo(s.tx_lo_hz);
-    set_gain_mode(s.gain_mode);
-    if (s.gain_mode == "manual") set_rx_gain(s.rx_gain_db);
+    set_gain_mode(s.gain_mode, 0);
+    if (s.gain_mode == "manual") set_rx_gain(s.rx_gain_db, 0);
+    if (rx_channel_count() > 1) {
+        set_gain_mode(s.rx2_gain_mode, 1);
+        if (s.rx2_gain_mode == "manual") set_rx_gain(s.rx2_gain_db, 1);
+    }
     set_tx_attenuation(s.tx_attenuation_db);
 }
 

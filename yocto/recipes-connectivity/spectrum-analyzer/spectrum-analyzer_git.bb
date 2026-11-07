@@ -1,5 +1,5 @@
-SUMMARY = "AD9364 spectrum analyzer"
-DESCRIPTION = "Swept/realtime spectrum analyzer on the AD9364 (AD936x) RX path with a \
+SUMMARY = "AD936x spectrum analyzer"
+DESCRIPTION = "Spectrum analyzer for AD936x transceivers (RX2 of radio-controller, or its own RX path) with a \
 web UI: RBW/VBW, detectors, max/min hold and average traces, markers with peak \
 search and peak track, waterfall, channel power and occupied bandwidth, limit \
 line alarm. Spectrum stream and control over ZeroMQ. Built on forgecpp."
@@ -25,8 +25,9 @@ EXTRA_OECMAKE = " \
     -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir} \
 "
 
-# On the board the radio is the local IIO device; keep runtime changes across reboots.
-SA_BACKEND ?= "iio"
+# "radio": RX2 of an AD9361/AD9363 shared with radio-controller (both run together).
+# "iio": own the RX path of the local IIO device (AD9364; radio-controller must not run).
+SA_BACKEND ?= "radio"
 SA_URI ?= "local:"
 
 do_install:append() {
@@ -38,7 +39,6 @@ do_install:append() {
 }
 
 SYSTEMD_SERVICE:${PN} = "spectrum-analyzer.service"
-# Both daemons use the AD9364 RX path (the unit conflicts with radio-controller):
-# enable the one the image is for.
 SYSTEMD_AUTO_ENABLE:${PN} ?= "enable"
+RRECOMMENDS:${PN} = "${@'radio-controller' if d.getVar('SA_BACKEND') == 'radio' else ''}"
 CONFFILES:${PN} = "${sysconfdir}/spectrum-analyzer/spectrum-analyzer.toml"

@@ -22,7 +22,7 @@ endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/ad936x ${CMAKE_CURRENT_BINARY_DIR}/ad936x)
 
 # Everything except main() lives in a static library so the tests can use it.
-add_library(sa_core STATIC src/spectrum.cpp src/engine.cpp src/analyzer.cpp)
+add_library(sa_core STATIC src/spectrum.cpp src/engine.cpp src/radio_tap.cpp src/analyzer.cpp)
 target_include_directories(sa_core PUBLIC src)
 target_link_libraries(sa_core PUBLIC ad936x forgecpp::forgecpp forgecpp::zmq)
 target_compile_definitions(sa_core PUBLIC SA_VERSION="${PROJECT_VERSION}")
@@ -53,6 +53,12 @@ if(SA_STANDALONE)
 endif()
 if(BUILD_TESTING OR FORGECPP_BUILD_TESTS)
     if(TARGET forgecpp::testing OR TARGET forgecpp_testing)
-        forge_add_test(spectrum_analyzer_tests SOURCES tests/test_spectrum.cpp tests/test_analyzer.cpp LIBS sa_core)
+        forge_add_test(spectrum_analyzer_tests
+            SOURCES tests/test_spectrum.cpp tests/test_analyzer.cpp tests/test_radio_tap.cpp
+            LIBS sa_core)
+        if(TARGET radio_core)  # in-tree: also test against the real radio-controller
+            target_link_libraries(spectrum_analyzer_tests PRIVATE radio_core)
+            target_compile_definitions(spectrum_analyzer_tests PRIVATE SA_WITH_RADIO_CONTROLLER)
+        endif()
     endif()
 endif()

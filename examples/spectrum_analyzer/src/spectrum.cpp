@@ -15,7 +15,39 @@ std::size_t next_pow2(double v) {
     while (static_cast<double>(n) < v) n <<= 1;
     return n;
 }
+
+// RBW -> FFT size: RBW = ENBW(bins) * rate / N (the power of two that reaches the target RBW).
+void choose_fft(Plan& p, double span_hz, double rbw_hz, radio::dsp::Window window, std::size_t max_fft,
+                const HardwareLimits& lim) {
+    std::size_t cap = lim.fft_min;
+    while (cap * 2 <= std::min(max_fft, lim.fft_max)) cap *= 2;
+    const double enbw = radio::dsp::make_window(window, 64).enbw_bins;
+    const double target = rbw_hz > 0 ? rbw_hz : span_hz / 500.0;
+    p.fft_size = std::clamp(next_pow2(enbw * p.sample_rate_hz / target), lim.fft_min, cap);
+    p.enbw_bins = radio::dsp::make_window(window, p.fft_size).enbw_bins;
+    p.rbw_hz = p.enbw_bins * p.sample_rate_hz / static_cast<double>(p.fft_size);
+}
 }  // namespace
+
+Plan make_fixed_plan(double center_hz, double span_hz, double rbw_hz, radio::dsp::Window window, double lo_hz,
+                     double rate_hz, std::size_t max_fft, const HardwareLimits& lim) {
+    Plan p;
+    p.fixed = true;
+    p.sample_rate_hz = rate_hz;
+    const double usable = rate_hz * lim.usable_fraction;
+    const double low = lo_hz - usable / 2, high = lo_hz + usable / 2;
+    span_hz = std::clamp(span_hz, std::min(1e3, usable), usable);
+    if (center_hz + span_hz / 2 <= low || center_hz - span_hz / 2 >= high) {
+        center_hz = lo_hz;  // nothing of the requested window is in the band
+        span_hz = usable;
+    }
+    center_hz = std::clamp(center_hz, low + span_hz / 2, high - span_hz / 2);
+    p.start_hz = center_hz - span_hz / 2;
+    p.stop_hz = center_hz + span_hz / 2;
+    choose_fft(p, span_hz, rbw_hz, window, max_fft, lim);
+    p.segments.push_back({lo_hz, p.start_hz, p.stop_hz});
+    return p;
+}
 
 Plan make_plan(double center_hz, double span_hz, double rbw_hz, radio::dsp::Window window,
                const HardwareLimits& lim) {
@@ -30,12 +62,7 @@ Plan make_plan(double center_hz, double span_hz, double rbw_hz, radio::dsp::Wind
                                                                  lim.rate_max_hz);
     p.rf_bandwidth_hz = std::min(p.sample_rate_hz * lim.usable_fraction * 1.05, 56e6);
 
-    // RBW -> FFT size: RBW = ENBW(bins) * rate / N
-    const double enbw = radio::dsp::make_window(window, 64).enbw_bins;
-    const double target = rbw_hz > 0 ? rbw_hz : span_hz / 500.0;
-    p.fft_size = std::clamp(next_pow2(enbw * p.sample_rate_hz / target), lim.fft_min, lim.fft_max);
-    p.enbw_bins = radio::dsp::make_window(window, p.fft_size).enbw_bins;
-    p.rbw_hz = p.enbw_bins * p.sample_rate_hz / static_cast<double>(p.fft_size);
+    choose_fft(p, span_hz, rbw_hz, window, lim.fft_max, lim);
 
     if (!p.swept) {
         p.segments.push_back({center_hz, p.start_hz, p.stop_hz});

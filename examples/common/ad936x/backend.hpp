@@ -1,5 +1,11 @@
 #pragma once
-// Hardware abstraction for AD936x transceivers (AD9364: 1 RX + 1 TX).
+// Hardware abstraction for AD936x transceivers on ADI's ad9361 driver:
+// AD9364 (1 RX + 1 TX) and AD9361/AD9363 (2 RX + 2 TX).
+//
+// Both RX channels of an AD9361 share the RX LO, the sample rate and the RF
+// bandwidth, and arrive in one DMA buffer; only gain (and gain control) is per
+// channel. So one process streams both (start_rx with channels = 2) and the
+// gain calls take a channel index (0 = RX1, 1 = RX2). TX uses TX1.
 //
 // Samples cross this interface as "cs16": interleaved I/Q int16 pairs at full
 // scale (+-32767), in both directions. Backends convert to and from the
@@ -56,6 +62,9 @@ struct Settings {
     std::string gain_mode = "slow_attack";
     double rx_gain_db = 30;          ///< used in manual gain mode
     double tx_attenuation_db = 10;   ///< 0 .. 89.75 dB, 0.25 dB steps
+    // RX2 (AD9361/AD9363 only; ignored by apply() on single-RX parts)
+    std::string rx2_gain_mode = "slow_attack";
+    double rx2_gain_db = 30;
 };
 
 nlohmann::json to_json(const Settings& s);
@@ -76,21 +85,30 @@ public:
     virtual void set_sample_rate(double hz) = 0;
     virtual void set_rx_bandwidth(double hz) = 0;
     virtual void set_tx_bandwidth(double hz) = 0;
-    virtual void set_gain_mode(const std::string& mode) = 0;
-    virtual void set_rx_gain(double db) = 0;          ///< manual gain mode only
+    /// Gain control of RX channel `channel` (0 = RX1, 1 = RX2).
+    virtual void set_gain_mode(const std::string& mode, unsigned channel = 0) = 0;
+    virtual void set_rx_gain(double db, unsigned channel = 0) = 0;  ///< manual gain mode only
     virtual void set_tx_attenuation(double db) = 0;
     /// Current RX gain (changes on its own under AGC).
-    virtual double rx_gain() = 0;
+    virtual double rx_gain(unsigned channel = 0) = 0;
     virtual std::optional<double> temperature_c() = 0;
+    /// Number of RX channels: 1 (AD9364) or 2 (AD9361/AD9363).
+    virtual unsigned rx_channel_count() const = 0;
 
     /// Apply every setting in a sensible order.
     void apply(const Settings& s);
 
     // --- RX streaming (RX thread) ------------------------------------------
-    virtual void start_rx(std::size_t samples_per_buffer) = 0;
+    /// `channels`: 1 = RX1, 2 = RX1 and RX2 (same buffer, same sample clock).
+    /// Throws DeviceError when the transceiver has fewer channels.
+    virtual void start_rx(std::size_t samples_per_buffer, unsigned channels) = 0;
+    void start_rx(std::size_t samples_per_buffer) { start_rx(samples_per_buffer, 1); }
     /// Block until a buffer is available and copy up to `max_samples` complex
-    /// samples (cs16) into `iq`. Returns 0 when cancelled. Throws DeviceError.
-    virtual std::size_t read_rx(std::int16_t* iq, std::size_t max_samples) = 0;
+    /// samples (cs16) of RX1 into `rx1` and, when started with two channels,
+    /// of RX2 into `rx2` (either may be null). Returns the number of samples
+    /// per channel, 0 when cancelled. Throws DeviceError.
+    virtual std::size_t read_rx(std::int16_t* rx1, std::int16_t* rx2, std::size_t max_samples) = 0;
+    std::size_t read_rx(std::int16_t* iq, std::size_t max_samples) { return read_rx(iq, nullptr, max_samples); }
     virtual void stop_rx() = 0;
     /// Thread-safe: make a pending read_rx() return.
     virtual void cancel_rx() = 0;
@@ -108,7 +126,9 @@ public:
 };
 
 struct SimOptions {
-    bool loopback = true;   ///< mix transmitted samples into RX when the LOs are close
+    bool loopback = true;      ///< mix transmitted samples into RX when the LOs are close
+    unsigned loopback_rx = 0;  ///< RX channel the TX output is coupled into (1 = RX2: a TX1 -> RX2 cable)
+    unsigned rx_channels = 1;  ///< 1: AD9364, 2: AD9361 (RX1 and RX2 see the same air, independent noise)
     unsigned seed = 1;
 };
 

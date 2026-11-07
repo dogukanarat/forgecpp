@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Device layout of an AD9361 in 2R2T mode (ADI ad9361 driver) for libiio's XML backend.
+     Used by the tests: libiio parses it like a real context, but the XML
+     backend is read-only, so attribute writes and buffers fail. -->
+<context name="xml" description="AD9361 test fixture">
+  <context-attribute name="hw_model" value="AD9361 test fixture" />
+  <device id="iio:device0" name="ad9361-phy">
+    <channel id="altvoltage0" name="RX_LO" type="output">
+      <attribute name="frequency" filename="out_altvoltage0_RX_LO_frequency" />
+    </channel>
+    <channel id="altvoltage1" name="TX_LO" type="output">
+      <attribute name="frequency" filename="out_altvoltage1_TX_LO_frequency" />
+    </channel>
+    <channel id="voltage0" type="input">
+      <attribute name="gain_control_mode" filename="in_voltage0_gain_control_mode" />
+      <attribute name="hardwaregain" filename="in_voltage0_hardwaregain" />
+      <attribute name="rf_bandwidth" filename="in_voltage_rf_bandwidth" />
+      <attribute name="sampling_frequency" filename="in_voltage_sampling_frequency" />
+    </channel>
+    <channel id="voltage1" type="input">
+      <attribute name="gain_control_mode" filename="in_voltage1_gain_control_mode" />
+      <attribute name="hardwaregain" filename="in_voltage1_hardwaregain" />
+      <attribute name="rf_bandwidth" filename="in_voltage_rf_bandwidth" />
+      <attribute name="sampling_frequency" filename="in_voltage_sampling_frequency" />
+    </channel>
+    <channel id="voltage0" type="output">
+      <attribute name="hardwaregain" filename="out_voltage0_hardwaregain" />
+      <attribute name="rf_bandwidth" filename="out_voltage_rf_bandwidth" />
+      <attribute name="sampling_frequency" filename="out_voltage_sampling_frequency" />
+    </channel>
+    <channel id="temp0" type="input">
+      <attribute name="input" filename="in_temp0_input" />
+    </channel>
+  </device>
+  <device id="iio:device1" name="cf-ad9361-dds-core-lpc">
+    <channel id="voltage0" type="output">
+      <scan-element index="0" format="le:S16/16&gt;&gt;0" />
+    </channel>
+    <channel id="voltage1" type="output">
+      <scan-element index="1" format="le:S16/16&gt;&gt;0" />
+    </channel>
+  </device>
+  <device id="iio:device2" name="cf-ad9361-lpc">
+    <channel id="voltage0" type="input">
+      <scan-element index="0" format="le:S12/16&gt;&gt;0" />
+    </channel>
+    <channel id="voltage1" type="input">
+      <scan-element index="1" format="le:S12/16&gt;&gt;0" />
+    </channel>
+    <channel id="voltage2" type="input">
+      <scan-element index="2" format="le:S12/16&gt;&gt;0" />
+    </channel>
+    <channel id="voltage3" type="input">
+      <scan-element index="3" format="le:S12/16&gt;&gt;0" />
+    </channel>
+  </device>
+</context>
