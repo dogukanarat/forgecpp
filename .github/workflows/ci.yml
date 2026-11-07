@@ -171,7 +171,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sanitize: ["address,undefined", "thread"]
+        include:
+          - { id: asan, sanitize: "address,undefined" }   # id: cache keys may not contain commas
+          - { id: tsan, sanitize: "thread" }
     name: sanitize (${{ matrix.sanitize }})
     runs-on: ubuntu-24.04
     steps:
@@ -188,8 +190,8 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.ccache
-          key: ccache-sanitize-${{ matrix.sanitize }}-${{ github.sha }}
-          restore-keys: ccache-sanitize-${{ matrix.sanitize }}-
+          key: ccache-sanitize-${{ matrix.id }}-${{ github.sha }}
+          restore-keys: ccache-sanitize-${{ matrix.id }}-
       - name: Build and test with ${{ matrix.sanitize }}
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
