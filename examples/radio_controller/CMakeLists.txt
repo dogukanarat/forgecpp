@@ -14,9 +14,6 @@ endif()
 if(NOT TARGET forgecpp::forgecpp)
     find_package(forgecpp 0.2 REQUIRED)
 endif()
-if(NOT TARGET forgecpp::zmq)
-    message(FATAL_ERROR "radio-controller needs forgecpp built with ZeroMQ (forgecpp::zmq)")
-endif()
 
 # AD936x access (libiio backend + simulator) and DSP, shared with spectrum_analyzer.
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/ad936x ${CMAKE_CURRENT_BINARY_DIR}/ad936x)
@@ -24,7 +21,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/ad936x ${CMAKE_CURRENT_BI
 # Everything except main() lives in a static library so the tests can use it.
 add_library(radio_core STATIC src/radio_controller.cpp)
 target_include_directories(radio_core PUBLIC src)
-target_link_libraries(radio_core PUBLIC ad936x forgecpp::forgecpp forgecpp::zmq)
+target_link_libraries(radio_core PUBLIC ad936x forgecpp::forgecpp)
 target_compile_definitions(radio_core PUBLIC RADIO_VERSION="${PROJECT_VERSION}")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(radio_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -49,8 +46,12 @@ forge_add_app(radio-controller
 configure_file(config/radio-controller.toml "${CMAKE_CURRENT_BINARY_DIR}/radio-controller.toml" COPYONLY)
 
 if(RADIO_STANDALONE)
-    install(PROGRAMS clients/rx_capture.py clients/tx_tone.py clients/radioctl.py
+    install(PROGRAMS clients/rx_capture.py clients/tx_tone.py
             DESTINATION ${CMAKE_INSTALL_DATADIR}/radio-controller/clients)
+    install(FILES clients/forge_msg.py DESTINATION ${CMAKE_INSTALL_DATADIR}/radio-controller/clients)
+    # radio.v1 Python modules (forge.v1 ones come with forgecpp)
+    install(DIRECTORY ${AD936X_PYTHON_DIR}/ DESTINATION ${CMAKE_INSTALL_DATADIR}/radio-controller/python
+            FILES_MATCHING PATTERN "*.py")
 endif()
 
 if(RADIO_STANDALONE)

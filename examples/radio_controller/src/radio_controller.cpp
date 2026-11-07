@@ -1,6 +1,10 @@
 #include "radio_controller.hpp"
 
 #include "dsp.hpp"
+#include "radio/v1/radio.pb.h"
+
+#include <forge/buffer_pool.hpp>
+#include <forge/trace.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -55,11 +59,6 @@ unsigned channel_mask(const json& radio, const char* key, unsigned fallback) {
     return mask;
 }
 
-std::int64_t now_ns() {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
-        .count();
-}
-
 double round_to(double v, double step) { return std::round(v / step) * step; }
 
 const char* to_string(int mode) {
@@ -76,7 +75,53 @@ RadioController::RadioController()
     : Application({"radio-controller", RADIO_VERSION, "AD9364 radio control and IQ streaming over ZeroMQ"}) {}
 
 std::string RadioController::tx_endpoint() const { return tx_receiver_ ? tx_receiver_->endpoint() : ""; }
-std::string RadioController::control_endpoint() const { return control_server_ ? control_server_->endpoint() : ""; }
+std::string RadioController::control_endpoint() const {
+    const auto e = const_cast<RadioController*>(this)->endpoints();
+    auto it = e.find("control");
+    return it == e.end() ? std::string() : it->second;
+}
+std::string RadioController::data_endpoint() const {
+    const auto e = const_cast<RadioController*>(this)->endpoints();
+    auto it = e.find("data");
+    return it == e.end() ? std::string() : it->second;
+}
+
+void RadioController::setup_config(forge::config::Schema& s) {
+    using forge::json;
+    s.section("radio", "AD936x transceiver");
+    s.string("radio.backend", "sim", "sim: simulator, iio: libiio device (also --backend)").choices({"sim", "iio"});
+    s.string("radio.uri", "", "libiio context: local:, ip:192.168.2.1, usb:1.2.5 (empty = libiio default)");
+    s.integer("radio.timeout_ms", 2000, "libiio timeout").range(100, 60000).unit("ms");
+    s.array("radio.rx_channels", json::array({1}), "RX channels it listens to (IQ stream \"iq\"): 1, 2");
+    s.integer("radio.tx_channel", 1, "TX channel it drives").range(1, 2);
+    s.array("radio.tap_rx", json::array(), "RX channels it shares (topics \"rx1\"/\"rx2\"), e.g. for the analyzer");
+    s.integer("radio.tap_samples", 65536, "Samples per shared block (at most buffer_size)").range(1024, 4194304);
+    s.number("radio.tap_hz", 20, "Shared blocks per second (0 = every buffer)").range(0, 1000).unit("Hz");
+    s.integer("radio.buffer_size", 65536, "Samples per DMA buffer").range(1024, 1 << 22);
+    s.boolean("radio.rx_enabled", true, "Stream RX at start");
+    s.boolean("radio.tx_enabled", false, "Accept TX frames at start");
+    s.number("radio.rx_lo_hz", 2400e6, "RX LO").range(Limits::lo_min_hz, Limits::lo_max_hz).unit("Hz");
+    s.number("radio.tx_lo_hz", 2400e6, "TX LO").range(Limits::lo_min_hz, Limits::lo_max_hz).unit("Hz");
+    s.number("radio.sample_rate_hz", 30.72e6, "Sample rate").range(Limits::rate_min_hz, Limits::rate_max_hz).unit("Hz");
+    s.number("radio.rx_bandwidth_hz", 18e6, "RX RF bandwidth").range(Limits::bw_min_hz, Limits::bw_max_hz).unit("Hz");
+    s.number("radio.tx_bandwidth_hz", 18e6, "TX RF bandwidth").range(Limits::bw_min_hz, Limits::bw_max_hz).unit("Hz");
+    s.string("radio.gain_mode", "slow_attack", "RX1 gain control").choices(gain_modes());
+    s.number("radio.rx_gain_db", 30, "RX1 gain (manual mode)").range(Limits::rx_gain_min_db, Limits::rx_gain_max_db).unit("dB");
+    s.string("radio.rx2_gain_mode", "slow_attack", "RX2 gain control").choices(gain_modes());
+    s.number("radio.rx2_gain_db", 30, "RX2 gain (manual mode)").range(Limits::rx_gain_min_db, Limits::rx_gain_max_db).unit("dB");
+    s.number("radio.tx_attenuation_db", 10, "TX attenuation of tx_channel").range(0, 89.75).unit("dB");
+    s.string("radio.state_file", "", "Keep runtime changes across restarts (JSON)");
+    s.integer("radio.spectrum_size", 1024, "FFT size of the web spectrum (power of two)").range(64, 65536);
+    s.number("radio.spectrum_hz", 5, "Web spectrum updates per second").range(0.5, 30).unit("Hz");
+    s.number("radio.temperature_alarm_c", 75, "Temperature alarm threshold").unit("°C");
+    s.section("radio.sim", "Simulator");
+    s.integer("radio.sim.channels", 1, "1 = AD9364, 2 = AD9361").range(1, 2);
+    s.boolean("radio.sim.loopback", true, "Simulated TX -> RX cable");
+    s.integer("radio.sim.loopback_tx", 1, "Cable from TX channel").range(1, 2);
+    s.integer("radio.sim.loopback_rx", 1, "... to RX channel").range(1, 2);
+    s.section("zmq", "Radio sockets");
+    s.string("zmq.tx", "tcp://*:5556", "PULL: radio.v1.TxBlock + cs16 samples");
+}
 
 void RadioController::setup_cli(CLI::App& cli) {
     cli.add_option("--backend", cli_backend_, "Radio backend: sim | iio (overrides [radio].backend)")
@@ -272,10 +317,9 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
         .confirm("Reopen the radio? Streaming restarts.");
 
     auto& net = ui.group("ZeroMQ");
-    net.value("zmq_rx", "IQ stream (PUB)", rx_endpoint_);
-    net.value("zmq_tap", "Tap (PUB)", tap_endpoint_);
+    net.value("zmq_data", "Streams (PUB: iq, rx1, rx2)", [this] { return data_endpoint(); });
     net.value("zmq_tx", "TX input (PULL)", [this] { return tx_endpoint(); });
-    net.value("zmq_control", "Control (REP)", [this] { return control_endpoint(); });
+    net.value("zmq_control", "Control (forge.v1)", [this] { return control_endpoint(); });
 }
 
 template <class F>
@@ -341,14 +385,16 @@ void RadioController::load_settings(const forge::Config& cfg) {
 void RadioController::on_start() {
     const auto cfg = config();
 
-    // Sockets first, so clients can connect even while the radio is absent.
+    // Streams on [forge].data, so clients can subscribe even while the radio is absent.
+    iq_stream_ = &stream("iq", "radio.v1.IqBlock");
+    for (unsigned ch = 0; ch < 2; ++ch) {
+        if (tap_mask_ >> ch & 1u) {
+            tap_stream_[ch] = &stream("rx" + std::to_string(ch + 1), "radio.v1.IqBlock",
+                                      forge::zmq::StreamOptions{"latest", tap_hz_});
+        }
+    }
     running_ = true;
-    std::promise<Endpoints> bound;
-    auto rx_bound = bound.get_future();
-    rx_thread_ = std::thread([this, p = std::move(bound)]() mutable { rx_loop(std::move(p)); });
-    const auto endpoints = rx_bound.get();
-    rx_endpoint_ = endpoints.rx;
-    tap_endpoint_ = endpoints.tap;
+    rx_thread_ = std::thread([this] { rx_loop(); });
 
     forge::zmq::Receiver::Options tx_opts;
     tx_opts.bind = true;
@@ -356,9 +402,7 @@ void RadioController::on_start() {
     tx_receiver_ = std::make_unique<forge::zmq::Receiver>(
         forge::zmq::Receiver::Kind::pull, cfg.get_or<std::string>("zmq.tx", "tcp://*:5556"),
         [this](forge::zmq::Message&& m) { on_tx_frame(std::move(m)); }, tx_opts);
-    control_server_ = forge::zmq::serve_application(*this, cfg.get_or<std::string>("zmq.control", "tcp://*:5557"));
-    logger()->info("zmq: IQ stream on {}, tap on {}, TX input on {}, control on {}", rx_endpoint_, tap_endpoint_,
-                   tx_endpoint(), control_endpoint());
+    logger()->info("zmq: streams on {}, TX input on {}", data_endpoint(), tx_endpoint());
     logger()->info("channels: listens to {}, drives TX{}, shares {}", channel_list(rx_mask_, "RX"), tx_channel_ + 1,
                    channel_list(tap_mask_, "RX"));
 
@@ -382,7 +426,6 @@ void RadioController::on_stop() {
     }
     if (rx_thread_.joinable()) rx_thread_.join();
     tx_receiver_.reset();
-    control_server_.reset();
     close_backend();
     dirty_ = true;
     save_state();
@@ -447,6 +490,7 @@ void RadioController::open_backend() {
         if (connected_ || !alarms().active(kDeviceAlarm)) logger()->error("radio: {}", e.what());
         connected_ = false;
         alarms().raise(kDeviceAlarm, forge::Severity::error, std::string("Radio not available: ") + e.what());
+        health().set("radio", forge::HealthState::failed, e.what());
         return;
     }
     {
@@ -458,6 +502,7 @@ void RadioController::open_backend() {
     tx_mode_ = TxMode::idle;
     tx_reset_ = true;
     alarms().clear(kDeviceAlarm);
+    health().set("radio", forge::HealthState::ok, backend_->name());
     ++tuning_version_;
     logger()->info("radio: connected to {} ({}R{}T; RX {:.3f} MHz, {:.3f} MSPS)", backend_->name(),
                    hw_rx_channels_.load(), hw_tx_channels_.load(), settings_.rx_lo_hz / 1e6,
@@ -489,44 +534,35 @@ void RadioController::device_lost(const std::string& why) {
     if (!connected_) return;
     logger()->error("radio: device error: {}", why);
     alarms().raise(kDeviceAlarm, forge::Severity::error, "Radio connection lost: " + why);
+    health().set("radio", forge::HealthState::failed, why);
     close_backend();  // the 5 s timer reconnects
 }
 
 // ---------------------------------------------------------------------------
 // RX thread: device -> ZeroMQ PUB
 
-void RadioController::rx_loop(std::promise<Endpoints> bound) {
-    std::unique_ptr<forge::zmq::Sender> pub, tap;
-    try {
-        forge::zmq::SocketOptions so;
-        so.send_hwm = 32;  // frames queued per subscriber before that subscriber drops
-        pub = std::make_unique<forge::zmq::Sender>(forge::zmq::Sender::Kind::pub,
-                                                    config().get_or<std::string>("zmq.rx", "tcp://*:5555"), true, so);
-        so.send_hwm = 4;   // tap blocks: a slow reader only ever wants the newest
-        tap = std::make_unique<forge::zmq::Sender>(forge::zmq::Sender::Kind::pub,
-                                                    config().get_or<std::string>("zmq.tap", "tcp://*:5558"), true, so);
-        bound.set_value({pub->endpoint(), tap->endpoint()});
-    } catch (...) {
-        bound.set_exception(std::current_exception());
-        return;
-    }
+void RadioController::rx_loop() {
+    configure_thread("rx");  // [threads.rx]: priority, CPU (real-time receive)
+    auto& frames = metrics().counter("radio.rx.buffers", "RX DMA buffers read");
+    auto& samples_metric = metrics().counter("radio.rx.samples", "RX samples read (per channel)");
+    auto& read_time = metrics().histogram("radio.rx.read_seconds", forge::metrics::latency_buckets(),
+                                          "Time blocked in read_rx (waiting for the DMA)", "s");
 
-    std::vector<std::int16_t> buf[2];
+    // Buffers recycle through a pool: published blocks go out without copying
+    // and come back when ZeroMQ has sent them.
+    std::shared_ptr<forge::BufferPool<std::int16_t>> pool;
     std::uint64_t seq = 0;
     std::uint64_t generation_seen = ~0ull;
     bool streaming = false;
     auto next_snapshot = std::chrono::steady_clock::now();
-
-    // Tap blocks: the start of one DMA buffer (contiguous even when samples
-    // are lost between buffers), at most tap_hz_ blocks per second.
-    std::uint64_t block_seq = 0;
     std::uint64_t tuning_seen = ~0ull;
     int settle = 0;
-    auto next_block = std::chrono::steady_clock::now();
 
     while (running_) {
-        subscriptions_ = pub->subscriptions();
-        tap_subscriptions_ = tap_mask_ ? tap->subscriptions() : 0;
+        subscriptions_ = iq_stream_->subscribers();
+        std::size_t tap_subs = 0;
+        for (auto* t : tap_stream_) tap_subs += t ? t->subscribers() : 0;
+        tap_subscriptions_ = tap_subs;
         std::shared_lock lock(backend_mutex_);
         Backend* b = backend_.get();
 
@@ -546,19 +582,30 @@ void RadioController::rx_loop(std::promise<Endpoints> bound) {
 
         const std::size_t size = buffer_size_;
         std::size_t n = 0;
-        bool tap_due = false;
+        std::shared_ptr<std::vector<std::int16_t>> buf[2];
+        // Shared channels: one block per tap interval (Stream::wanted() holds the rate limit).
+        bool tap_due[2] = {false, false};
         try {
             if (!streaming) {
-                for (unsigned ch = 0; ch < 2; ++ch) buf[ch].resize((mask >> ch & 1u) ? 2 * size : 0);
+                pool = forge::BufferPool<std::int16_t>::create(2 * size, 8, 32);
                 b->start_rx(size, mask);
                 streaming = true;
             }
-            // Own channels are always converted (stream, spectrum); tapped ones
-            // only when a block is due and someone listens.
-            tap_due = tap_subscriptions_ > 0 && settle == 0 && std::chrono::steady_clock::now() >= next_block;
-            const unsigned convert = rx_mask_ | (tap_due ? tap_mask_ : 0u);
-            n = b->read_rx((convert & Backend::kRx1) ? buf[0].data() : nullptr,
-                           (convert & Backend::kRx2) ? buf[1].data() : nullptr, size);
+            // Buffers queued before a retune carry the old LO: shared blocks skip them.
+            if (const auto tv = tuning_version_.load(); tv != tuning_seen) {
+                tuning_seen = tv;
+                settle = kTapSettleBuffers;
+            }
+            for (unsigned ch = 0; ch < 2; ++ch) {
+                if (settle == 0 && tap_stream_[ch]) tap_due[ch] = tap_stream_[ch]->wanted();
+                // Own channels are always converted (stream, spectrum); shared ones only when due.
+                if ((rx_mask_ >> ch & 1u) || tap_due[ch]) buf[ch] = pool->acquire();
+            }
+            {
+                FORGE_TRACE_SCOPE("rx.read", "radio");
+                forge::metrics::Timer t(read_time);
+                n = b->read_rx(buf[0] ? buf[0]->data() : nullptr, buf[1] ? buf[1]->data() : nullptr, size);
+            }
             if (b->take_rx_overflow()) ++rx_overflows_;
         } catch (const DeviceError& e) {
             streaming = false;
@@ -574,62 +621,45 @@ void RadioController::rx_loop(std::promise<Endpoints> bound) {
             std::this_thread::sleep_for(5ms);
             continue;
         }
+        if (settle > 0) --settle;
 
         ++rx_frames_;
         rx_samples_ += n;
+        frames.inc();
+        samples_metric.inc(n);
         ++seq;
 
-        // Own channels: topic "iq", one message per channel ("channel": 1 or 2).
+        FORGE_TRACE_SCOPE("rx.publish", "radio");
+        auto block = [&](unsigned ch, std::size_t count) {
+            radio::v1::IqBlock m;
+            m.set_channel(ch + 1);
+            m.set_sample_rate(rate_hz_.load());
+            m.set_center_freq(rx_lo_hz_.load());
+            m.set_samples(static_cast<std::uint32_t>(count));
+            m.set_format("cs16");
+            m.set_rx_gain_db(rx_gain_actual_[ch].load());
+            m.set_buffer(seq);
+            return m;
+        };
+        // Own channels: topic "iq", every buffer while someone listens.
         if (subscriptions_ > 0) {
             for (unsigned ch = 0; ch < 2; ++ch) {
                 if (!(rx_mask_ >> ch & 1u)) continue;
-                const json header{{"seq", seq},
-                                  {"timestamp_ns", now_ns()},
-                                  {"samples", n},
-                                  {"format", "cs16"},
-                                  {"channel", ch + 1},
-                                  {"sample_rate", rate_hz_.load()},
-                                  {"center_freq", rx_lo_hz_.load()}};
-                pub->send("iq", header, buf[ch].data(), n * 2 * sizeof(std::int16_t));
+                iq_stream_->publish(block(ch, n), buf[ch], buf[ch]->data(), n * 2 * sizeof(std::int16_t));
             }
         }
-
+        // Shared channels: the start of this buffer (contiguous even when samples were lost).
+        for (unsigned ch = 0; ch < 2; ++ch) {
+            if (!tap_due[ch] || !buf[ch]) continue;
+            const std::size_t count = std::min(n, tap_samples_);
+            tap_stream_[ch]->publish(block(ch, count), buf[ch], buf[ch]->data(), count * 2 * sizeof(std::int16_t));
+            ++tap_blocks_;
+        }
         const auto now = std::chrono::steady_clock::now();
-        if (tap_mask_ && tap_subscriptions_ > 0) {
-            // Buffers queued before a retune carry the old LO: skip a few.
-            if (const auto tv = tuning_version_.load(); tv != tuning_seen) {
-                tuning_seen = tv;
-                settle = kTapSettleBuffers;
-                tap_due = false;
-            }
-            if (settle > 0) {
-                --settle;
-            } else if (tap_due) {
-                const std::size_t samples = std::min(n, tap_samples_);
-                for (unsigned ch = 0; ch < 2; ++ch) {
-                    if (!(tap_mask_ >> ch & 1u)) continue;
-                    const json header{{"seq", ++block_seq},
-                                      {"timestamp_ns", now_ns()},
-                                      {"samples", samples},
-                                      {"format", "cs16"},
-                                      {"channel", ch + 1},
-                                      {"sample_rate", rate_hz_.load()},
-                                      {"center_freq", rx_lo_hz_.load()},
-                                      {"rx_gain_db", rx_gain_actual_[ch].load()}};
-                    tap->send("rx" + std::to_string(ch + 1), header, buf[ch].data(),
-                              samples * 2 * sizeof(std::int16_t));
-                }
-                ++tap_blocks_;
-                if (tap_hz_ > 0) {
-                    next_block = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                                           std::chrono::duration<double>(1.0 / tap_hz_));
-                }
-            }
-        }
         const unsigned first = (rx_mask_ & Backend::kRx1) ? 0u : 1u;  // spectrum of the first own channel
-        if (rx_mask_ && now >= next_snapshot && n >= spectrum_size_) {
+        if (rx_mask_ && buf[first] && now >= next_snapshot && n >= spectrum_size_) {
             std::lock_guard l(snapshot_mutex_);
-            snapshot_.assign(buf[first].begin(), buf[first].begin() + static_cast<std::ptrdiff_t>(2 * spectrum_size_));
+            snapshot_.assign(buf[first]->begin(), buf[first]->begin() + static_cast<std::ptrdiff_t>(2 * spectrum_size_));
             next_snapshot = now + 50ms;
         }
     }
@@ -647,14 +677,23 @@ void RadioController::on_tx_frame(forge::zmq::Message&& m) {
         ++tx_dropped_;
         return;
     }
-    if (m.header.value("format", std::string("cs16")) != "cs16" || m.payload.size() % 4 != 0 || m.payload.empty()) {
+    radio::v1::TxBlock tx;
+    try {
+        tx = m.as<radio::v1::TxBlock>();
+    } catch (const std::exception& e) {
         ++tx_dropped_;
-        logger()->warn("radio: TX frame ignored (need format cs16 and a payload of int16 I/Q pairs)");
+        logger()->warn("radio: TX frame ignored: {}", e.what());
         return;
     }
-    const auto* samples = reinterpret_cast<const std::int16_t*>(m.payload.data());
-    const std::size_t n = m.payload.size() / 4;
-    const bool cyclic = m.header.value("cyclic", false);
+    if ((!tx.format().empty() && tx.format() != "cs16") || m.blob.size() % 4 != 0 || m.blob.empty()) {
+        ++tx_dropped_;
+        logger()->warn("radio: TX frame ignored (need format cs16 and a blob of int16 I/Q pairs)");
+        return;
+    }
+    FORGE_TRACE_SCOPE("tx.write", "radio");
+    const auto* samples = reinterpret_cast<const std::int16_t*>(m.blob.data());
+    const std::size_t n = m.blob.size() / 4;
+    const bool cyclic = tx.cyclic();
 
     std::shared_lock lock(backend_mutex_);
     Backend* b = backend_.get();

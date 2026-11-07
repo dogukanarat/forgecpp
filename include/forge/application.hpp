@@ -10,10 +10,15 @@
 //   6. optional HTTP server ([http] or --http) with GET /health, your own
 //      routes, your embedded web pages and the built-in control dashboard
 //      (/forge/) with live updates
-//   7. optional interactive console (-i) with builtin commands, as a backup
-//      to the web UI (same controls: `controls`, `set`, `press`)
+//   7. console commands on the local terminal (-i) and over telnet
+//      ([console].telnet), as a backup to the web UI (same controls)
 //   8. signal handling: SIGINT/SIGTERM stop, SIGHUP reloads the config
-//   9. systemd notify + watchdog support (Type=notify units)
+//   9. systemd notify + watchdog support (Type=notify units), fed by health
+//  10. the forge.v1 standard on ZeroMQ: control ([forge].control, forgectl and
+//      remote panels), events ([forge].events: state, alarms, logs, audit,
+//      health, metrics) and the application's streams ([forge].data)
+//  11. observability: metrics (/metrics), flight recorder (trace), audit
+//      trail, crash reports, JSON logs; declared configuration (schema)
 //
 // Subclass style:
 //
@@ -34,19 +39,27 @@
 //   }
 
 #include "forge/alarms.hpp"
+#include "forge/audit.hpp"
+#include "forge/auth.hpp"
 #include "forge/channel.hpp"
+#include "forge/component.hpp"
 #include "forge/config.hpp"
+#include "forge/config_schema.hpp"
 #include "forge/events.hpp"
+#include "forge/health.hpp"
 #include "forge/json.hpp"
 #include "forge/log.hpp"
+#include "forge/metrics.hpp"
 #include "forge/scheduler.hpp"
 #include "forge/thread_pool.hpp"
+#include "forge/v1/control.pb.h"
 
 #include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <functional>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -71,7 +84,15 @@ class EventStream;
 namespace web {
 class Dashboard;
 }
+namespace zmq {
+class Publisher;
+class Server;
+class Stream;
+struct StreamOptions;
+}  // namespace zmq
 class Console;
+class ControlService;
+class Telnet;
 
 struct AppInfo {
     AppInfo(std::string name_ = "app", std::string version_ = "0.1.0", std::string description_ = {},
@@ -174,8 +195,42 @@ public:
     /// Short-lived message on every open page (level: info|success|warning|error).
     /// For conditions that need operator attention use alarms() instead.
     void notify_web(const std::string& message, const std::string& level = "info");
-    /// nullptr unless running interactively (-i).
+    /// Console command registry (used by -i and telnet); valid from start-up.
     Console* console() { return console_.get(); }
+    /// The single path for control changes (roles, leases, audit); see control.hpp.
+    ControlService& control();
+    /// Who changed what (control changes, presses, commands, acks, leases).
+    Audit& audit() { return audit_; }
+    /// Component health; drives /health, the watchdog and the "health" events.
+    Health& health() { return health_; }
+    const Auth& auth() const { return auth_; }
+    /// Process-wide metrics (forge::metrics::registry()).
+    metrics::Registry& metrics() { return metrics::registry(); }
+
+    /// A stream of `type` messages on [forge].data (created on first use;
+    /// thread-safe publish). See forge/zmq.hpp.
+    zmq::Stream& stream(const std::string& name, const std::string& type);
+    zmq::Stream& stream(const std::string& name, const std::string& type, const zmq::StreamOptions& options);
+    v1::StreamList stream_list() const;
+    /// Endpoints this application serves (control, events, data, http, telnet).
+    std::map<std::string, std::string> endpoints() const;
+
+    /// Apply [threads.<name>] (policy, priority, cpus) to the calling thread and
+    /// name it for the trace view. Returns "" or what could not be applied.
+    std::string configure_thread(const std::string& name);
+
+    /// Add a component (before run()); see component.hpp.
+    template <class T, class... A>
+    T& add_component(A&&... args) {
+        auto c = std::make_unique<T>(std::forward<A>(args)...);
+        T& ref = *c;
+        attach(std::move(c));
+        return ref;
+    }
+
+    /// Called by ControlService after a control changed (live updates,
+    /// persistence, "state" event). Main loop or any thread.
+    void control_changed(const std::string& id, bool persistent);
     /// Command line parser; add your own options in the constructor or setup_cli().
     CLI::App& cli() { return *cli_; }
     std::chrono::steady_clock::duration uptime() const;
@@ -191,6 +246,8 @@ public:
 protected:
     /// Add command line options (called before parsing).
     virtual void setup_cli(CLI::App& cli);
+    /// Declare configuration keys (types, ranges, docs); see config_schema.hpp.
+    virtual void setup_config(config::Schema& schema);
     /// Register HTTP routes (called before the server starts listening).
     virtual void setup_http(http::Server& server);
     /// Register console commands.
@@ -214,6 +271,17 @@ private:
 
     int parse_command_line(int argc, char** argv);
     Config load_config() const;
+    void declare_framework_config(config::Schema& schema);
+    bool validate_config(const Config& config, bool at_start);
+    void attach(std::unique_ptr<Component> component);
+    void start_observability(const Config& config);
+    void start_messaging(const Config& config);
+    void start_telnet(const Config& config);
+    void restore_state();
+    void save_state();
+    void publish_event(const std::string& topic, const google::protobuf::Message& body);
+    void register_framework_console(Console& console);
+    void watchdog_tick();
     void setup_logging(const Config& config);
     void start_signal_thread();
     void stop_signal_thread();
@@ -244,6 +312,8 @@ private:
     bool interactive_ = false;
     std::string http_listen_;
     bool print_config_ = false;
+    bool help_config_ = false;
+    bool check_config_ = false;
 
     mutable std::mutex config_mutex_;
     Config config_;
@@ -261,6 +331,24 @@ private:
     spdlog::sink_ptr web_log_sink_;
     std::unique_ptr<Console> console_;
     std::atomic<std::thread::id> main_thread_{};
+
+    config::Schema schema_;
+    Audit audit_;
+    Health health_;
+    Auth auth_;
+    std::unique_ptr<ControlService> control_;
+    std::vector<std::unique_ptr<Component>> components_;
+    std::unique_ptr<zmq::Publisher> events_pub_;
+    mutable std::mutex data_mutex_;
+    std::unique_ptr<zmq::Publisher> data_pub_;
+    std::unique_ptr<zmq::Server> control_server_;
+    std::unique_ptr<Telnet> telnet_;
+    int log_listener_ = -1;
+    std::string state_file_;
+    std::atomic<bool> state_dirty_{false};
+    std::atomic<bool> state_event_pending_{false};
+    json last_event_state_ = json::object();
+    bool watchdog_paused_ = false;
 
     std::atomic<bool> stop_requested_{false};
     std::atomic<int> exit_code_{0};

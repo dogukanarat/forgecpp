@@ -22,6 +22,7 @@
 // need no locking. Every control is addressed by a unique id.
 
 #include "forge/assets.hpp"
+#include "forge/auth.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -58,11 +59,62 @@ struct ControlDef {
     std::optional<int> precision;
     std::vector<std::string> options;
     bool readonly = false;
+    Role role = Role::operator_;  ///< needed to change it
+    bool persist = false;         ///< saved to [state].file and restored at start
     Getter get;
     Setter set;
     std::function<void()> action;
 };
 }  // namespace detail
+
+/// Parameter of a command (see Group::command).
+struct Param {
+    std::string name;
+    std::string type = "number";  ///< number | integer | bool | text | select
+    std::string help;
+    json default_value;           ///< null: required
+    std::vector<std::string> options;
+    std::optional<double> min, max;
+
+    Param& describe(std::string text) {
+        help = std::move(text);
+        return *this;
+    }
+    Param& range(double lo, double hi) {
+        min = lo;
+        max = hi;
+        return *this;
+    }
+};
+Param number_param(std::string name, std::optional<double> def = std::nullopt, std::string help = {});
+Param integer_param(std::string name, std::optional<std::int64_t> def = std::nullopt, std::string help = {});
+Param bool_param(std::string name, std::optional<bool> def = std::nullopt, std::string help = {});
+Param text_param(std::string name, std::optional<std::string> def = std::nullopt, std::string help = {});
+Param select_param(std::string name, std::vector<std::string> options, std::optional<std::string> def = std::nullopt,
+                   std::string help = {});
+
+namespace detail {
+struct CommandDef {
+    std::string id, label, help, group, confirm;
+    std::vector<Param> params;
+    Role role = Role::operator_;
+    std::function<json(const json& args)> handler;
+};
+}  // namespace detail
+
+/// Fluent options for a command.
+class CommandRef {
+public:
+    CommandRef& help(std::string text);
+    CommandRef& confirm(std::string question);
+    CommandRef& role(Role r);
+    const std::string& id() const { return def_->id; }
+
+private:
+    friend class Group;
+    explicit CommandRef(detail::CommandDef* def) : def_(def) {}
+    detail::CommandDef* def_;
+};
 
 /// Fluent options for a control.
 class Control {
@@ -78,6 +130,11 @@ public:
     Control& readonly(bool value = true);
     Control& primary();
     Control& danger();
+    /// Role needed to change it (default: operator).
+    Control& role(Role r);
+    /// Save the value to [state].file on change and restore it at start-up
+    /// (before on_start(); the setter must work without on_start()'s resources).
+    Control& persist(bool on = true);
 
     const std::string& id() const { return def_->id; }
 
@@ -95,6 +152,13 @@ public:
 
     /// Push button running `action`.
     Control button(const std::string& id, const std::string& label, std::function<void()> action);
+
+    /// Command with parameters (RPC): the panel shows a form, the console
+    /// takes `call <id> name=value ...`, forge.v1 has Request.call. Arguments
+    /// are validated (types, ranges, choices, defaults) before `handler` runs
+    /// on the main loop; its JSON result goes back to the caller.
+    CommandRef command(const std::string& id, const std::string& label, std::vector<Param> params,
+                       std::function<json(const json& args)> handler);
 
     /// On/off switch.
     Control toggle(const std::string& id, const std::string& label, bool& value);
@@ -162,6 +226,7 @@ private:
     Dashboard& owner_;
     std::string title_;
     std::vector<std::string> ids_;
+    std::vector<std::string> command_ids_;
 };
 
 class Dashboard {
@@ -195,6 +260,16 @@ public:
     /// Throws http::HttpError (404 unknown id, 400 invalid value, 403 read-only).
     void set(const std::string& id, const json& value);
     void press(const std::string& id);
+
+    // --- commands --------------------------------------------------------------
+    bool has_command(const std::string& id) const;
+    std::vector<std::string> command_ids() const;
+    const detail::CommandDef& command(const std::string& id) const;
+    /// Validate `args` (object), apply defaults and run the handler.
+    /// Throws http::HttpError (404 unknown, 400 invalid arguments).
+    json call(const std::string& id, const json& args);
+    /// Ids of controls marked persist().
+    std::vector<std::string> persistent_ids() const;
     /// Values that changed since the previous call (for live updates).
     json changes();
 
@@ -206,6 +281,8 @@ private:
     std::vector<std::unique_ptr<Group>> groups_;
     std::vector<std::unique_ptr<detail::ControlDef>> controls_;
     std::map<std::string, detail::ControlDef*> by_id_;
+    std::vector<std::unique_ptr<detail::CommandDef>> commands_;
+    std::map<std::string, detail::CommandDef*> commands_by_id_;
     std::vector<std::pair<std::string, std::string>> links_;
     json last_state_ = json::object();
 };

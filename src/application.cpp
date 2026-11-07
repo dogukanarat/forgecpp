@@ -1,10 +1,20 @@
 #include "forge/application.hpp"
 
 #include "forge/console.hpp"
+#include "forge/control.hpp"
+#include "forge/crash.hpp"
 #include "forge/http.hpp"
+#include "forge/proto.hpp"
+#include "forge/rt.hpp"
 #include "forge/systemd.hpp"
+#include "forge/telnet.hpp"
+#include "forge/trace.hpp"
 #include "forge/version.hpp"
 #include "forge/web.hpp"
+#include "forge/zmq.hpp"
+
+#include <fstream>
+#include <sys/resource.h>
 
 #include <CLI/CLI.hpp>
 #include <spdlog/sinks/base_sink.h>
@@ -83,6 +93,20 @@ std::string host_name() {
     return buf;
 }
 
+// Caller of a console command: the local terminal (admin) or a telnet session.
+Caller console_caller() {
+    Caller c;
+    if (const auto* s = Console::current_session()) {
+        c.channel = s->channel;
+        c.client = s->client;
+        c.user = s->user;
+        c.role = s->role;
+    } else {
+        c.channel = "console";
+    }
+    return c;
+}
+
 bool is_loopback(const std::string& host) {
     return host == "127.0.0.1" || host == "localhost" || host == "::1";
 }
@@ -117,12 +141,15 @@ Application::Application(AppInfo info, std::string installed_config)
     cli.add_flag("-i,--interactive", interactive_, "Start the interactive console");
     cli.add_option("--http", http_listen_, "Enable the HTTP server on [HOST:]PORT")->type_name("[HOST:]PORT");
     cli.add_flag("--print-config", print_config_, "Print the effective configuration as JSON and exit");
+    cli.add_flag("--help-config", help_config_, "Describe every configuration key and exit");
+    cli.add_flag("--check-config", check_config_, "Validate the configuration and exit (status 0 = valid)");
 
     cli.option_defaults()->group("Options");
 }
 
 Application::~Application() {
     // Normally torn down by run(); make sure nothing outlives the object.
+    if (telnet_) telnet_->stop();
     if (console_) console_->stop();
     if (http_) http_->stop();
     if (scheduler_) scheduler_->stop();
@@ -144,7 +171,19 @@ void Application::reload() {
 }
 
 void Application::post(Task task) {
-    if (task) tasks_.push(std::move(task));
+    if (!task) return;
+    // Main loop lag: time from post() to execution (a busy loop shows up here first).
+    static auto& lag = metrics::registry().histogram("forge.loop.lag_seconds", metrics::latency_buckets(),
+                                                     "Delay between post() and execution on the main loop", "s");
+    static auto& busy = metrics::registry().counter("forge.loop.busy_us", "Time spent running main loop tasks", "us");
+    tasks_.push([t = std::move(task), queued = std::chrono::steady_clock::now()] {
+        const auto start = std::chrono::steady_clock::now();
+        lag.observe(std::chrono::duration<double>(start - queued).count());
+        FORGE_TRACE_SCOPE("loop.task", "forge");
+        t();
+        busy.inc(static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count()));
+    });
 }
 
 Scheduler::Id Application::after(Duration delay, Task task) {
@@ -205,6 +244,7 @@ Application& Application::hook_console(std::function<void(Application&, Console&
 
 // default virtuals
 void Application::setup_cli(CLI::App&) {}
+void Application::setup_config(config::Schema&) {}
 void Application::setup_http(http::Server&) {}
 void Application::setup_console(Console&) {}
 void Application::setup_web(web::Dashboard&) {}
@@ -235,6 +275,15 @@ int Application::run(int argc, char** argv) {
 
     if (int rc = parse_command_line(argc, argv); rc >= 0) return rc;
 
+    // Declared configuration: framework keys, the application's, its components'.
+    declare_framework_config(schema_);
+    setup_config(schema_);
+    for (auto& c : components_) c->setup_config(schema_);
+    if (help_config_) {
+        std::cout << "# " << info_.name << " configuration keys (TOML)\n" << schema_.help();
+        return 0;
+    }
+
     Config cfg;
     try {
         cfg = load_config();
@@ -251,6 +300,13 @@ int Application::run(int argc, char** argv) {
         std::cout << cfg.to_json().dump(2) << "\n";
         return 0;
     }
+    if (!validate_config(cfg, true)) return 1;
+    if (check_config_) {
+        std::cout << info_.name << ": configuration is valid\n";
+        return 0;
+    }
+    proto::set_source(info_.name);
+    metrics::registry().set_labels({{"app", info_.name}});
 
     try {
         setup_logging(cfg);
@@ -270,17 +326,27 @@ int Application::run(int argc, char** argv) {
         logger_->info("{} {} starting (forgecpp {}, pid {}, {} worker threads)", info_.name, info_.version,
                       version_string, ::getpid(), pool_->get_thread_count());
         if (!cfg.source().empty()) logger_->info("configuration: {}", cfg.source().string());
+        trace::set_thread_name("main");
+
+        auth_.load(cfg);
+        start_observability(cfg);
+        control_ = std::make_unique<ControlService>(*this);
 
         // The control registry exists even without HTTP: the console and
-        // other channels (e.g. forge::zmq::serve_application) use it too.
+        // other channels (ZeroMQ, forgectl, telnet) use it too.
         dashboard_ = std::make_unique<web::Dashboard>(cfg.get_or<std::string>("web.title", info_.name));
         setup_web(*dashboard_);
+        for (auto& c : components_) c->setup_web(*dashboard_);
         for (auto& h : hooks_.web) h(*this, *dashboard_);
+        restore_state();
 
         create_http(cfg);
         create_console(cfg);
+        start_messaging(cfg);
+        start_telnet(cfg);
 
         on_start();
+        for (auto& c : components_) c->on_start();
         for (auto& h : hooks_.start) h(*this);
 
         if (http_) {
@@ -295,13 +361,17 @@ int Application::run(int argc, char** argv) {
                           is_loopback(cfg.get_or<std::string>("http.host", "0.0.0.0")) ? "127.0.0.1" : host_name(),
                           http_->port());
         }
-        if (console_) console_->start();
+        if (console_ && cfg.get_or<bool>("console.enabled", false)) console_->start();
 
         if (auto wd = systemd::watchdog_interval()) {
-            every(*wd / 2, [] { systemd::notify("WATCHDOG=1"); }, true);
+            every(*wd / 2, [this] { watchdog_tick(); }, true);
             logger_->debug("systemd watchdog enabled ({} ms)",
                            std::chrono::duration_cast<std::chrono::milliseconds>(*wd).count());
         }
+        every(std::chrono::seconds(1), [this] {
+            save_state();
+            if (state_event_pending_.exchange(false)) control_changed({}, false);
+        });
         systemd::notify("READY=1\nSTATUS=running");
         logger_->info("{} started", info_.name);
 
@@ -369,6 +439,8 @@ Config Application::load_config() const {
 
 void Application::setup_logging(const Config& cfg) {
     log::Options o;
+    o.format = cfg.get_or<std::string>("log.format", o.format);
+    o.history = cfg.get_or<std::size_t>("log.history", o.history);
     o.name = info_.name;
     o.level = cfg.get_or<std::string>("log.level", o.level);
     o.pattern = cfg.get_or<std::string>("log.pattern", o.pattern);
@@ -418,25 +490,45 @@ void Application::create_http(const Config& cfg) {
     http_ = std::make_unique<http::Server>();
     http_->threads(static_cast<std::size_t>(std::max(cfg.get_or<int>("http.threads", 8), 2)));
 
-    http::Auth auth;
-    auth.user = cfg.get_or<std::string>("http.auth.user", "");
-    auth.password = cfg.get_or<std::string>("http.auth.password", "");
-    auth.token = cfg.get_or<std::string>("http.auth.token", "");
-    if (auth.enabled()) {
+    // Credentials: [auth] users (roles are checked per request by ControlService).
+    // Anonymous callers get [auth].default_role, unless [auth].anonymous = false.
+    if (auth_.enabled() && !cfg.get_or<bool>("auth.anonymous", true)) {
+        http::Auth auth;
+        auth.check = [this](const std::string& header) { return auth_.by_http_header(header).has_value(); };
+        auth.public_paths.push_back("/metrics");
         http_->auth(auth);
-    } else if (!is_loopback(cfg.get_or<std::string>("http.host", "0.0.0.0"))) {
-        logger_->warn("http: no [http.auth] configured - anyone who can reach port {} can use the API",
+    } else if (!auth_.enabled() && !is_loopback(cfg.get_or<std::string>("http.host", "0.0.0.0"))) {
+        logger_->warn("http: no [auth] configured - anyone who can reach port {} can use the API",
                       cfg.get_or<int>("http.port", 8080));
     }
 
-    http_->get_json("/health", [this](const http::Request&) {
-        return json{{"status", stopping() ? "stopping" : "ok"},
-                    {"name", info_.name},
-                    {"version", info_.version},
-                    {"uptime_s", std::chrono::duration_cast<std::chrono::seconds>(uptime()).count()},
-                    {"alarms", alarms_.summary()}};
+    http_->get("/health", [this](const http::Request& req, http::Response& res) {
+        const auto h = health_.snapshot();
+        json components = json::array();
+        for (const auto& c : h.components()) {
+            components.push_back({{"name", c.name()},
+                                  {"state", to_string(static_cast<HealthState>(c.state()))},
+                                  {"message", c.message()},
+                                  {"critical", c.critical()}});
+        }
+        const auto overall = health_.overall();
+        json j{{"status", stopping() ? "stopping" : "ok"},
+               {"health", to_string(overall)},
+               {"components", std::move(components)},
+               {"name", info_.name},
+               {"version", info_.version},
+               {"uptime_s", std::chrono::duration_cast<std::chrono::seconds>(uptime()).count()},
+               {"alarms", alarms_.summary()}};
+        // ?strict=1: 503 while a critical component has failed (load balancers, probes).
+        res.status = (req.has_param("strict") && overall == HealthState::failed) ? 503 : 200;
+        res.set_content(j.dump(), "application/json");
+    });
+    // Prometheus scrape endpoint.
+    http_->get("/metrics", [](const http::Request&, http::Response& res) {
+        res.set_content(metrics::registry().prometheus(), "text/plain; version=0.0.4");
     });
     setup_http(*http_);
+    for (auto& c : components_) c->setup_http(*http_);
     for (auto& h : hooks_.http) h(*this, *http_);
     create_web(cfg);
 }
@@ -479,7 +571,9 @@ void Application::create_web(const Config& cfg) {
                     {"hostname", host_name()},
                     {"pid", ::getpid()},
                     {"uptime_s", std::chrono::duration_cast<std::chrono::seconds>(uptime()).count()},
-                    {"logs", web_log_sink_ != nullptr}};
+                    {"logs", web_log_sink_ != nullptr},
+                    {"protocol", "forge.v1"},
+                    {"endpoints", endpoints()}};
     });
     http_->get_json(api + "/ui", [this](const http::Request&) { return invoke([this] { return dashboard_->schema(); }); });
     http_->get_json(api + "/state", [this](const http::Request&) { return invoke([this] { return dashboard_->state(); }); });
@@ -487,22 +581,78 @@ void Application::create_web(const Config& cfg) {
         const auto id = req.path_params.at("id");
         return json{{"id", id}, {"value", invoke([this, &id] { return dashboard_->get(id); })}};
     });
-    http_->post_json(api + "/controls/:id", [this](const http::Request& req, const json& body) {
+    auto web_caller = [this](const http::Request& req) {
+        return control_->identify("web", req.remote_addr, {}, req.get_header_value("Authorization"));
+    };
+    http_->post_json(api + "/controls/:id", [this, web_caller](const http::Request& req, const json& body) {
         const auto id = req.path_params.at("id");
-        const bool has_value = body.is_object() && body.contains("value");
-        return invoke([&]() -> json {
-            const auto& control = dashboard_->control(id);
-            if (control.kind == web::Kind::button) {
-                dashboard_->press(id);
-                logger_->info("web: {} pressed '{}'", req.remote_addr, id);
-            } else {
-                if (!has_value) throw http::HttpError(400, "request body must be {\"value\": ...}");
-                dashboard_->set(id, body["value"]);
-                logger_->info("web: {} set '{}' = {}", req.remote_addr, id, body["value"].dump());
+        const auto caller = web_caller(req);
+        const bool button = invoke([&] { return dashboard_->control(id).kind == web::Kind::button; });
+        if (button) {
+            control_->press(id, caller);
+        } else {
+            if (!(body.is_object() && body.contains("value"))) {
+                throw http::HttpError(400, "request body must be {\"value\": ...}");
             }
-            push_web_state();  // let every open page see the change right away
-            return json{{"id", id}, {"value", dashboard_->get(id)}};
-        });
+            control_->set(id, body["value"], caller);
+        }
+        return json{{"id", id}, {"value", control_->get(id, caller)}};
+    });
+    http_->post_json(api + "/commands/:id", [this, web_caller](const http::Request& req, const json& body) {
+        const auto id = req.path_params.at("id");
+        json args = body.is_object() && body.contains("args") ? body["args"] : body;
+        if (args.is_null()) args = json::object();
+        return json{{"id", id}, {"result", control_->call(id, args, web_caller(req))}};
+    });
+    http_->post_json(api + "/leases/:id", [this, web_caller](const http::Request& req, const json& body) {
+        const auto id = req.path_params.at("id");
+        const auto s = control_->lease(id, body.is_object() ? body.value("seconds", 60u) : 60u, web_caller(req));
+        return json{{"id", id}, {"seconds", s.count()}};
+    });
+    http_->get_json(api + "/leases", [this](const http::Request&) { return control_->leases(); });
+    http_->get_json(api + "/whoami", [web_caller](const http::Request& req) {
+        const auto c = web_caller(req);
+        return json{{"user", c.user}, {"role", to_string(c.role)}, {"client", c.client}};
+    });
+    http_->del_json(api + "/leases/:id", [this, web_caller](const http::Request& req) {
+        control_->release(req.path_params.at("id"), web_caller(req));
+        return json(nullptr);
+    });
+    http_->get_json(api + "/metrics", [](const http::Request& req) {
+        return proto::to_json(metrics::registry().snapshot(req.get_param_value("prefix")));
+    });
+    http_->get_json(api + "/audit", [this](const http::Request& req) {
+        json a = json::array();
+        const auto n = req.has_param("limit") ? std::stoul(req.get_param_value("limit")) : 200;
+        for (const auto& r : audit_.list(n)) a.push_back(proto::to_json(r));
+        return a;
+    });
+    http_->get_json(api + "/health", [this](const http::Request&) { return proto::to_json(health_.snapshot()); });
+    http_->get_json(api + "/streams", [this](const http::Request&) { return proto::to_json(stream_list()); });
+    http_->get(api + "/trace", [](const http::Request& req, http::Response& res) {
+        const unsigned seconds = req.has_param("seconds") ? std::stoul(req.get_param_value("seconds")) : 0;
+        auto d = trace::dump(seconds);
+        res.set_header("Content-Disposition", "attachment; filename=\"trace.json\"");
+        res.set_content(std::move(d.chrome_json), "application/json");
+    });
+    // forge.v1 over HTTP: protobuf (application/x-protobuf) or its JSON mapping.
+    http_->post(api + "/rpc", [this](const http::Request& req, http::Response& res) {
+        Caller transport = control_->identify("http-rpc", req.remote_addr, {}, req.get_header_value("Authorization"));
+        const auto type = req.get_header_value("Content-Type");
+        if (type.find("json") != std::string::npos) {
+            v1::Request r;
+            try {
+                proto::from_json_string(req.body, &r);
+            } catch (const std::exception& e) {
+                throw http::HttpError(400, e.what());
+            }
+            Caller c = control_->identify("http-rpc", r.client().empty() ? req.remote_addr : r.client(), r.token(),
+                                          req.get_header_value("Authorization"));
+            res.set_content(proto::to_json_string(control_->handle(r, c)), "application/json");
+        } else {
+            // A user from the Authorization header wins; otherwise Request.token decides.
+            res.set_content(control_->handle_bytes(req.body, transport, req.remote_addr), "application/x-protobuf");
+        }
     });
     http_->get_json(api + "/logs", [this](const http::Request&) {
         auto* sink = static_cast<WebLogSink*>(web_log_sink_.get());
@@ -518,6 +668,9 @@ void Application::create_web(const Config& cfg) {
         return to_json(*alarms_.get(id));
     });
     alarms_.on_change([this] { alarms_dirty_ = true; });
+    audit_.on_record([this](const v1::AuditRecord& r) {
+        if (web_events_) web_events_->publish("audit", proto::to_json(r));
+    });
     http_->events(api + "/events", web_events_);
 
     // "/" shows the application's own index.html when there is one, else the dashboard.
@@ -556,19 +709,15 @@ void Application::register_web_console(Console& c) {
             for (std::size_t i = 1; i < args.size(); ++i) text += (i > 1 ? " " : "") + args[i];
             auto value = json::parse(text, nullptr, false);
             if (value.is_discarded()) value = text;  // bare words are strings
-            dashboard_->set(args[0], value);
-            logger_->info("console: set '{}' = {}", args[0], value.dump());
-            push_web_state();
-            c.print("{} = {}", args[0], dashboard_->get(args[0]).dump());
+            const auto now = control_->set(args[0], value, console_caller());
+            c.print("{} = {}", args[0], now.dump());
         },
         ids);
     c.add(
         "press", "press <id>  press a dashboard button",
         [this](const Console::Args& args) {
             if (args.empty()) throw std::invalid_argument("usage: press <id>");
-            dashboard_->press(args[0]);
-            logger_->info("console: pressed '{}'", args[0]);
-            push_web_state();
+            control_->press(args[0], console_caller());
         },
         ids);
 }
@@ -598,8 +747,8 @@ void Application::drain_while(const std::function<void()>& blocking) {
 }
 
 void Application::create_console(const Config& cfg) {
-    if (!cfg.get_or<bool>("console.enabled", false)) return;
-
+    // The command registry always exists (telnet uses it); the local REPL
+    // only runs with [console].enabled / -i.
     Console::Options o;
     o.prompt = cfg.get_or<std::string>("console.prompt", info_.name + "> ");
     o.history_file = cfg.get_or<std::string>("console.history", "");
@@ -625,7 +774,9 @@ void Application::create_console(const Config& cfg) {
 
     register_console_builtins(*console_);
     if (dashboard_) register_web_console(*console_);
+    register_framework_console(*console_);
     setup_console(*console_);
+    for (auto& c : components_) c->setup_console(*console_);
     for (auto& h : hooks_.console) h(*this, *console_);
 }
 
@@ -641,9 +792,12 @@ void Application::register_console_builtins(Console& c) {
     });
     c.add(
         "log-level", "log-level [level]  show or change the log level",
-        [&c](const Console::Args& args) {
-            if (!args.empty()) log::set_level(args[0]);
+        [this, &c](const Console::Args& args) {
+            // log-level <level> | log-level <logger> <level>
+            if (args.size() == 1) control_->set_log_level({}, args[0], console_caller());
+            if (args.size() >= 2) control_->set_log_level(args[0], args[1], console_caller());
             c.print("log level: {}", spdlog::level::to_string_view(log::level()));
+            for (const auto& [name, lvl] : log::logger_levels()) c.print("  {:<24} {}", name, lvl);
         },
         [](const Console::Args& so_far) -> std::vector<std::string> {
             if (!so_far.empty()) return {};
@@ -680,11 +834,7 @@ void Application::register_console_builtins(Console& c) {
         "ack", "ack <id|all>  acknowledge an alarm",
         [this, &c](const Console::Args& args) {
             if (args.empty()) throw std::invalid_argument("usage: ack <id|all>");
-            if (args[0] == "all") {
-                c.print("{} alarm(s) acknowledged", alarms_.acknowledge_all("console"));
-            } else if (!alarms_.acknowledge(args[0], "console")) {
-                throw std::invalid_argument("unknown alarm '" + args[0] + "'");
-            }
+            c.print("{} alarm(s) acknowledged", control_->ack(args[0], console_caller()));
         },
         [this](const Console::Args& so_far) -> std::vector<std::string> {
             if (!so_far.empty()) return {};
@@ -716,6 +866,10 @@ void Application::do_reload() {
         logger_->error("reload failed, keeping the current configuration: {}", e.what());
         return;
     }
+    if (!validate_config(fresh, false)) {
+        logger_->error("reload failed, keeping the current configuration");
+        return;
+    }
     {
         std::lock_guard lock(config_mutex_);
         config_ = fresh;
@@ -729,6 +883,7 @@ void Application::do_reload() {
     }
     try {
         on_reload(fresh);
+        for (auto& c : components_) c->on_reload(fresh);
         for (auto& h : hooks_.reload) h(*this);
         logger_->info("configuration reloaded");
     } catch (const std::exception& e) {
@@ -740,22 +895,31 @@ void Application::shutdown() {
     systemd::notify("STOPPING=1");
     if (logger_) logger_->info("{} stopping", info_.name);
 
+    if (telnet_) telnet_->stop();
     if (console_) console_->stop();
 
-    // HTTP handlers may be waiting on the main loop (invoke/call): keep running
-    // posted tasks while the server winds down so they can finish.
+    // HTTP / ZeroMQ handlers may be waiting on the main loop (invoke/call): keep
+    // running posted tasks while they wind down so they can finish.
     if (http_) drain_while([this] { http_->stop(); });
+    if (control_server_) drain_while([this] { control_server_->stop(); });
     if (web_log_sink_) {
         log::remove_sink(web_log_sink_);
         web_log_sink_.reset();
     }
 
     try {
+        for (auto it = components_.rbegin(); it != components_.rend(); ++it) (*it)->on_stop();
         on_stop();
         for (auto& h : hooks_.stop) h(*this);
     } catch (const std::exception& e) {
         if (logger_) logger_->error("stop handler failed: {}", e.what());
     }
+    state_dirty_ = state_dirty_ || !state_file_.empty();
+    save_state();
+    if (log_listener_ >= 0) log::remove_listener(log_listener_);
+    log_listener_ = -1;
+    if (data_pub_) data_pub_->stop();
+    if (events_pub_) events_pub_->stop();
 
     if (scheduler_) scheduler_->stop();
     if (pool_) drain_while([this] { pool_->wait(); });
@@ -764,12 +928,485 @@ void Application::shutdown() {
     if (logger_) logger_->info("{} stopped", info_.name);
     log::flush();
 
+    telnet_.reset();
+    control_server_.reset();
     console_.reset();
     http_.reset();
+    data_pub_.reset();
+    events_pub_.reset();
     dashboard_.reset();
     web_events_.reset();
     scheduler_.reset();
     pool_.reset();
+}
+
+// ---------------------------------------------------------------------------
+// Framework services
+
+ControlService& Application::control() {
+    if (!control_) throw std::logic_error("control() is available from setup_web() on");
+    return *control_;
+}
+
+void Application::attach(std::unique_ptr<Component> component) {
+    component->app_ = this;
+    component->logger_ = log::get(component->name());
+    components_.push_back(std::move(component));
+}
+
+zmq::Stream& Application::stream(const std::string& name, const std::string& type) {
+    return stream(name, type, zmq::StreamOptions{});
+}
+
+zmq::Stream& Application::stream(const std::string& name, const std::string& type, const zmq::StreamOptions& o) {
+    std::lock_guard lock(data_mutex_);
+    if (!data_pub_) {
+        // No [forge].data configured: an ephemeral port, listed in Info.endpoints.
+        const auto ep = config().get_or<std::string>("forge.data", "");
+        data_pub_ = std::make_unique<zmq::Publisher>(ep.empty() ? "tcp://*:0" : ep);
+        logger_->info("forge: streams on {}", data_pub_->endpoint());
+    }
+    return data_pub_->add(name, type, o);
+}
+
+v1::StreamList Application::stream_list() const {
+    v1::StreamList l;
+    std::lock_guard lock(data_mutex_);
+    if (data_pub_) {
+        for (auto& s : data_pub_->list()) *l.add_streams() = std::move(s);
+    }
+    return l;
+}
+
+std::map<std::string, std::string> Application::endpoints() const {
+    std::map<std::string, std::string> e;
+    if (control_server_) e["control"] = control_server_->endpoint();
+    if (events_pub_) e["events"] = events_pub_->endpoint();
+    {
+        std::lock_guard lock(data_mutex_);
+        if (data_pub_) e["data"] = data_pub_->endpoint();
+    }
+    if (http_ && http_->port() > 0) e["http"] = fmt::format("http://{}:{}/", host_name(), http_->port());
+    if (telnet_) e["telnet"] = telnet_->endpoint();
+    return e;
+}
+
+std::string Application::configure_thread(const std::string& name) {
+    trace::set_thread_name(name);
+    const auto settings = rt::thread_settings(config(), name);
+    if (!settings) return {};
+    const auto err = rt::apply(*settings);
+    if (err.empty()) {
+        logger_->info("thread {}: {}", name, rt::describe_current_thread());
+    } else {
+        logger_->warn("thread {}: {}", name, err);
+    }
+    return err;
+}
+
+void Application::control_changed(const std::string&, bool persistent) {
+    if (persistent) state_dirty_ = true;
+    if (!on_main_loop()) {
+        state_event_pending_ = true;
+        post([this] { control_changed({}, false); });
+        return;
+    }
+    push_web_state();
+    // "state" event: the changed values (forge.v1.Values).
+    if (!events_pub_ || !dashboard_) return;
+    auto* s = events_pub_->find("state");
+    if (!s || s->subscribers() == 0) return;
+    const json current = dashboard_->state();
+    v1::Values v;
+    for (const auto& [id, value] : current.items()) {
+        auto it = last_event_state_.find(id);
+        if (it == last_event_state_.end() || *it != value) (*v.mutable_values())[id] = proto::to_value(value);
+    }
+    last_event_state_ = current;
+    if (v.values_size() > 0) s->publish(v);
+}
+
+void Application::publish_event(const std::string& topic, const google::protobuf::Message& body) {
+    if (!events_pub_) return;
+    if (auto* s = events_pub_->find(topic); s && s->wanted()) s->publish(body);
+}
+
+void Application::declare_framework_config(config::Schema& s) {
+    s.section("log", "Logging");
+    s.string("log.level", "info", "Default level").choices({"trace", "debug", "info", "warn", "error", "critical", "off"});
+    s.string("log.format", "text", "text: [log].pattern; json: one JSON object per line").choices({"text", "json"});
+    s.string("log.pattern", log::Options{}.pattern, "spdlog pattern for text output");
+    s.boolean("log.console", true, "Log to stderr");
+    s.string("log.file", "", "Rotating log file (empty = none)");
+    s.integer("log.max_size_mb", 10, "Size of one log file").range(1, 100000).unit("MB");
+    s.integer("log.max_files", 3, "Rotated log files kept").range(1, 1000);
+    s.boolean("log.syslog", false, "Also log to syslog");
+    s.string("log.flush_level", "warn", "Flush immediately at this level");
+    s.integer("log.flush_interval_s", 2, "Periodic flush").range(0, 3600).unit("s");
+    s.integer("log.history", 500, "Records kept for the panel, RPC and telnet").range(10, 100000);
+
+    s.section("http", "Web server, control panel and JSON API");
+    s.boolean("http.enabled", false, "Serve HTTP");
+    s.string("http.host", "0.0.0.0", "Listen address");
+    s.integer("http.port", 8080, "Listen port").range(0, 65535);
+    s.integer("http.threads", 8, "Worker threads").range(2, 256);
+    s.open_section("http.auth", "Older single-user credentials (prefer [auth])");
+
+    s.section("web", "Control panel");
+    s.boolean("web.enabled", true, "Serve the control panel at /forge/");
+    s.string("web.title", info_.name, "Title");
+    s.string("web.root", "", "Serve pages from this directory instead of the embedded ones");
+    s.integer("web.refresh_ms", 500, "Live update interval").range(50, 60000).unit("ms");
+    s.integer("web.max_clients", 8, "Open pages at once").range(1, 1000);
+    s.boolean("web.logs", true, "Show the log in the panel");
+    s.integer("web.log_history", 200, "Log lines shown").range(1, 100000);
+    s.string("web.log_level", "info", "Lowest level shown in the panel");
+
+    s.section("console", "Local console (-i) and telnet");
+    s.boolean("console.enabled", false, "Run the console on the terminal (same as -i)");
+    s.string("console.prompt", info_.name + "> ", "Prompt");
+    s.string("console.history", "", "History file (default ~/.<app>_history)");
+    s.boolean("console.color", true, "Colors");
+    s.string("console.telnet", "", "Telnet console HOST:PORT, e.g. \"0.0.0.0:2323\" (empty = off)");
+    s.integer("console.telnet_max_sessions", 4, "Telnet sessions at once").range(1, 64);
+    s.integer("console.telnet_idle_s", 0, "Close idle telnet sessions after (0 = never)").range(0, 86400).unit("s");
+
+    s.section("forge", "forge.v1 on ZeroMQ: control, events and streams");
+    s.string("forge.control", "", "REP: forge.v1 requests (forgectl, panels), e.g. \"tcp://*:5557\"");
+    s.string("forge.events", "", "PUB: state, alarms, log, audit, health, metrics, e.g. \"tcp://*:5559\"");
+    s.string("forge.data", "", "PUB: the application's streams (empty: an ephemeral port when used)");
+    s.integer("forge.metrics_interval_s", 5, "Metrics event interval").range(1, 3600).unit("s");
+
+    s.section("auth", "Users and roles");
+    s.boolean("auth.enabled", false, "Require credentials for changes (roles)");
+    s.boolean("auth.anonymous", true, "Allow anonymous access with default_role (HTTP)");
+    s.string("auth.default_role", "viewer", "Role without credentials").choices({"viewer", "operator", "admin"});
+    s.open_section("auth.users", "[auth.users.<name>] password, token, role");
+
+    s.section("audit", "Audit trail of control changes");
+    s.integer("audit.history", 500, "Records kept in memory").range(1, 1000000);
+    s.string("audit.file", "", "Also append JSON lines to this file");
+
+    s.section("trace", "Flight recorder");
+    s.boolean("trace.enabled", true, "Record spans");
+    s.integer("trace.capacity", 65536, "Events kept").range(1024, 16777216);
+
+    s.section("crash", "Crash reports");
+    s.boolean("crash.enabled", true, "Write a report on fatal signals");
+    s.string("crash.dir", "", "Report directory (default: $STATE_DIRECTORY or /tmp)");
+
+    s.section("state", "Persistent controls");
+    s.string("state.file", "", "Controls marked persist() are saved here (empty = not saved)");
+
+    s.section("health", "Health and watchdog");
+    s.number("health.watchdog_grace_s", 0, "Stop systemd watchdog pings after a critical component failed this long (0 = never)")
+        .range(0, 86400)
+        .unit("s");
+
+    s.section("threads", "Worker pool and real-time threads");
+    s.integer("threads.workers", 0, "Worker threads (0 = CPU count)").range(0, 1024);
+    s.open_section("threads", "[threads.<name>] policy, priority, nice, cpus (see rt.hpp)");
+
+    s.section("process", "Process settings");
+    s.boolean("process.mlockall", false, "Lock all memory (no page faults; needs CAP_IPC_LOCK)");
+}
+
+bool Application::validate_config(const Config& cfg, bool at_start) {
+    const auto r = schema_.validate(cfg);
+    for (const auto& w : r.warnings) {
+        if (at_start && !logger_) {
+            std::cerr << info_.name << ": warning: " << w << "\n";
+        } else if (logger_) {
+            logger_->warn("config: {}", w);
+        }
+    }
+    for (const auto& e : r.errors) {
+        if (logger_) {
+            logger_->error("config: {}", e);
+        } else {
+            std::cerr << info_.name << ": config: " << e << "\n";
+        }
+    }
+    return r.ok();
+}
+
+void Application::start_observability(const Config& cfg) {
+    trace::configure(cfg.get_or<bool>("trace.enabled", true), cfg.get_or<std::size_t>("trace.capacity", 65536));
+    audit_.configure(cfg.get_or<std::size_t>("audit.history", 500), cfg.get_or<std::string>("audit.file", ""));
+
+    if (cfg.get_or<bool>("crash.enabled", true)) {
+        std::string dir = cfg.get_or<std::string>("crash.dir", "");
+        if (dir.empty()) {
+            const char* state = std::getenv("STATE_DIRECTORY");  // systemd StateDirectory=
+            dir = state ? std::string(state).substr(0, std::string(state).find(':')) : "/tmp";
+        }
+        if (auto report = crash::previous_report(info_.name, dir)) {
+            std::ifstream in(*report);
+            std::string first;
+            std::getline(in, first);
+            const auto kept = fmt::format("{}/{}-crash-{}.txt", dir, info_.name,
+                                          std::chrono::duration_cast<std::chrono::seconds>(
+                                              std::chrono::system_clock::now().time_since_epoch())
+                                              .count());
+            std::error_code ec;
+            std::filesystem::rename(*report, kept, ec);
+            logger_->error("the previous run crashed ({}); report: {}", first, ec ? *report : kept);
+            alarms_.raise("forge.crashed", Severity::error,
+                          fmt::format("The previous run crashed ({}). Report: {}", first, ec ? *report : kept));
+        }
+        crash::install(info_.name, dir);
+    }
+    if (cfg.get_or<bool>("process.mlockall", false)) {
+        if (auto err = rt::lock_memory(); err.empty()) {
+            logger_->info("memory locked (mlockall)");
+        } else {
+            logger_->warn("{}", err);
+        }
+    }
+
+    // Process metrics, computed when read.
+    auto& m = metrics::registry();
+    m.gauge_fn("process.uptime_seconds", [this] { return std::chrono::duration<double>(uptime()).count(); }, "Uptime", "s");
+    m.gauge_fn("process.rss_bytes", [] {
+        long pages = 0, rss = 0;
+        if (FILE* f = std::fopen("/proc/self/statm", "r")) {
+            if (std::fscanf(f, "%ld %ld", &pages, &rss) != 2) rss = 0;
+            std::fclose(f);
+        }
+        return static_cast<double>(rss) * static_cast<double>(::sysconf(_SC_PAGESIZE));
+    }, "Resident memory", "bytes");
+    m.gauge_fn("process.cpu_seconds", [] {
+        rusage u{};
+        ::getrusage(RUSAGE_SELF, &u);
+        return static_cast<double>(u.ru_utime.tv_sec + u.ru_stime.tv_sec) +
+               static_cast<double>(u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6;
+    }, "CPU time (user + system)", "s");
+    m.gauge_fn("process.threads", [] {
+        std::error_code ec;
+        std::size_t n = 0;
+        for (auto it = std::filesystem::directory_iterator("/proc/self/task", ec);
+             !ec && it != std::filesystem::directory_iterator(); ++it) {
+            ++n;
+        }
+        return static_cast<double>(n);
+    }, "Threads");
+    m.gauge_fn("forge.pool.queued", [this] { return pool_ ? static_cast<double>(pool_->get_tasks_queued()) : 0.0; },
+               "Tasks waiting for a worker thread");
+    m.gauge_fn("forge.scheduler.timers", [this] { return scheduler_ ? static_cast<double>(scheduler_->pending()) : 0.0; },
+               "Pending timers");
+    m.gauge_fn("forge.alarms.active", [this] { return static_cast<double>(alarms_.active_count()); }, "Active alarms");
+    m.gauge_fn("forge.health.state", [this] { return static_cast<double>(health_.overall()); },
+               "Overall health: 1 ok, 2 degraded, 3 failed");
+}
+
+void Application::start_messaging(const Config& cfg) {
+    const auto events = cfg.get_or<std::string>("forge.events", "");
+    if (!events.empty()) {
+        zmq::SocketOptions so;
+        so.send_hwm = 1000;
+        events_pub_ = std::make_unique<zmq::Publisher>(events, so);
+        events_pub_->add("state", "forge.v1.Values");
+        events_pub_->add("alarms", "forge.v1.AlarmList");
+        events_pub_->add("log", "forge.v1.LogRecord");
+        events_pub_->add("audit", "forge.v1.AuditRecord");
+        events_pub_->add("health", "forge.v1.Health");
+        events_pub_->add("metrics", "forge.v1.MetricsSnapshot");
+        alarms_.on_change([this] {
+            if (!events_pub_) return;
+            auto* s = events_pub_->find("alarms");
+            if (!s || s->subscribers() == 0) return;
+            v1::Request r;
+            r.mutable_alarms();
+            Caller internal;
+            const auto reply = control_->handle(r, internal);
+            s->publish(reply.alarms());
+        });
+        audit_.on_record([this](const v1::AuditRecord& r) { publish_event("audit", r); });
+        health_.on_change([this](const v1::Health& h) { publish_event("health", h); });
+        log_listener_ = log::add_listener([this](const v1::LogRecord& r) { publish_event("log", r); });
+        const auto interval = std::chrono::seconds(std::max(cfg.get_or<int>("forge.metrics_interval_s", 5), 1));
+        every(interval, [this] { publish_event("metrics", metrics::registry().snapshot()); });
+        logger_->info("forge: events on {}", events_pub_->endpoint());
+    }
+    const auto data = cfg.get_or<std::string>("forge.data", "");
+    if (!data.empty()) {
+        std::lock_guard lock(data_mutex_);
+        data_pub_ = std::make_unique<zmq::Publisher>(data);
+        logger_->info("forge: streams on {}", data_pub_->endpoint());
+    }
+    const auto control = cfg.get_or<std::string>("forge.control", "");
+    if (!control.empty()) {
+        control_server_ = zmq::serve_control(*control_, control);
+        logger_->info("forge: control on {}", control_server_->endpoint());
+    }
+}
+
+void Application::start_telnet(const Config& cfg) {
+    const auto listen = cfg.get_or<std::string>("console.telnet", "");
+    if (listen.empty() || !console_) return;
+    Telnet::Options o;
+    o.listen = listen;
+    o.max_sessions = cfg.get_or<std::size_t>("console.telnet_max_sessions", 4);
+    o.idle_s = cfg.get_or<unsigned>("console.telnet_idle_s", 0);
+    o.prompt = cfg.get_or<std::string>("console.prompt", info_.name + "> ");
+    o.banner = fmt::format("{} {} on {} (forgecpp {})", info_.name, info_.version, host_name(), version_string);
+    telnet_ = std::make_unique<Telnet>(*console_, auth_, o);
+    telnet_->start();
+    logger_->info("console: telnet on {}", telnet_->endpoint());
+}
+
+void Application::restore_state() {
+    state_file_ = config().get_or<std::string>("state.file", "");
+    if (state_file_.empty() || !dashboard_) return;
+    std::error_code ec;
+    if (!std::filesystem::exists(state_file_, ec)) return;
+    try {
+        const auto saved = load_json(state_file_);
+        const auto ids = dashboard_->persistent_ids();
+        std::size_t n = 0;
+        for (const auto& id : ids) {
+            if (!saved.contains(id)) continue;
+            try {
+                dashboard_->set(id, saved[id]);
+                ++n;
+            } catch (const std::exception& e) {
+                logger_->warn("state: cannot restore '{}': {}", id, e.what());
+            }
+        }
+        logger_->info("state: restored {} control(s) from {}", n, state_file_);
+    } catch (const std::exception& e) {
+        logger_->warn("state: ignoring {}: {}", state_file_, e.what());
+    }
+}
+
+void Application::save_state() {
+    if (state_file_.empty() || !dashboard_ || !state_dirty_.exchange(false)) return;
+    json j = json::object();
+    for (const auto& id : dashboard_->persistent_ids()) j[id] = dashboard_->get(id);
+    try {
+        save_json(state_file_, j);
+    } catch (const std::exception& e) {
+        logger_->warn("state: cannot save {}: {}", state_file_, e.what());
+    }
+}
+
+void Application::watchdog_tick() {
+    const double grace = config().get_or<double>("health.watchdog_grace_s", 0);
+    if (grace > 0) {
+        if (auto failed = health_.critical_failed_for(); failed && *failed > grace) {
+            if (!watchdog_paused_) {
+                logger_->critical("a critical component failed {:.0f} s ago: stopping watchdog pings (systemd restarts us)",
+                                  *failed);
+            }
+            watchdog_paused_ = true;
+            return;
+        }
+    }
+    watchdog_paused_ = false;
+    systemd::notify("WATCHDOG=1");
+}
+
+void Application::register_framework_console(Console& c) {
+    c.add("metrics", "metrics [prefix]  show metrics", [&c](const Console::Args& args) {
+        const auto snap = metrics::registry().snapshot(args.empty() ? "" : args[0]);
+        for (const auto& m : snap.metrics()) {
+            if (m.type() == v1::Metric::TYPE_HISTOGRAM) {
+                const double mean = m.count() ? m.sum() / static_cast<double>(m.count()) : 0;
+                c.print("  {:<36} count {} mean {:.6g}{}", m.name(), m.count(), mean,
+                        m.unit().empty() ? "" : " " + m.unit());
+            } else {
+                c.print("  {:<36} {:.6g}{}", m.name(), m.value(), m.unit().empty() ? "" : " " + m.unit());
+            }
+        }
+    });
+    c.add("trace", "trace [seconds] [file]  save the flight recorder (Chrome JSON, open in ui.perfetto.dev)",
+          [&c](const Console::Args& args) {
+              const unsigned seconds = args.empty() ? 0 : static_cast<unsigned>(std::stoul(args[0]));
+              const std::string file = args.size() > 1 ? args[1] : "/tmp/forge-trace.json";
+              auto d = trace::dump(seconds);
+              std::ofstream(file) << d.chrome_json;
+              c.print("{} events written to {} ({} overwritten)", d.events, file, d.dropped);
+          });
+    c.add("audit", "audit [n]  recent control changes", [this, &c](const Console::Args& args) {
+        const std::size_t n = args.empty() ? 20 : std::stoul(args[0]);
+        for (const auto& r : audit_.list(n)) {
+            const auto t = static_cast<std::time_t>(r.time_unix_ns() / 1000000000);
+            std::tm tm{};
+            ::localtime_r(&t, &tm);
+            c.print("  {:02}:{:02}:{:02} {:<26} {:<7} {:<20} {}{}", tm.tm_hour, tm.tm_min, tm.tm_sec,
+                    (r.user().empty() ? r.channel() : r.user() + "@" + r.channel()) + " " + r.client(), r.action(),
+                    r.target(), r.has_new_value() ? proto::to_json(r.new_value()).dump() : "",
+                    r.ok() ? "" : " REFUSED: " + r.error());
+        }
+    });
+    c.add("health", "health  component health", [this, &c](const Console::Args&) {
+        const auto h = health_.snapshot();
+        c.print("overall: {}", to_string(static_cast<HealthState>(h.state())));
+        for (const auto& comp : h.components()) {
+            c.print("  {:<20} {:<9} {}{}", comp.name(), to_string(static_cast<HealthState>(comp.state())),
+                    comp.message(), comp.critical() ? "" : " (non-critical)");
+        }
+    });
+    c.add("streams", "streams  published streams and endpoints", [this, &c](const Console::Args&) {
+        for (const auto& [k, v] : endpoints()) c.print("  {:<8} {}", k, v);
+        const auto list = stream_list();
+        for (const auto& s : list.streams()) {
+            c.print("  stream {:<16} {:<22} {} subscriber(s), {} sent, {} dropped", s.name(), s.type(), s.subscribers(),
+                    s.sent(), s.dropped());
+        }
+    });
+    c.add(
+        "call", "call <command> [name=value ...]  run a command",
+        [this, &c](const Console::Args& args) {
+            if (args.empty()) throw std::invalid_argument("usage: call <command> [name=value ...]");
+            json a = json::object();
+            for (std::size_t i = 1; i < args.size(); ++i) {
+                const auto eq = args[i].find('=');
+                if (eq == std::string::npos) throw std::invalid_argument("arguments are name=value");
+                auto v = json::parse(args[i].substr(eq + 1), nullptr, false);
+                a[args[i].substr(0, eq)] = v.is_discarded() ? json(args[i].substr(eq + 1)) : v;
+            }
+            const auto result = control_->call(args[0], a, console_caller());
+            if (!result.is_null()) c.print("{}", result.dump(2));
+        },
+        [this](const Console::Args& so_far) -> std::vector<std::string> {
+            if (!so_far.empty()) return {};
+            return dashboard_ ? dashboard_->command_ids() : std::vector<std::string>{};
+        });
+    c.add("lease", "lease <id|group:title> [seconds]  hold a control so nobody else changes it",
+          [this, &c](const Console::Args& args) {
+              if (args.empty()) throw std::invalid_argument("usage: lease <id> [seconds]");
+              const auto s = control_->lease(args[0], args.size() > 1 ? std::stoul(args[1]) : 60, console_caller());
+              c.print("{} leased for {} s", args[0], s.count());
+          });
+    c.add("release", "release <id>  give a lease back", [this](const Console::Args& args) {
+        if (args.empty()) throw std::invalid_argument("usage: release <id>");
+        control_->release(args[0], console_caller());
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Component
+
+Component::Component(std::string name, bool critical) : name_(std::move(name)), critical_(critical) {}
+Component::~Component() = default;
+void Component::setup_config(config::Schema&) {}
+void Component::setup_web(web::Dashboard&) {}
+void Component::setup_console(Console&) {}
+void Component::setup_http(http::Server&) {}
+void Component::on_start() {}
+void Component::on_stop() {}
+void Component::on_reload(const Config&) {}
+
+Application& Component::app() {
+    if (!app_) throw std::logic_error("component '" + name_ + "' is not attached to an application");
+    return *app_;
+}
+
+Logger Component::logger() const { return logger_ ? logger_ : log::get(); }
+
+void Component::set_health(HealthState state, const std::string& message) {
+    if (app_) app_->health().set(name_, state, message, critical_);
 }
 
 }  // namespace forge

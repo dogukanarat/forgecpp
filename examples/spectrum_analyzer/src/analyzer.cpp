@@ -1,5 +1,7 @@
 #include "analyzer.hpp"
 
+#include "sa/v1/spectrum.pb.h"
+
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -80,6 +82,57 @@ json settings_json(const Settings& s, double ref, double scale, bool limit_on, d
 
 Analyzer::Analyzer() : Application({"spectrum-analyzer", SA_VERSION, "AD9364 spectrum analyzer"}) {}
 
+std::string Analyzer::endpoint(const std::string& name) const {
+    const auto e = const_cast<Analyzer*>(this)->endpoints();
+    const auto it = e.find(name);
+    return it == e.end() ? std::string() : it->second;
+}
+
+void Analyzer::setup_config(forge::config::Schema& s) {
+    using forge::json;
+    s.section("analyzer", "Spectrum analyzer");
+    s.string("analyzer.backend", "sim", "sim | iio (own the RX path) | radio (a channel radio-controller shares)")
+        .choices({"sim", "iio", "radio"});
+    s.string("analyzer.uri", "", "iio: libiio context (local:, ip:192.168.2.1, usb:1.2.5)");
+    s.integer("analyzer.channel", 1, "RX channel it listens to").range(1, 2);
+    s.boolean("analyzer.control_gain", true, "Set that channel's gain (false: radio-controller keeps it)");
+    s.string("analyzer.radio_data", "tcp://127.0.0.1:5555", "radio: radio-controller [forge].data");
+    s.string("analyzer.radio_control", "tcp://127.0.0.1:5557", "radio: radio-controller [forge].control");
+    s.integer("analyzer.radio_timeout_ms", 3000, "radio: no block for this long = device error").range(500, 60000).unit("ms");
+    s.integer("analyzer.timeout_ms", 2000, "libiio timeout").range(100, 60000).unit("ms");
+    s.string("analyzer.state_file", "", "Keep measurement settings across restarts (JSON)");
+    s.number("analyzer.sweep_rate_hz", 61.44e6, "Sample rate of swept spans").range(2.083334e6, 61.44e6).unit("Hz");
+    s.number("analyzer.usable_fraction", 0.8, "Part of each capture used in swept mode").range(0.3, 0.95);
+    s.integer("analyzer.settle_buffers", 3, "Buffers dropped after a retune (default 3 iio, 1 sim)").range(0, 100);
+    // initial measurement setup
+    s.number("analyzer.center_hz", 2440e6, "Center frequency").range(kMinFreq, kMaxFreq).unit("Hz");
+    s.number("analyzer.span_hz", 100e6, "Span").range(10e3, kMaxFreq - kMinFreq).unit("Hz");
+    s.number("analyzer.rbw_hz", 0, "Resolution bandwidth (0 = auto)").range(0, 10e6).unit("Hz");
+    s.string("analyzer.window", "blackman_harris", "FFT window")
+        .choices({"rectangular", "hann", "hamming", "blackman_harris", "flat_top"});
+    s.integer("analyzer.vbw_averages", 1, "FFTs averaged per capture").range(1, 64);
+    s.string("analyzer.gain_mode", "manual", "Gain control").choices({"manual", "slow_attack", "fast_attack", "hybrid"});
+    s.number("analyzer.rx_gain_db", 40, "RX gain (manual)").range(-3, 71).unit("dB");
+    s.string("analyzer.unit", "dBFS", "Display unit").choices({"dBFS", "dBm"});
+    s.number("analyzer.cal_offset_db", 0, "dBm calibration").unit("dB");
+    s.array("analyzer.trace_modes", json::array({"clear_write", "max_hold", "blank"}),
+            "Trace 1-3: clear_write | max_hold | min_hold | average | view | blank");
+    s.integer("analyzer.trace_average", 10, "Sweeps per average trace").range(2, 1000);
+    s.string("analyzer.detector", "peak", "Detector").choices({"peak", "sample", "average", "negative_peak"});
+    s.integer("analyzer.points", 1001, "Display points").range(101, 4001);
+    s.number("analyzer.ref_level", 0, "Reference level (display unit)");
+    s.number("analyzer.scale_db", 10, "dB per division").range(1, 20);
+    s.number("analyzer.update_hz", 15, "Maximum sweeps per second").range(1, 30).unit("Hz");
+    s.boolean("analyzer.limit_on", false, "Limit line with an alarm");
+    s.number("analyzer.limit_level", -40, "Limit line level (display unit)");
+    s.array("analyzer.markers", json::array(), "Markers: [{enabled, freq_hz, delta}, ...]");
+    s.integer("analyzer.active_marker", 0, "Active marker (0-3)").range(0, 3);
+    s.boolean("analyzer.peak_track", false, "Active marker follows the strongest signal");
+    s.string("analyzer.measurement", "off", "off | channel_power | obw");
+    s.number("analyzer.channel_bw_hz", 1e6, "Channel power bandwidth").range(1e3, 6e9).unit("Hz");
+    s.number("analyzer.obw_percent", 99, "Occupied bandwidth share").range(50, 99.99).unit("%");
+}
+
 void Analyzer::setup_cli(CLI::App& cli) {
     cli.add_option("--backend", cli_backend_,
                    "sim | iio (own the RX path) | radio (RX2 of radio-controller); overrides [analyzer].backend")
@@ -97,7 +150,7 @@ void Analyzer::load(const forge::Config& cfg) {
     if (backend_kind_ != "sim" && backend_kind_ != "iio" && backend_kind_ != "radio") {
         throw forge::ConfigError("analyzer.backend must be sim, iio or radio");
     }
-    tap_.tap = cfg.get_or<std::string>("analyzer.radio_tap", "tcp://127.0.0.1:5558");
+    tap_.data = cfg.get_or<std::string>("analyzer.radio_data", "tcp://127.0.0.1:5555");
     tap_.control = cfg.get_or<std::string>("analyzer.radio_control", "tcp://127.0.0.1:5557");
     tap_.timeout = std::chrono::milliseconds(std::max(cfg.get_or<unsigned>("analyzer.radio_timeout_ms", 3000), 500u));
     channel_ = cfg.get_or<unsigned>("analyzer.channel", 1);
@@ -740,7 +793,6 @@ void Analyzer::setup_console(forge::Console& c) {
 // lifecycle
 
 void Analyzer::on_start() {
-    const auto cfg = config();
     const auto kind = backend_kind_;
     const auto uri = uri_;
     const auto timeout = timeout_ms_;
@@ -749,6 +801,7 @@ void Analyzer::on_start() {
     Engine::Options eo;
     eo.rx_channel = kind == "radio" ? 0 : channel - 1;  // the tap carries just the shared channel
     eo.control_gain = control_gain_;
+    eo.on_thread_start = [this] { configure_thread("engine"); };  // [threads.engine]
     engine_ = std::make_unique<Engine>(
         [kind, uri, timeout, tap, channel]() -> std::unique_ptr<radio::Backend> {
             if (kind == "iio") {
@@ -770,13 +823,8 @@ void Analyzer::on_start() {
                    control_gain_ ? "controls" : "does not touch");
     engine_->start(settings_);
 
-    control_ = forge::zmq::serve_application(*this, cfg.get_or<std::string>("zmq.control", "tcp://*:5567"));
-    forge::zmq::SocketOptions so;
-    so.send_hwm = 16;
-    spectrum_pub_ = std::make_unique<forge::zmq::Sender>(
-        forge::zmq::Sender::Kind::pub, cfg.get_or<std::string>("zmq.spectrum", "tcp://*:5566"), true, so);
-    spectrum_endpoint_ = spectrum_pub_->endpoint();
-    logger()->info("zmq: spectrum on {}, control on {}", spectrum_endpoint_, control_->endpoint());
+    // Remote displays get the newest sweep, never a backlog.
+    spectrum_ = &stream("spectrum", "sa.v1.Spectrum", {"latest", 30});
 
     every(30ms, [this] { publish_frame(); });
     every(1s, [this] { check_status(); });
@@ -785,14 +833,13 @@ void Analyzer::on_start() {
 
 void Analyzer::on_stop() {
     if (engine_) engine_->stop();
-    control_.reset();
-    spectrum_pub_.reset();
+    spectrum_ = nullptr;
     dirty_ = true;
     save_state();
 }
 
 void Analyzer::publish_frame() {
-    if (!spectrum_pub_) return;  // timers can still fire while shutting down
+    if (!spectrum_) return;  // timers can still fire while shutting down
     const auto f = latest();
     if (!f || f->seq == last_seq_) return;
     last_seq_ = f->seq;
@@ -848,30 +895,41 @@ void Analyzer::publish_frame() {
         alarms().clear(kOverloadAlarm);
     }
 
+    static auto& sweeps = metrics().counter("sa.sweeps", "Sweeps measured");
+    static auto& sweep_time = metrics().histogram("sa.sweep_seconds", forge::metrics::latency_buckets(),
+                                                  "Time per sweep (capture + FFT)", "s");
+    sweeps.inc();
+    sweep_time.observe(f->sweep_ms / 1e3);
     publish_web("frame", frame_json(*f));
 
-    if (spectrum_pub_->subscriptions() > 0) {
-        std::vector<float> data(f->live.begin(), f->live.end());
-        spectrum_pub_->send("spectrum",
-                            {{"seq", f->seq},
-                             {"start_hz", f->start_hz},
-                             {"stop_hz", f->stop_hz},
-                             {"points", f->points},
-                             {"unit", f->unit},
-                             {"rbw_hz", f->plan.rbw_hz},
-                             {"format", "f32"}},
-                            data.data(), data.size() * sizeof(float));
+    if (spectrum_->wanted()) {
+        sa::v1::Spectrum msg;
+        msg.set_seq(f->seq);
+        msg.set_start_hz(f->start_hz);
+        msg.set_stop_hz(f->stop_hz);
+        msg.set_points(static_cast<std::uint32_t>(f->points));
+        msg.set_unit(f->unit);
+        msg.set_rbw_hz(f->plan.rbw_hz);
+        msg.set_sweep_mode(f->plan.fixed ? "fixed" : f->plan.swept ? "swept" : "realtime");
+        msg.set_overload(f->overload);
+        msg.set_sweep_time_s(f->sweep_ms / 1e3);
+        msg.set_channel(channel_);
+        msg.mutable_levels()->Reserve(static_cast<int>(f->live.size()));
+        for (const double v : f->live) msg.add_levels(static_cast<float>(v));
+        spectrum_->publish(msg);
     }
 }
 
 void Analyzer::check_status() {
-    if (!engine_ || !spectrum_pub_) return;
+    if (!engine_ || !spectrum_) return;
     const bool was = status_.connected;
     status_ = engine_->status();
     if (status_.connected) {
+        health().set("radio", forge::HealthState::ok, status_.backend);
         alarms().clear(kDeviceAlarm);
         if (!was) logger()->info("analyzer: connected to {}", status_.backend);
     } else {
+        health().set("radio", forge::HealthState::failed, status_.error);
         alarms().raise(kDeviceAlarm, forge::Severity::error, "Radio not available: " + status_.error);
     }
 }

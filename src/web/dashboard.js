@@ -68,6 +68,55 @@
     }
   }
 
+  // Commands (RPC with typed parameters): a small form per command.
+  function commandForm(cmd) {
+    const out = el('output');
+    const fields = (cmd.params || []).map(function (p) {
+      let input;
+      if (p.type === 'bool') {
+        input = el('input', { type: 'checkbox', name: p.name, checked: p['default'] === true });
+      } else if (p.type === 'select') {
+        input = el('select', { name: p.name }, (p.options || []).map(function (o) {
+          return el('option', { value: o, text: o, selected: o === p['default'] });
+        }));
+      } else {
+        const numeric = p.type === 'number' || p.type === 'integer';
+        input = el('input', { type: numeric ? 'number' : 'text', name: p.name, step: p.type === 'integer' ? '1' : 'any',
+                              min: p.min, max: p.max,
+                              value: p['default'] !== undefined ? String(p['default']) : '',
+                              placeholder: p['default'] === undefined ? 'required' : undefined });
+      }
+      input.dataset.type = p.type;
+      return el('label', { title: p.help || '' }, [el('span', { text: p.name }), input]);
+    });
+    const run = el('button', { class: 'forge-btn primary', type: 'submit', text: cmd.label || cmd.id });
+    const form = el('form', {}, fields.concat([run]));
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      if (cmd.confirm && !window.confirm(cmd.confirm)) return;
+      const args = {};
+      Array.prototype.forEach.call(form.elements, function (i) {
+        if (!i.name) return;
+        if (i.dataset.type === 'bool') args[i.name] = i.checked;
+        else if (i.value === '') return;  // let the server apply the default / complain
+        else if (i.dataset.type === 'number' || i.dataset.type === 'integer') args[i.name] = Number(i.value);
+        else args[i.name] = i.value;
+      });
+      run.disabled = true;
+      try {
+        const res = await forge.api('commands/' + encodeURIComponent(cmd.id), { body: { args: args } });
+        out.textContent = JSON.stringify(res && res.result, null, 2);
+      } catch (e) {
+        out.textContent = 'error: ' + e.message;
+        forge.toast(e.message, 'error');
+      } finally { run.disabled = false; }
+    });
+    return el('div', { class: 'forge-command' }, [
+      el('div', { class: 'forge-label' }, [el('span', { text: cmd.label || cmd.id }),
+        cmd.help ? el('small', { text: cmd.help + (cmd.role ? ' (' + cmd.role + ')' : '') }) : null]),
+      form, out]);
+  }
+
   function render(schema) {
     const title = schema.title || 'Dashboard';
     $('forge-title').textContent = title;
@@ -95,6 +144,7 @@
         actions = null;
         card.appendChild(el('div', { class: 'forge-row' }, [label(c), el('div', { class: 'forge-control' }, [control(c)])]));
       });
+      (g.commands || []).forEach(function (cmd) { card.appendChild(commandForm(cmd)); });
       groups.appendChild(card);
     });
     if (!(schema.groups || []).length) {

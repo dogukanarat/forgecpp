@@ -461,3 +461,30 @@ body.forge {
   .forge input[type="range"] { width: 110px; }
   .forge input[type="text"] { width: 130px; }
 }
+
+/* --- system pages (tabs, tables, command forms) ---------------------------- */
+.forge-tabs { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; padding: 0 20px;
+  max-width: 1400px; margin: 12px auto 0; border-bottom: 1px solid var(--forge-border); }
+.forge-tabs button { font: inherit; font-size: 14px; background: none; border: 0; color: var(--forge-muted);
+  padding: 8px 12px; border-bottom: 2px solid transparent; cursor: pointer; }
+.forge-tabs button[aria-selected="true"] { color: var(--forge-text); border-bottom-color: var(--forge-accent); font-weight: 600; }
+.forge-whoami { margin-left: auto; font-size: 12px; }
+.forge-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.forge-table th { text-align: left; color: var(--forge-muted); font-weight: 600; padding: 6px 8px;
+  border-bottom: 1px solid var(--forge-border); white-space: nowrap; }
+.forge-table td { padding: 6px 8px; border-bottom: 1px solid var(--forge-border); vertical-align: top; overflow-wrap: anywhere; }
+.forge-table td.num { text-align: right; white-space: nowrap; }
+.forge-pane { overflow-x: auto; }
+.forge-main[data-tab]:not([data-tab="controls"]) #forge-logs { display: none; }
+.forge-state { font-weight: 600; }
+.forge-state.ok { color: var(--forge-ok); }
+.forge-state.degraded { color: var(--forge-warn); }
+.forge-state.failed, .forge-state.error { color: var(--forge-danger); }
+.forge-spark { width: 90px; height: 22px; display: block; }
+.forge-spark path { fill: none; stroke: var(--forge-accent); stroke-width: 1.5; }
+.forge-command { padding: 10px 0; border-top: 1px solid var(--forge-border); }
+.forge-command form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-top: 6px; }
+.forge-command label { display: flex; flex-direction: column; font-size: 12px; color: var(--forge-muted); gap: 2px; }
+.forge-command output { display: block; font-family: var(--forge-mono); font-size: 12px; margin-top: 6px;
+  white-space: pre-wrap; color: var(--forge-muted); }
+@media (max-width: 600px) { .forge-tabs { padding: 0 8px; } .forge-table { font-size: 12px; } }

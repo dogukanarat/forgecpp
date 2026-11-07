@@ -1,6 +1,7 @@
 #include "backend.hpp"
 #include "dsp.hpp"
 #include "radio_controller.hpp"
+#include "radio/v1/radio.pb.h"
 
 #include <forge/testing.hpp>
 #include <forge/zmq.hpp>
@@ -28,6 +29,22 @@ std::vector<std::int16_t> tone(std::size_t n, double offset_hz, double rate, dou
         iq[2 * i + 1] = static_cast<std::int16_t>(std::lround(amplitude * 32767 * std::sin(ph)));
     }
     return iq;
+}
+
+radio::v1::IqBlock block_of(const fz::Message& m) { return m.as<radio::v1::IqBlock>(); }
+
+std::vector<std::int16_t> samples_of(const fz::Message& m) {
+    std::vector<std::int16_t> iq(m.blob.size() / 2);
+    std::memcpy(iq.data(), m.blob.data(), m.blob.size());
+    return iq;
+}
+
+/// Send a TX block the way clients do: [tx][Header][radio.v1.TxBlock][cs16].
+bool send_tx(fz::Sender& push, const std::vector<std::int16_t>& iq, bool cyclic) {
+    radio::v1::TxBlock b;
+    b.set_format("cs16");
+    b.set_cyclic(cyclic);
+    return push.publish("tx", b, iq.data(), iq.size() * 2);
 }
 
 double peak_offset(const std::vector<std::int16_t>& iq, std::size_t n, double rate) {
@@ -218,10 +235,9 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
                                   "--backend", "sim",
                                   "-D", "log.console=false",
                                   "-D", "http.enabled=false",
-                                  "-D", "zmq.rx=tcp://127.0.0.1:*",
+                                  "-D", "forge.data=tcp://127.0.0.1:*",
                                   "-D", "zmq.tx=tcp://127.0.0.1:*",
-                                  "-D", "zmq.tap=tcp://127.0.0.1:*",
-                                  "-D", "zmq.control=tcp://127.0.0.1:*",
+                                  "-D", "forge.control=tcp://127.0.0.1:*",
                                   "-D", "radio.rx_lo_hz=2410e6",
                                   "-D", "radio.tx_lo_hz=2410e6",
                                   "-D", "radio.sample_rate_hz=5e6",
@@ -242,31 +258,33 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
     std::vector<fz::Message> frames;
     fz::Receiver::Options opts;
     opts.topics = {"iq"};
-    fz::Receiver sub(fz::Receiver::Kind::sub, app.rx_endpoint(), [&](fz::Message&& msg) {
+    fz::Receiver sub(fz::Receiver::Kind::sub, app.data_endpoint(), [&](fz::Message&& msg) {
         std::lock_guard lock(m);
         if (frames.size() < 64) frames.push_back(std::move(msg));
     }, opts);
     REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return frames.size() >= 3; }, 10s));
     {
         std::lock_guard lock(m);
-        const auto& h = frames.back().header;
-        CHECK(h["format"] == "cs16");
-        CHECK(h["samples"] == 16384);
-        CHECK(h["sample_rate"] == 5e6);
-        CHECK(h["center_freq"] == 2410e6);
-        CHECK(frames.back().payload.size() == 16384 * 4);
-        CHECK(frames[1].header["seq"].get<int>() > frames[0].header["seq"].get<int>());
+        const auto h = block_of(frames.back());
+        CHECK(frames.back().header.type() == "radio.v1.IqBlock");
+        CHECK(frames.back().header.source() == "radio-controller");
+        CHECK(h.format() == "cs16");
+        CHECK(h.samples() == 16384);
+        CHECK(h.sample_rate() == 5e6);
+        CHECK(h.center_freq() == 2410e6);
+        CHECK(frames.back().blob.size() == 16384 * 4);
+        CHECK(frames[1].header.seq() > frames[0].header.seq());
     }
 
     // --- control over ZeroMQ ---------------------------------------------------
     fz::Client ctl(app.control_endpoint(), 5s);
-    CHECK(ctl.call("get", {{"id", "connected"}})["value"] == true);
-    CHECK(ctl.call("set", {{"id", "rx_lo_mhz"}, {"value", 2411.5}})["value"] == 2411.5);
-    auto status_of = [&](const json& req) { return ctl.request(req).value("status", 0); };
+    CHECK(ctl.get("connected") == true);
+    CHECK(ctl.set("rx_lo_mhz", 2411.5) == 2411.5);
+    auto status_of = [&](const json& req) { return ctl.request_json(req).value("status", 0); };
     CHECK(status_of({{"cmd", "set"}, {"id", "rx_gain_db"}, {"value", 20}}) == 409);  // AGC owns the gain
     CHECK(status_of({{"cmd", "set"}, {"id", "rx_lo_mhz"}, {"value", 9000}}) == 400);  // above 6 GHz
-    ctl.call("set", {{"id", "gain_mode"}, {"value", "manual"}});
-    CHECK(ctl.call("set", {{"id", "rx_gain_db"}, {"value", 20}})["value"] == 20);
+    ctl.set("gain_mode", "manual");
+    CHECK(ctl.set("rx_gain_db", 20) == 20);
 
     auto latest = [&]() {
         std::lock_guard lock(m);
@@ -276,33 +294,30 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
     latest();
     REQUIRE(forge::testing::wait_until([&] {
         std::lock_guard lock(m);
-        return !frames.empty() && frames.back().header["center_freq"] == 2411.5e6;
+        return !frames.empty() && block_of(frames.back()).center_freq() == 2411.5e6;
     }, 10s));
 
     // --- TX: disabled drops, enabled loops back into RX --------------------------
     fz::Sender push(fz::Sender::Kind::push, app.tx_endpoint(), false);
     const auto tx = tone(4000, 1.25e6, 5e6, 0.5);
-    REQUIRE(forge::testing::wait_until([&] { return push.send("tx", {{"format", "cs16"}}, tx.data(), tx.size() * 2); }));
-    CHECK(forge::testing::wait_until([&] { return ctl.call("get", {{"id", "tx_dropped"}})["value"] == 1; }));
+    REQUIRE(forge::testing::wait_until([&] { return send_tx(push, tx, false); }));
+    CHECK(forge::testing::wait_until([&] { return ctl.get("tx_dropped") == 1; }));
 
-    ctl.call("set", {{"id", "tx_enabled"}, {"value", true}});
-    ctl.call("set", {{"id", "tx_lo_mhz"}, {"value", 2411.5}});
-    ctl.call("set", {{"id", "tx_atten_db"}, {"value", 0}});
-    REQUIRE(push.send("tx", {{"format", "cs16"}, {"cyclic", true}}, tx.data(), tx.size() * 2));
-    CHECK(forge::testing::wait_until([&] { return ctl.call("get", {{"id", "tx_mode"}})["value"] == "cyclic"; }));
+    ctl.set("tx_enabled", true);
+    ctl.set("tx_lo_mhz", 2411.5);
+    ctl.set("tx_atten_db", 0);
+    REQUIRE(send_tx(push, tx, true));
+    CHECK(forge::testing::wait_until([&] { return ctl.get("tx_mode") == "cyclic"; }));
 
     latest();
     REQUIRE(forge::testing::wait_until([&] {
         std::lock_guard lock(m);
         if (frames.empty()) return false;
-        const auto& p = frames.back().payload;
-        std::vector<std::int16_t> iq(p.size() / 2);
-        std::memcpy(iq.data(), p.data(), p.size());
-        return std::abs(peak_offset(iq, 8192, 5e6) - 1.25e6) < 5e3;
+        return std::abs(peak_offset(samples_of(frames.back()), 8192, 5e6) - 1.25e6) < 5e3;
     }, 10s));
 
-    ctl.call("press", {{"id", "tx_stop"}});
-    CHECK(ctl.call("get", {{"id", "tx_mode"}})["value"] == "idle");
+    ctl.press("tx_stop");
+    CHECK(ctl.get("tx_mode") == "idle");
 
     app.stop();
     runner.join();
@@ -319,8 +334,8 @@ struct RunningRadio {
     explicit RunningRadio(std::vector<std::string> extra) {
         args = {"radio-controller", "-c", std::string(RADIO_TEST_DATA_DIR) + "/empty.toml", "--backend", "sim",
                 "-D", "log.console=false", "-D", "http.enabled=false",
-                "-D", "zmq.rx=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-                "-D", "zmq.tap=tcp://127.0.0.1:*", "-D", "zmq.control=tcp://127.0.0.1:*"};
+                "-D", "forge.data=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
+                "-D", "forge.control=tcp://127.0.0.1:*"};
         args.insert(args.end(), extra.begin(), extra.end());
         for (auto& a : args) argv.push_back(a.data());
         std::promise<void> started;
@@ -350,73 +365,73 @@ TEST_CASE("radio-controller: channel roles from the configuration (AD9361: RX1 o
     std::vector<fz::Message> tap, rx1;
     fz::Receiver::Options tap_opts;
     tap_opts.topics = {"rx2"};
-    fz::Receiver sub2(fz::Receiver::Kind::sub, r.app.tap_endpoint(), [&](fz::Message&& msg) {
+    fz::Receiver sub2(fz::Receiver::Kind::sub, r.app.data_endpoint(), [&](fz::Message&& msg) {
         std::lock_guard lock(m);
         if (tap.size() < 400) tap.push_back(std::move(msg));
     }, tap_opts);
     fz::Receiver::Options opts;
     opts.topics = {"iq"};
-    fz::Receiver sub1(fz::Receiver::Kind::sub, r.app.rx_endpoint(), [&](fz::Message&& msg) {
+    fz::Receiver sub1(fz::Receiver::Kind::sub, r.app.data_endpoint(), [&](fz::Message&& msg) {
         std::lock_guard lock(m);
         if (rx1.size() < 400) rx1.push_back(std::move(msg));
     }, opts);
     REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return tap.size() >= 2 && !rx1.empty(); }, 10s));
     {
         std::lock_guard lock(m);
-        const auto& h = tap.back().header;
+        const auto h = block_of(tap.back());
         CHECK(tap.back().topic == "rx2");
-        CHECK(h["channel"] == 2);
-        CHECK(h["samples"] == 16384);  // the start of a 32768-sample DMA buffer
-        CHECK(h["format"] == "cs16");
-        CHECK(h["center_freq"] == 2410e6);
-        CHECK(h["sample_rate"] == 5e6);
-        CHECK(tap.back().payload.size() == 16384 * 4);
-        CHECK(tap[1].header["seq"].get<int>() > tap[0].header["seq"].get<int>());
-        for (const auto& f : rx1) CHECK(f.header["channel"] == 1);  // it listens to RX1 only
+        CHECK(h.channel() == 2);
+        CHECK(h.samples() == 16384);  // the start of a 32768-sample DMA buffer
+        CHECK(h.format() == "cs16");
+        CHECK(h.center_freq() == 2410e6);
+        CHECK(h.sample_rate() == 5e6);
+        CHECK(tap.back().blob.size() == 16384 * 4);
+        CHECK(tap[1].header.seq() > tap[0].header.seq());
+        for (const auto& f : rx1) CHECK(block_of(f).channel() == 1);  // it listens to RX1 only
     }
 
     fz::Client ctl(r.app.control_endpoint(), 5s);
-    CHECK(ctl.call("get", {{"id", "hw_channels"}})["value"] == "2R2T");
-    CHECK(ctl.call("get", {{"id", "rx_channels"}})["value"] == json::array({1}));
-    CHECK(ctl.call("get", {{"id", "tap_channels"}})["value"] == json::array({2}));
-    CHECK(ctl.call("get", {{"id", "tx_channel"}})["value"] == "TX1");
-    ctl.call("set", {{"id", "rx2_gain_mode"}, {"value", "manual"}});
-    CHECK(ctl.call("set", {{"id", "rx2_gain_db"}, {"value", 25}})["value"] == 25);
+    CHECK(ctl.get("hw_channels") == "2R2T");
+    CHECK(ctl.get("rx_channels") == json::array({1}));
+    CHECK(ctl.get("tap_channels") == json::array({2}));
+    CHECK(ctl.get("tx_channel") == "TX1");
+    ctl.set("rx2_gain_mode", "manual");
+    CHECK(ctl.set("rx2_gain_db", 25) == 25);
     auto newest = [&](std::vector<fz::Message>& v) {
         std::lock_guard lock(m);
         return v.empty() ? fz::Message{} : v.back();
     };
+    auto gain_of = [](const fz::Message& msg) { return msg.body.empty() ? 0.0 : block_of(msg).rx_gain_db(); };
+    auto center_of = [](const fz::Message& msg) { return msg.body.empty() ? 0.0 : block_of(msg).center_freq(); };
     auto clear = [&] {
         std::lock_guard lock(m);
         rx1.clear();
         tap.clear();
     };
     clear();
-    REQUIRE(forge::testing::wait_until([&] { return newest(tap).header.value("rx_gain_db", 0.0) == 25.0; }));
+    REQUIRE(forge::testing::wait_until([&] { return gain_of(newest(tap)) == 25.0; }));
 
     // A cyclic tone on TX1 shows up on RX2 (cable) but not on RX1.
-    ctl.call("set", {{"id", "tx_enabled"}, {"value", true}});
-    ctl.call("set", {{"id", "tx_atten_db"}, {"value", 0}});
+    ctl.set("tx_enabled", true);
+    ctl.set("tx_atten_db", 0);
     fz::Sender push(fz::Sender::Kind::push, r.app.tx_endpoint(), false);
     const auto tx = tone(4000, 1.25e6, 5e6, 0.5);
-    REQUIRE(forge::testing::wait_until([&] { return push.send("tx", {{"format", "cs16"}, {"cyclic", true}}, tx.data(), tx.size() * 2); }));
+    REQUIRE(forge::testing::wait_until([&] { return send_tx(push, tx, true); }));
     auto peak_of = [&](const fz::Message& msg, std::size_t n) {
-        std::vector<std::int16_t> iq(msg.payload.size() / 2);
-        std::memcpy(iq.data(), msg.payload.data(), msg.payload.size());
-        return peak_offset(iq, n, 5e6);
+        return peak_offset(samples_of(msg), n, 5e6);
     };
     clear();
     CHECK(forge::testing::wait_until([&] {
         const auto b = newest(tap);
-        return !b.payload.empty() && std::abs(peak_of(b, 16384) - 1.25e6) < 5e3;
+        return !b.blob.empty() && std::abs(peak_of(b, 16384) - 1.25e6) < 5e3;
     }, 10s));
     clear();
-    REQUIRE(forge::testing::wait_until([&] { return !newest(rx1).payload.empty(); }));
+    REQUIRE(forge::testing::wait_until([&] { return !newest(rx1).blob.empty(); }));
     CHECK(std::abs(peak_of(newest(rx1), 8192) - 2e6) < 5e3);  // RX1: the strongest is the 2412 MHz carrier
 
     // Retuning (radio-controller owns the shared RX LO) is visible in the headers.
-    ctl.call("set", {{"id", "rx_lo_mhz"}, {"value", 2411}});
-    CHECK(forge::testing::wait_until([&] { return newest(tap).header.value("center_freq", 0.0) == 2411e6; }));
+    ctl.set("rx_lo_mhz", 2411);
+    CHECK(forge::testing::wait_until([&] { return center_of(newest(tap)) == 2411e6; }));
 }
 
 TEST_CASE("radio-controller: listens to both RX channels and drives TX2") {
@@ -430,34 +445,31 @@ TEST_CASE("radio-controller: listens to both RX channels and drives TX2") {
     std::map<int, fz::Message> last;
     fz::Receiver::Options opts;
     opts.topics = {"iq"};
-    fz::Receiver sub(fz::Receiver::Kind::sub, r.app.rx_endpoint(), [&](fz::Message&& msg) {
+    fz::Receiver sub(fz::Receiver::Kind::sub, r.app.data_endpoint(), [&](fz::Message&& msg) {
         std::lock_guard lock(m);
-        last[msg.header["channel"].get<int>()] = std::move(msg);
+        last[static_cast<int>(block_of(msg).channel())] = std::move(msg);
     }, opts);
     fz::Sender push(fz::Sender::Kind::push, r.app.tx_endpoint(), false);
     const auto tx = tone(4000, 1.25e6, 5e6, 0.5);
-    REQUIRE(forge::testing::wait_until([&] { return push.send("tx", {{"format", "cs16"}, {"cyclic", true}}, tx.data(), tx.size() * 2); }));
+    REQUIRE(forge::testing::wait_until([&] { return send_tx(push, tx, true); }));
     auto peak = [&](int ch) {
         std::lock_guard lock(m);
         if (!last.count(ch)) return 0.0;
-        const auto& p = last[ch].payload;
-        std::vector<std::int16_t> iq(p.size() / 2);
-        std::memcpy(iq.data(), p.data(), p.size());
-        return peak_offset(iq, 8192, 5e6);
+        return peak_offset(samples_of(last[ch]), 8192, 5e6);
     };
     // TX2 is cabled to RX1 in this setup: the tone is on RX1, RX2 sees the carrier
     CHECK(forge::testing::wait_until([&] { return std::abs(peak(1) - 1.25e6) < 5e3; }, 10s));
     CHECK(std::abs(peak(2) - 2e6) < 5e3);
     fz::Client ctl(r.app.control_endpoint(), 5s);
-    CHECK(ctl.call("get", {{"id", "rx_channels"}})["value"] == json::array({1, 2}));
-    CHECK(ctl.call("get", {{"id", "tx_channel"}})["value"] == "TX2");
+    CHECK(ctl.get("rx_channels") == json::array({1, 2}));
+    CHECK(ctl.get("tx_channel") == "TX2");
 }
 
 TEST_CASE("radio-controller: a configuration the transceiver cannot do is reported") {
     RunningRadio r({"-D", "radio.tap_rx=[2]"});  // simulated AD9364: one RX, one TX
     fz::Client ctl(r.app.control_endpoint(), 5s);
-    CHECK(ctl.call("get", {{"id", "connected"}})["value"] == false);
-    const auto alarms = ctl.call("alarms")["alarms"];
+    CHECK(ctl.get("connected") == false);
+    const auto alarms = ctl.request_json({{"cmd", "alarms"}})["alarms"];
     REQUIRE(alarms.size() == 1);
     CHECK(alarms[0]["id"] == "radio.device");
     const auto msg = alarms[0]["message"].get<std::string>();
@@ -532,8 +544,8 @@ TEST_CASE("radio-controller: keeps running and raises an alarm when the radio is
                                   "--backend", "iio",
                                   "--uri", std::string("xml:") + RADIO_TEST_DATA_DIR + "/ad9364.xml",
                                   "-D", "log.console=false", "-D", "http.enabled=false",
-                                  "-D", "zmq.rx=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-                                  "-D", "zmq.tap=tcp://127.0.0.1:*", "-D", "zmq.control=tcp://127.0.0.1:*"};
+                                  "-D", "forge.data=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
+                                  "-D", "forge.control=tcp://127.0.0.1:*"};
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
 
@@ -544,13 +556,13 @@ TEST_CASE("radio-controller: keeps running and raises an alarm when the radio is
     started.get_future().get();
 
     fz::Client ctl(app.control_endpoint(), 5s);
-    CHECK(ctl.call("get", {{"id", "connected"}})["value"] == false);
-    const auto alarms = ctl.call("alarms")["alarms"];
+    CHECK(ctl.get("connected") == false);
+    const auto alarms = ctl.request_json({{"cmd", "alarms"}})["alarms"];
     REQUIRE(alarms.size() == 1);
     CHECK(alarms[0]["id"] == "radio.device");
     CHECK(alarms[0]["severity"] == "error");
     CHECK(alarms[0]["message"].get<std::string>().find("Radio not available") == 0);
-    CHECK(ctl.request({{"cmd", "set"}, {"id", "rx_lo_mhz"}, {"value", 2400}})["status"] == 503);
+    CHECK(ctl.request_json({{"cmd", "set"}, {"id", "rx_lo_mhz"}, {"value", 2400}})["status"] == 503);
 
     app.stop();
     runner.join();

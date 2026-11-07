@@ -1,39 +1,51 @@
 #pragma once
-// ZeroMQ messaging for forgecpp daemons (libzmq + cppzmq).
+// ZeroMQ transport of the forge.v1 message standard (libzmq + cppzmq).
 //
-// Link forgecpp::zmq. Every message on the wire is a multipart message:
+// Every published message is multipart (see proto/forge/v1/common.proto):
 //
 //   frame 0: topic   (UTF-8, used for PUB/SUB prefix filtering)
-//   frame 1: header  (JSON object)
-//   frame 2: payload (optional raw bytes, e.g. IQ samples)
+//   frame 1: forge.v1.Header (source, seq, time, body type, trace context)
+//   frame 2: body    (the protobuf message named in Header.type)
+//   frame 3: blob    (optional raw bytes, e.g. IQ samples, described by the body)
+//
+// Control requests and replies are single frames: forge.v1.Request / Reply
+// (a REP socket also accepts the older JSON commands, see ControlService).
 //
 // Building blocks:
-//   Sender    PUB (fan-out, slow subscribers drop) or PUSH (load-balanced, lossless)
-//   Receiver  SUB or PULL with its own thread
-//   Server    JSON request/reply (REP) with its own thread
-//   Client    JSON request/reply (REQ) with timeout and automatic reconnect
-//   serve_application()  exposes an Application's controls and alarms over ZeroMQ
+//   Publisher  PUB socket shared by many streams, thread-safe, with per-topic
+//              subscriber counts, rate limits, "latest only" streams and
+//              zero-copy blobs. Every application has two: [forge].events
+//              (state, alarms, logs, audit, health, metrics) and [forge].data
+//              (its own streams).
+//   Sender     PUB or PUSH socket used from one thread
+//   Receiver   SUB or PULL with its own thread; restores the trace context
+//   Server     request/reply (REP) with its own thread
+//   Client     forge.v1 control client (REQ) with timeout and reconnect
 //
-//   forge::zmq::Sender pub(forge::zmq::Sender::Kind::pub, "tcp://*:5555");
-//   pub.send("temperature", {{"value", 21.5}});
+//   auto& spectrum = app.streams().add("spectrum", "sa.v1.Spectrum", {.max_rate_hz = 20});
+//   if (spectrum.wanted()) spectrum.publish(frame);           // any thread
 //
-//   forge::zmq::Receiver::Options opts;
-//   opts.topics = {"temperature"};
-//   forge::zmq::Receiver sub(forge::zmq::Receiver::Kind::sub, "tcp://host:5555",
-//                            [](forge::zmq::Message&& m) { ... }, opts);
-//
-// Sockets are not thread-safe: a Sender belongs to the thread that uses it;
-// Receiver and Server own their socket on their internal thread.
+//   forge::zmq::Receiver sub(forge::zmq::Receiver::Kind::sub, "tcp://host:5558",
+//       [](forge::zmq::Message&& m) { auto block = m.as<radio::v1::IqBlock>(); ... },
+//       {.topics = {"rx2"}});
 
 #include "forge/json.hpp"
+#include "forge/v1/common.pb.h"
+#include "forge/v1/control.pb.h"
 
+#include <google/protobuf/message.h>
 #include <zmq.hpp>
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <functional>
+#include <future>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -42,7 +54,8 @@
 
 namespace forge {
 class Application;
-}
+class ControlService;
+}  // namespace forge
 
 namespace forge::zmq {
 
@@ -51,12 +64,6 @@ namespace forge::zmq {
 
 /// libzmq version, e.g. "4.3.5".
 std::string version();
-
-struct Message {
-    std::string topic;
-    json header = json::object();
-    std::string payload;  ///< raw bytes; empty when the message has no payload frame
-};
 
 /// Errors from Client (timeouts, transport) and remote errors returned by servers.
 class Error : public std::runtime_error {
@@ -69,13 +76,129 @@ private:
     int status_;
 };
 
+/// A received (or to be sent) forge.v1 message.
+struct Message {
+    std::string topic;
+    v1::Header header;
+    std::string body;  ///< serialized message of type header.type()
+    std::string blob;  ///< optional raw bytes
+
+    /// Parse the body; throws Error if the type does not match or parsing fails.
+    template <class T>
+    T as() const {
+        T out;
+        if (!header.type().empty() && header.type() != out.GetTypeName()) {
+            throw Error("message on '" + topic + "' is " + header.type() + ", not " + out.GetTypeName());
+        }
+        if (!out.ParseFromString(body)) throw Error("cannot parse " + out.GetTypeName() + " on '" + topic + "'");
+        return out;
+    }
+};
+
 struct SocketOptions {
     int send_hwm = 1000;   ///< messages queued per peer before dropping / blocking
     int recv_hwm = 1000;
     int linger_ms = 0;     ///< how long unsent messages are kept after close
 };
 
-/// PUB or PUSH sender. Not thread-safe: use it from one thread.
+/// Keeps blob memory alive until ZeroMQ has sent it (zero copy).
+using BlobOwner = std::shared_ptr<const void>;
+
+// ---------------------------------------------------------------------------
+// Publisher and streams
+
+struct StreamOptions {
+    /// all: every message is queued; latest: only the newest unsent one is
+    /// kept (slow consumers see fresh data, never a backlog).
+    std::string policy = "all";
+    /// Maximum messages per second (0 = unlimited); wanted() is false in between.
+    double max_rate_hz = 0;
+};
+
+class Publisher;
+
+/// One topic of a Publisher. publish() is thread-safe.
+class Stream {
+public:
+    const std::string& name() const { return name_; }
+    const std::string& type() const { return type_; }
+
+    /// True when someone subscribes and the rate limit allows a message now.
+    /// Check it before doing the work of building a message.
+    bool wanted();
+    std::size_t subscribers() const { return subscribers_.load(); }
+
+    /// Queue `body` (+ optional blob). Returns false if it was dropped
+    /// (queue full). The blob is sent without copying while `owner` lives;
+    /// with a null owner it is copied (the caller may reuse its buffer).
+    bool publish(const google::protobuf::Message& body);
+    bool publish(const google::protobuf::Message& body, BlobOwner owner, const void* data, std::size_t size);
+    /// Same with an explicit header (e.g. to forward a received message).
+    bool publish_with_header(v1::Header header, std::string body, BlobOwner owner, const void* data,
+                             std::size_t size);
+
+    v1::StreamInfo info() const;
+
+private:
+    friend class Publisher;
+    Stream(Publisher& owner, std::string name, std::string type, StreamOptions options);
+
+    Publisher& owner_;
+    std::string name_, type_;
+    StreamOptions options_;
+    std::atomic<std::uint64_t> seq_{0}, sent_{0}, dropped_{0};
+    std::atomic<std::size_t> subscribers_{0};
+    std::mutex rate_mutex_;
+    std::chrono::steady_clock::time_point next_{};
+};
+
+/// PUB socket with an I/O thread: thread-safe streams on one endpoint.
+class Publisher {
+public:
+    Publisher(const std::string& endpoint, SocketOptions options = {});
+    ~Publisher();
+    Publisher(const Publisher&) = delete;
+    Publisher& operator=(const Publisher&) = delete;
+
+    /// Create (or return) the stream `name` (topic) carrying `type` messages.
+    Stream& add(const std::string& name, const std::string& type, StreamOptions options = {});
+    Stream* find(const std::string& name);
+    std::vector<v1::StreamInfo> list() const;
+    std::string endpoint() const { return endpoint_; }
+    /// Messages waiting for the I/O thread.
+    std::size_t queued() const;
+    void stop();
+
+private:
+    friend class Stream;
+    struct Outgoing {
+        Stream* stream = nullptr;
+        std::string header, body;
+        BlobOwner owner;
+        const void* data = nullptr;
+        std::size_t size = 0;
+    };
+    bool enqueue(Stream& s, Outgoing out);
+    void run();
+    void update_subscriptions(std::string_view prefix, bool subscribe);
+
+    std::string endpoint_;
+    SocketOptions options_;
+    mutable std::mutex mutex_;
+    std::condition_variable cv_;
+    std::deque<Outgoing> queue_;
+    std::map<std::string, Outgoing> latest_;  // per stream, policy "latest"
+    std::map<std::string, std::unique_ptr<Stream>> streams_;
+    std::map<std::string, std::size_t> prefixes_;  // subscription prefix -> count
+    std::atomic<bool> running_{true};
+    std::thread thread_;
+    std::promise<std::string> bound_;
+};
+
+// ---------------------------------------------------------------------------
+// Single-thread sockets
+
+/// PUB or PUSH sender. Not thread-safe: use it from one thread (or use Publisher).
 class Sender {
 public:
     enum class Kind { pub, push };
@@ -83,15 +206,15 @@ public:
     /// `bind` binds the endpoint ("tcp://*:5555"), otherwise connects to it.
     Sender(Kind kind, const std::string& endpoint, bool bind = true, SocketOptions options = {});
 
-    /// Non-blocking send. Returns false when the message was dropped:
-    /// PUSH with no peer or all peers full. (PUB drops per slow subscriber
-    /// silently, by design, so a slow client never stalls the others.)
-    bool send(std::string_view topic, const json& header, const void* data = nullptr, std::size_t size = 0);
+    /// Send `body` with a standard header (seq per topic, type = body type).
+    /// Non-blocking: returns false when dropped (PUSH with no peer / full).
+    bool publish(std::string_view topic, const google::protobuf::Message& body, const void* blob = nullptr,
+                 std::size_t size = 0);
+    /// Send a prepared message as is.
     bool send(const Message& message);
 
     /// PUB only: active subscriptions (each subscriber counts once per topic).
     std::size_t subscriptions();
-
     std::uint64_t sent() const { return sent_; }
     std::uint64_t dropped() const { return dropped_; }
     /// Resolved endpoint (useful with "tcp://*:0" or "tcp://127.0.0.1:*").
@@ -99,6 +222,8 @@ public:
     ::zmq::socket_t& native() { return socket_; }
 
 private:
+    bool send_frames(std::string_view topic, const std::string& header, const std::string& body, const void* blob,
+                     std::size_t size);
     void poll_subscriptions();
 
     Kind kind_;
@@ -106,10 +231,12 @@ private:
     std::int64_t subscriptions_ = 0;
     std::uint64_t sent_ = 0;
     std::uint64_t dropped_ = 0;
+    std::map<std::string, std::uint64_t, std::less<>> seq_;
 };
 
 /// SUB or PULL receiver running its own thread. The handler is called on
-/// that thread; hand work to the main loop with Application::post().
+/// that thread with the sender's trace context; hand work to the main loop
+/// with Application::post().
 class Receiver {
 public:
     enum class Kind { sub, pull };
@@ -130,6 +257,8 @@ public:
 
     void stop();
     std::uint64_t received() const { return received_; }
+    /// Messages lost between sender and us (gaps in Header.seq, per source and topic).
+    std::uint64_t lost() const { return lost_; }
     std::string endpoint() const { return endpoint_; }
 
 private:
@@ -139,15 +268,16 @@ private:
     Handler handler_;
     std::string endpoint_;
     std::atomic<bool> running_{true};
-    std::atomic<std::uint64_t> received_{0};
+    std::atomic<std::uint64_t> received_{0}, lost_{0};
+    std::map<std::string, std::uint64_t> last_seq_;
     std::thread thread_;
 };
 
-/// JSON request/reply server (REP) with its own thread. The handler's
-/// exceptions become {"ok": false, "error": ..., "status": ...} replies.
+/// Request/reply server (REP) with its own thread. The handler gets the raw
+/// request frame and returns the raw reply frame.
 class Server {
 public:
-    using Handler = std::function<json(const json& request)>;
+    using Handler = std::function<std::string(std::string_view request)>;
 
     Server(const std::string& endpoint, Handler handler, SocketOptions options = {});
     ~Server();
@@ -170,45 +300,51 @@ private:
     std::thread thread_;
 };
 
-/// JSON request/reply client (REQ). After a timeout the socket is rebuilt
-/// so the next request works once the server is back ("lazy pirate").
+/// forge.v1 control client (REQ). After a timeout the socket is rebuilt so
+/// the next request works once the server is back ("lazy pirate").
 /// Not thread-safe.
 class Client {
 public:
     explicit Client(std::string endpoint, std::chrono::milliseconds timeout = std::chrono::seconds(2));
 
-    /// Send a request and wait for the raw reply. Throws Error on timeout.
-    json request(const json& request);
-
-    /// {"cmd": cmd, ...args} -> reply; throws Error(status) when ok == false.
-    json call(const std::string& cmd, const json& args = json::object());
-
+    /// Identity and credentials sent with every request.
+    void set_client(std::string name) { client_ = std::move(name); }
+    void set_token(std::string token) { token_ = std::move(token); }
     void timeout(std::chrono::milliseconds t) { timeout_ = t; }
     const std::string& endpoint() const { return endpoint_; }
 
+    /// Send a request (client, token and trace context are filled in) and
+    /// wait for the reply. Throws Error on timeout; remote errors are in the reply.
+    v1::Reply request(v1::Request request);
+    /// Same, but throws Error(status) when the reply is not ok.
+    v1::Reply call(v1::Request request);
+
+    // Shortcuts (throw Error on failure)
+    json get(const std::string& id);
+    json set(const std::string& id, const json& value);
+    void press(const std::string& id);
+    json call_command(const std::string& id, const json& args = json::object());
+    v1::Info info();
+
+    /// Older JSON commands ({"cmd": ...}); kept for scripts written for them.
+    json request_json(const json& request);
+
 private:
+    std::string exchange(const std::string& bytes);
     void reconnect();
 
     std::string endpoint_;
     std::chrono::milliseconds timeout_;
+    std::string client_, token_;
     std::unique_ptr<::zmq::socket_t> socket_;
 };
 
-/// Serve an Application's controls and alarms over ZeroMQ, next to the web UI
-/// and the console. Requests are JSON objects with a "cmd":
-///
-///   {"cmd":"ping"}                           -> {"ok":true,"pong":true}
-///   {"cmd":"info"}                           -> name, version, uptime, ...
-///   {"cmd":"ui"}                             -> control descriptions + values
-///   {"cmd":"state"}                          -> {"state":{"id":value,...}}
-///   {"cmd":"get","id":"rx_lo"}               -> {"value":...}
-///   {"cmd":"set","id":"rx_lo","value":2.4e9} -> {"value":...}  (validated)
-///   {"cmd":"press","id":"calibrate"}
-///   {"cmd":"alarms"}                         -> {"alarms":[...]}
-///   {"cmd":"ack","id":"..."|"all"}
-///
-/// Replies carry "ok": true, or "ok": false with "error" and "status".
-/// Commands run on the application's main loop. Call it from on_start().
+/// Serve a ControlService on a REP socket: forge.v1 Request frames, and the
+/// older JSON commands (a frame starting with '{'). Applications do this
+/// themselves for [forge].control; call it for additional endpoints.
+std::unique_ptr<Server> serve_control(ControlService& service, const std::string& endpoint);
+
+/// Compatibility: serve_control(app.control(), endpoint).
 std::unique_ptr<Server> serve_application(Application& app, const std::string& endpoint);
 
 }  // namespace forge::zmq

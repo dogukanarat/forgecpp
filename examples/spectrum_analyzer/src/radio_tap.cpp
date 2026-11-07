@@ -2,6 +2,8 @@
 
 #include <forge/zmq.hpp>
 
+#include "radio/v1/radio.pb.h"
+
 #include <atomic>
 #include <condition_variable>
 #include <cstring>
@@ -18,13 +20,14 @@ namespace fz = forge::zmq;
 class RadioTapBackend final : public radio::Backend, public FixedTuning {
 public:
     explicit RadioTapBackend(RadioTapOptions o) : options_(std::move(o)), control_(options_.control, options_.timeout) {
+        control_.set_client("spectrum-analyzer");
         if (options_.channel < 1 || options_.channel > 2) throw DeviceError("channel must be 1 or 2");
         // radio-controller's control ids for the channel's gain
         mode_id_ = options_.channel == 1 ? "gain_mode" : "rx2_gain_mode";
         gain_id_ = options_.channel == 1 ? "rx_gain_db" : "rx2_gain_db";
         // Check radio-controller first: a clear error beats a silent wait for data.
         try {
-            const auto shared = call("get", {{"id", "tap_channels"}})["value"];
+            const auto shared = control_.get("tap_channels");
             bool found = false;
             for (const auto& c : shared) found = found || (c.is_number() && c.get<unsigned>() == options_.channel);
             if (!found) {
@@ -39,7 +42,7 @@ public:
         ro.topics = {"rx" + std::to_string(options_.channel)};
         ro.socket.recv_hwm = 4;
         receiver_ = std::make_unique<fz::Receiver>(
-            fz::Receiver::Kind::sub, options_.tap, [this](fz::Message&& m) { on_block(std::move(m)); }, ro);
+            fz::Receiver::Kind::sub, options_.data, [this](fz::Message&& m) { on_block(std::move(m)); }, ro);
     }
 
     ~RadioTapBackend() override {
@@ -48,12 +51,12 @@ public:
     }
 
     std::string name() const override {
-        return "radio-controller RX" + std::to_string(options_.channel) + " (" + options_.tap + ")";
+        return "radio-controller RX" + std::to_string(options_.channel) + " (" + options_.data + ")";
     }
 
     nlohmann::json describe() const override {
         return {{"backend", "radio"},
-                {"tap", options_.tap},
+                {"data", options_.data},
                 {"control", options_.control},
                 {"channel", options_.channel},
                 {"control_gain", options_.control_gain}};
@@ -84,7 +87,7 @@ public:
     }
     std::optional<double> temperature_c() override {
         try {
-            const auto v = call("get", {{"id", "temperature_c"}})["value"];
+            const auto v = control_.get("temperature_c");
             if (v.is_number()) return v.get<double>();
         } catch (const fz::Error&) {
         }
@@ -148,16 +151,14 @@ private:
         if (ch != 0) throw DeviceError("the radio-controller tap carries one channel");
     }
     std::string no_data() const {
-        return "no RX" + std::to_string(options_.channel) + " data from radio-controller at " + options_.tap +
+        return "no RX" + std::to_string(options_.channel) + " data from radio-controller at " + options_.data +
                " for " + std::to_string(options_.timeout.count()) + " ms (is RX streaming on?)";
     }
-
-    forge::json call(const std::string& cmd, const forge::json& args) { return control_.call(cmd, args); }
 
     template <class T>
     void remote_set(const std::string& id, const T& value) {
         try {
-            call("set", {{"id", id}, {"value", value}});
+            control_.set(id, value);
         } catch (const fz::Error& e) {
             throw DeviceError(std::string("radio-controller: ") + e.what());
         }
@@ -165,18 +166,23 @@ private:
 
     // Receiver thread: keep only the newest block.
     void on_block(fz::Message&& m) {
-        const auto& h = m.header;
-        const std::size_t samples = h.value("samples", std::size_t{0});
-        if (h.value("format", std::string()) != "cs16" || samples == 0 || m.payload.size() != samples * 4) return;
-        Tuning t{h.value("center_freq", 0.0), h.value("sample_rate", 0.0), samples};
+        radio::v1::IqBlock h;
+        try {
+            h = m.as<radio::v1::IqBlock>();
+        } catch (const fz::Error&) {
+            return;  // not an IQ block
+        }
+        const std::size_t samples = h.samples();
+        if (h.format() != "cs16" || samples == 0 || m.blob.size() != samples * 4) return;
+        Tuning t{h.center_freq(), h.sample_rate(), samples};
         if (t.rate_hz <= 0) return;
         {
             std::lock_guard lock(mutex_);
             block_.resize(2 * samples);
-            std::memcpy(block_.data(), m.payload.data(), m.payload.size());
+            std::memcpy(block_.data(), m.blob.data(), m.blob.size());
             block_tuning_ = t;
             have_block_ = fresh_ = true;
-            if (h.contains("rx_gain_db") && h["rx_gain_db"].is_number()) gain_db_ = h["rx_gain_db"].get<double>();
+            gain_db_ = h.rx_gain_db();
         }
         cv_.notify_all();
     }

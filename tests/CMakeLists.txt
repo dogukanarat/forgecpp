@@ -13,6 +13,5 @@ forge_add_test(forgecpp_tests
         test_thread_pool.cpp
         test_web.cpp)
 
-if(TARGET forgecpp_zmq)
-    forge_add_test(forgecpp_zmq_tests SOURCES test_zmq.cpp LIBS forgecpp_zmq)
-endif()
+forge_add_test(forgecpp_zmq_tests SOURCES test_zmq.cpp)
+forge_add_test(forgecpp_framework_tests SOURCES test_framework.cpp)

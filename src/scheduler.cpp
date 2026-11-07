@@ -2,6 +2,8 @@
 
 #include "forge/log.hpp"
 
+#include <stdexcept>
+
 namespace forge {
 
 Scheduler::Scheduler(Executor executor) : executor_(std::move(executor)) {
@@ -11,10 +13,43 @@ Scheduler::Scheduler(Executor executor) : executor_(std::move(executor)) {
     thread_ = std::thread([this] { run(); });
 }
 
+Scheduler::Scheduler(ManualClock, Executor executor) : executor_(std::move(executor)), manual_(true) {
+    if (!executor_) {
+        executor_ = [](Task t) { t(); };
+    }
+    // No timer thread: time moves with advance().
+}
+
 Scheduler::~Scheduler() { stop(); }
 
+Scheduler::Clock::time_point Scheduler::now() const {
+    if (!manual_) return Clock::now();
+    std::lock_guard lock(mutex_);
+    return manual_now_;
+}
+
+std::size_t Scheduler::advance(Clock::duration d) {
+    if (!manual_) throw std::logic_error("Scheduler::advance() needs the manual clock");
+    std::size_t ran = 0;
+    std::unique_lock lock(mutex_);
+    const auto target = manual_now_ + d;
+    for (;;) {
+        Task task;
+        Id id = 0;
+        Clock::time_point due;
+        if (stopping_ || !take_due(target, task, id, due)) break;
+        if (due > manual_now_) manual_now_ = due;  // tasks see the time they were due at
+        lock.unlock();
+        execute(id, std::move(task));
+        ++ran;
+        lock.lock();
+    }
+    manual_now_ = target;
+    return ran;
+}
+
 Scheduler::Id Scheduler::after(Clock::duration delay, Task task) {
-    return schedule(Clock::now() + delay, Clock::duration::zero(), std::move(task));
+    return schedule(now() + delay, Clock::duration::zero(), std::move(task));
 }
 
 Scheduler::Id Scheduler::at(Clock::time_point when, Task task) {
@@ -23,7 +58,8 @@ Scheduler::Id Scheduler::at(Clock::time_point when, Task task) {
 
 Scheduler::Id Scheduler::every(Clock::duration period, Task task, bool run_immediately) {
     if (period <= Clock::duration::zero()) period = std::chrono::milliseconds(1);
-    const auto first = run_immediately ? Clock::now() : Clock::now() + period;
+    const auto t = now();
+    const auto first = run_immediately ? t : t + period;
     return schedule(first, period, std::move(task));
 }
 
@@ -83,6 +119,44 @@ void Scheduler::stop() {
     }
 }
 
+bool Scheduler::take_due(Clock::time_point now, Task& task, Id& id, Clock::time_point& due) {
+    while (!queue_.empty() && queue_.begin()->first <= now) {
+        due = queue_.begin()->first;
+        id = queue_.begin()->second;
+        queue_.erase(queue_.begin());
+        auto it = entries_.find(id);
+        if (it == entries_.end()) continue;
+        if (it->second.period > Clock::duration::zero()) {
+            // Share one task instance between ticks so mutable state persists.
+            task = [shared = it->second.task] { (*shared)(); };
+            auto next = it->second.due + it->second.period;
+            // Real clock: if we fell behind, skip missed ticks instead of bursting.
+            // Manual clock: every tick runs (time jumps are deliberate).
+            if (!manual_ && next <= now) {
+                const auto behind = (now - next) / it->second.period + 1;
+                next += it->second.period * behind;
+            }
+            it->second.due = next;
+            queue_.emplace(next, id);
+        } else {
+            task = [shared = std::move(it->second.task)] { (*shared)(); };
+            entries_.erase(it);
+        }
+        return true;
+    }
+    return false;
+}
+
+void Scheduler::execute(Id id, Task task) {
+    try {
+        executor_(std::move(task));
+    } catch (const std::exception& e) {
+        log::error("scheduler: task {} threw: {}", id, e.what());
+    } catch (...) {
+        log::error("scheduler: task {} threw an unknown exception", id);
+    }
+}
+
 void Scheduler::run() {
     std::unique_lock lock(mutex_);
     while (!stopping_) {
@@ -95,38 +169,12 @@ void Scheduler::run() {
             cv_.wait_until(lock, due);
             continue;
         }
-
-        const Id id = queue_.begin()->second;
-        queue_.erase(queue_.begin());
-        auto it = entries_.find(id);
-        if (it == entries_.end()) continue;
-
         Task task;
-        if (it->second.period > Clock::duration::zero()) {
-            // Share one task instance between ticks so mutable state persists.
-            task = [shared = it->second.task] { (*shared)(); };
-            auto next = it->second.due + it->second.period;
-            const auto now = Clock::now();
-            if (next <= now) {
-                // We fell behind: skip missed ticks instead of bursting.
-                const auto behind = (now - next) / it->second.period + 1;
-                next += it->second.period * behind;
-            }
-            it->second.due = next;
-            queue_.emplace(next, id);
-        } else {
-            task = [shared = std::move(it->second.task)] { (*shared)(); };
-            entries_.erase(it);
-        }
-
+        Id id = 0;
+        Clock::time_point when;
+        if (!take_due(Clock::now(), task, id, when)) continue;
         lock.unlock();
-        try {
-            executor_(std::move(task));
-        } catch (const std::exception& e) {
-            log::error("scheduler: task {} threw: {}", id, e.what());
-        } catch (...) {
-            log::error("scheduler: task {} threw an unknown exception", id);
-        }
+        execute(id, std::move(task));
         lock.lock();
     }
 }

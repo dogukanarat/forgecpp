@@ -14,10 +14,14 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <future>
+#include <memory>
 #include <random>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace forge::testing {
 
@@ -60,5 +64,55 @@ inline bool wait_until(const std::function<bool()>& predicate,
     }
     return predicate();
 }
+
+/// Runs an application on a background thread for a test, isolated from the
+/// working directory (empty config file) and with the console log off.
+/// Endpoints in `args` should use ephemeral ports ("tcp://127.0.0.1:*", port 0).
+///
+///   forge::testing::AppRunner<MyDaemon> r({"-D", "forge.control=tcp://127.0.0.1:*"});
+///   forge::zmq::Client c(r.app().endpoints().at("control"));
+///   ...                                   // stopped and joined on destruction
+template <class App>
+class AppRunner {
+public:
+    explicit AppRunner(std::vector<std::string> args = {}, std::unique_ptr<App> app = std::make_unique<App>())
+        : app_(std::move(app)) {
+        const auto config = dir_ / "empty.toml";
+        std::ofstream(config) << "# test configuration: everything comes from -D\n";
+        args_ = {"app", "-c", config.string(), "-D", "log.console=false"};
+        args_.insert(args_.end(), args.begin(), args.end());
+        for (auto& a : args_) argv_.push_back(a.data());
+        auto started = std::make_shared<std::promise<void>>();
+        auto future = started->get_future();
+        app_->hook_start([started](auto& a) { a.post([started] { started->set_value(); }); });
+        thread_ = std::thread([this] { exit_code_ = app_->run(static_cast<int>(argv_.size()), argv_.data()); });
+        if (future.wait_for(std::chrono::seconds(20)) != std::future_status::ready) {
+            throw std::runtime_error("application did not start within 20 s");
+        }
+    }
+    ~AppRunner() { stop(); }
+    AppRunner(const AppRunner&) = delete;
+    AppRunner& operator=(const AppRunner&) = delete;
+
+    App& app() { return *app_; }
+    App* operator->() { return app_.get(); }
+    /// Stop and join; returns the exit code of run().
+    int stop() {
+        if (thread_.joinable()) {
+            app_->stop();
+            thread_.join();
+        }
+        return exit_code_;
+    }
+    const std::filesystem::path& dir() const { return dir_.path(); }
+
+private:
+    TempDir dir_;
+    std::unique_ptr<App> app_;
+    std::vector<std::string> args_;
+    std::vector<char*> argv_;
+    std::thread thread_;
+    int exit_code_ = -1;
+};
 
 }  // namespace forge::testing

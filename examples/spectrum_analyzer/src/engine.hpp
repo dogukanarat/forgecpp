@@ -115,6 +115,7 @@ public:
     struct Options {
         unsigned rx_channel = 0;   ///< 0 = RX1, 1 = RX2 of the backend
         bool control_gain = true;  ///< apply gain_mode / rx_gain_db (else leave the gain alone)
+        std::function<void()> on_thread_start;  ///< runs first on the acquisition thread (RT settings)
     };
     Engine(BackendFactory factory, HardwareLimits limits, Options options);
     Engine(BackendFactory factory, HardwareLimits limits) : Engine(std::move(factory), limits, Options{}) {}

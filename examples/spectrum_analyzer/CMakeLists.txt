@@ -14,9 +14,6 @@ endif()
 if(NOT TARGET forgecpp::forgecpp)
     find_package(forgecpp 0.2 REQUIRED)
 endif()
-if(NOT TARGET forgecpp::zmq)
-    message(FATAL_ERROR "spectrum-analyzer needs forgecpp built with ZeroMQ (forgecpp::zmq)")
-endif()
 
 # AD936x access (libiio backend + simulator) and DSP, shared with radio_controller.
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/ad936x ${CMAKE_CURRENT_BINARY_DIR}/ad936x)
@@ -24,7 +21,10 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/ad936x ${CMAKE_CURRENT_BI
 # Everything except main() lives in a static library so the tests can use it.
 add_library(sa_core STATIC src/spectrum.cpp src/engine.cpp src/radio_tap.cpp src/analyzer.cpp)
 target_include_directories(sa_core PUBLIC src)
-target_link_libraries(sa_core PUBLIC ad936x forgecpp::forgecpp forgecpp::zmq)
+target_link_libraries(sa_core PUBLIC ad936x forgecpp::forgecpp)
+# sa.v1 messages (spectrum stream); Python modules for clients
+set(SA_PYTHON_DIR "${CMAKE_CURRENT_BINARY_DIR}/python")
+forge_add_proto(sa_core ROOT ${CMAKE_CURRENT_SOURCE_DIR}/proto PROTOS sa/v1/spectrum.proto PYTHON ${SA_PYTHON_DIR})
 target_compile_definitions(sa_core PUBLIC SA_VERSION="${PROJECT_VERSION}")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(sa_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -44,6 +44,13 @@ forge_add_app(spectrum-analyzer
     WEB     web
     SERVICE "${CMAKE_CURRENT_BINARY_DIR}/spectrum-analyzer.service"
     ${_install_mode})
+
+if(SA_STANDALONE)
+    install(FILES proto/sa/v1/spectrum.proto DESTINATION ${CMAKE_INSTALL_DATADIR}/spectrum-analyzer/proto/sa/v1)
+    install(DIRECTORY ${SA_PYTHON_DIR}/ DESTINATION ${CMAKE_INSTALL_DATADIR}/spectrum-analyzer/python
+            FILES_MATCHING PATTERN "*.py")
+    install(PROGRAMS clients/spectrum_watch.py DESTINATION ${CMAKE_INSTALL_DATADIR}/spectrum-analyzer/clients)
+endif()
 
 # Run it from the build dir with its config next to it.
 configure_file(config/spectrum-analyzer.toml "${CMAKE_CURRENT_BINARY_DIR}/spectrum-analyzer.toml" COPYONLY)

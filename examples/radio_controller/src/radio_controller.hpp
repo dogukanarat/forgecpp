@@ -1,15 +1,15 @@
 #pragma once
 // radio-controller: AD9364 control and IQ streaming daemon.
 //
-//   ZeroMQ data plane (cs16 = interleaved int16 I/Q, full scale +-32767):
-//     [zmq].rx       PUB   topic "iq": header JSON + samples of the channels it
-//                          listens to ([radio].rx_channels; "channel" in the header)
-//     [zmq].tx       PULL  header JSON + samples for [radio].tx_channel
-//     [zmq].tap      PUB   topics "rx1"/"rx2": blocks of the channels it shares
+//   forge.v1 on ZeroMQ (radio.v1.IqBlock / TxBlock + cs16 blob = interleaved
+//   int16 I/Q, full scale +-32767):
+//     [forge].data   PUB   topic "iq": every buffer of the channels it listens to
+//                          ([radio].rx_channels; IqBlock.channel)
+//                          topics "rx1"/"rx2": blocks of the channels it shares
 //                          ([radio].tap_rx), rate limited: e.g. the spectrum analyzer
-//   ZeroMQ control plane:
-//     [zmq].control  REP   JSON commands (forge::zmq::serve_application):
-//                          {"cmd":"set","id":"rx_lo_mhz","value":2437}
+//     [zmq].tx       PULL  TxBlock + samples for [radio].tx_channel
+//     [forge].control REP  forge.v1 requests (forgectl, panels; older JSON commands too)
+//     [forge].events PUB   state, alarms, log, audit, health, metrics
 //   Web UI: /  (spectrum, waterfall, controls)   /forge/  (control panel)
 //   Console: -i  (controls / set / press / alarms)
 
@@ -34,13 +34,14 @@ public:
     RadioController();
 
     /// Resolved ZeroMQ endpoints (valid after start-up).
-    std::string rx_endpoint() const { return rx_endpoint_; }
-    std::string tap_endpoint() const { return tap_endpoint_; }
+    /// [forge].data: topics "iq", "rx1", "rx2".
+    std::string data_endpoint() const;
     std::string tx_endpoint() const;
     std::string control_endpoint() const;
 
 protected:
     void setup_cli(CLI::App& cli) override;
+    void setup_config(forge::config::Schema& schema) override;
     void setup_web(forge::web::Dashboard& ui) override;
     void on_start() override;
     void on_stop() override;
@@ -55,10 +56,7 @@ private:
     void control(const char* what, F&& fn);
 
     // threads
-    struct Endpoints {
-        std::string rx, tap;
-    };
-    void rx_loop(std::promise<Endpoints> bound);
+    void rx_loop();
     void on_tx_frame(forge::zmq::Message&& msg);
 
     // main loop timers
@@ -107,9 +105,9 @@ private:
     // RX thread
     std::atomic<bool> running_{false};
     std::thread rx_thread_;
-    std::string rx_endpoint_;
+    forge::zmq::Stream* iq_stream_ = nullptr;
+    forge::zmq::Stream* tap_stream_[2] = {nullptr, nullptr};
     std::atomic<std::size_t> subscriptions_{0};
-    std::string tap_endpoint_;
     std::atomic<std::size_t> tap_subscriptions_{0};
     std::atomic<std::uint64_t> tap_blocks_{0};
     std::atomic<std::uint64_t> rx_frames_{0}, rx_samples_{0}, rx_overflows_{0};
@@ -125,7 +123,6 @@ private:
     std::vector<std::int16_t> tx_pending_;  // TX thread only
     std::atomic<std::uint64_t> tx_frames_{0}, tx_samples_{0}, tx_underflows_{0}, tx_dropped_{0};
 
-    std::unique_ptr<forge::zmq::Server> control_server_;
 
     // derived telemetry (main loop)
     std::uint64_t last_rx_samples_ = 0, last_rx_overflows_ = 0, last_tx_underflows_ = 0;

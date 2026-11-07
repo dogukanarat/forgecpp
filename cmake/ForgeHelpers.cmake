@@ -16,6 +16,16 @@
 #   forge_add_test(<name>
 #       SOURCES <files...>
 #       [LIBS <targets...>])         doctest-based test registered with CTest
+#
+#   forge_add_proto(<target>
+#       PROTOS <files...>            .proto files, relative to ROOT
+#       [ROOT <dir>]                 import root of the files, default: current source dir
+#       [IMPORT_DIRS <dirs...>]      extra import roots (forge/v1 and google/protobuf are always found)
+#       [PYTHON <dir>])              also generate Python modules (*_pb2.py) into <dir>
+#     Generates C++ with protoc and compiles it into <target>; the generated
+#     headers are found as "<path>.pb.h" (e.g. #include "radio/v1/radio.pb.h").
+#     Cross builds: set FORGE_PROTOC to a protoc that runs on the build machine
+#     (same version as the target's libprotobuf).
 
 include_guard(GLOBAL)
 include(GNUInstallDirs)
@@ -27,6 +37,90 @@ if(TARGET forgecpp::forgecpp)
 else()
     set(_FORGE_LIB forgecpp)
 endif()
+
+# forge/v1/*.proto: next to this file when installed, in the source tree otherwise.
+if(NOT DEFINED FORGECPP_PROTO_DIR)
+    if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../proto/forge/v1/common.proto")
+        get_filename_component(FORGECPP_PROTO_DIR "${CMAKE_CURRENT_LIST_DIR}/../proto" ABSOLUTE)
+    elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/proto/forge/v1/common.proto")
+        get_filename_component(FORGECPP_PROTO_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/proto" ABSOLUTE)
+    endif()
+endif()
+
+# protoc that runs on the build machine.
+function(_forge_protoc out)
+    if(FORGE_PROTOC)
+        set(${out} "${FORGE_PROTOC}" PARENT_SCOPE)
+    elseif(Protobuf_PROTOC_EXECUTABLE)
+        set(${out} "${Protobuf_PROTOC_EXECUTABLE}" PARENT_SCOPE)
+    elseif(TARGET protobuf::protoc AND NOT CMAKE_CROSSCOMPILING)
+        set(${out} "$<TARGET_FILE:protobuf::protoc>" PARENT_SCOPE)
+    else()
+        find_program(_forge_protoc_found protoc)
+        if(NOT _forge_protoc_found)
+            message(FATAL_ERROR "protoc not found: set FORGE_PROTOC to the protoc of the build machine")
+        endif()
+        set(${out} "${_forge_protoc_found}" PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(forge_add_proto target)
+    cmake_parse_arguments(ARG "" "ROOT;PYTHON" "PROTOS;IMPORT_DIRS" ${ARGN})
+    if(NOT ARG_PROTOS)
+        message(FATAL_ERROR "forge_add_proto(${target}): PROTOS is required")
+    endif()
+    if(NOT ARG_ROOT)
+        set(ARG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+    endif()
+    get_filename_component(root "${ARG_ROOT}" ABSOLUTE)
+    _forge_protoc(protoc)
+
+    set(out "${CMAKE_CURRENT_BINARY_DIR}/forge_proto/${target}")
+    file(MAKE_DIRECTORY "${out}")
+    set(includes -I "${root}")
+    foreach(dir ${ARG_IMPORT_DIRS} ${FORGECPP_PROTO_DIR})
+        list(APPEND includes -I "${dir}")
+    endforeach()
+    # google/protobuf/*.proto (well-known types) live next to the protobuf headers.
+    get_target_property(_pb_inc protobuf::libprotobuf INTERFACE_INCLUDE_DIRECTORIES)
+    foreach(dir ${_pb_inc})
+        if(EXISTS "${dir}/google/protobuf/struct.proto")
+            list(APPEND includes -I "${dir}")
+        endif()
+    endforeach()
+
+    set(sources)
+    set(python_outputs)
+    foreach(proto ${ARG_PROTOS})
+        get_filename_component(abs "${root}/${proto}" ABSOLUTE)
+        file(RELATIVE_PATH rel "${root}" "${abs}")
+        string(REGEX REPLACE "\\.proto$" "" stem "${rel}")
+        set(outputs "${out}/${stem}.pb.cc" "${out}/${stem}.pb.h")
+        set(python_arg)
+        if(ARG_PYTHON)
+            string(REGEX REPLACE "\\.proto$" "_pb2.py" py "${rel}")
+            list(APPEND outputs "${ARG_PYTHON}/${py}")
+            list(APPEND python_outputs "${ARG_PYTHON}/${py}")
+            set(python_arg "--python_out=${ARG_PYTHON}")
+        endif()
+        add_custom_command(
+            OUTPUT ${outputs}
+            COMMAND ${protoc} --cpp_out=${out} ${python_arg} ${includes} "${rel}"
+            WORKING_DIRECTORY "${root}"
+            DEPENDS "${abs}"
+            COMMENT "protoc ${rel}"
+            VERBATIM)
+        list(APPEND sources "${out}/${stem}.pb.cc")
+    endforeach()
+    if(ARG_PYTHON)
+        file(MAKE_DIRECTORY "${ARG_PYTHON}")
+    endif()
+    target_sources(${target} PRIVATE ${sources})
+    target_include_directories(${target} PUBLIC $<BUILD_INTERFACE:${out}>)
+    target_link_libraries(${target} PUBLIC protobuf::libprotobuf)
+    # Generated code triggers warnings we cannot fix.
+    set_source_files_properties(${sources} PROPERTIES COMPILE_OPTIONS "-w")
+endfunction()
 
 function(forge_add_app name)
     cmake_parse_arguments(ARG "NO_INSTALL" "CONFIG;SERVICE;WEB" "SOURCES;LIBS" ${ARGN})

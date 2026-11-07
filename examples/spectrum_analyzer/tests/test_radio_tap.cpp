@@ -4,7 +4,10 @@
 #include "radio_tap.hpp"
 
 #include <forge/testing.hpp>
+#include <forge/proto.hpp>
 #include <forge/zmq.hpp>
+
+#include "radio/v1/radio.pb.h"
 
 #ifdef SA_WITH_RADIO_CONTROLLER
 #include "radio_controller.hpp"
@@ -24,14 +27,15 @@ namespace fz = forge::zmq;
 
 namespace {
 
-/// Stand-in for radio-controller: its control socket and the RX2 block stream.
+/// Stand-in for radio-controller: its forge.v1 control endpoint and the RX2 stream.
 class FakeRadio {
 public:
     explicit FakeRadio(json tap_channels = json::array({2})) {
         state_ = {{"tap_channels", tap_channels}, {"rx2_gain_mode", "slow_attack"}, {"rx2_gain_db", 30.0},
                   {"gain_mode", "slow_attack"}, {"rx_gain_db", 30.0}, {"temperature_c", 44.5}};
-        control_ = std::make_unique<fz::Server>("tcp://127.0.0.1:*", [this](const json& req) { return handle(req); });
-        pub_ = std::make_unique<fz::Sender>(fz::Sender::Kind::pub, "tcp://127.0.0.1:*");
+        control_ = std::make_unique<fz::Server>("tcp://127.0.0.1:*", [this](std::string_view req) { return handle(req); });
+        pub_ = std::make_unique<fz::Publisher>("tcp://127.0.0.1:*");
+        stream_ = &pub_->add("rx2", "radio.v1.IqBlock");
         thread_ = std::thread([this] { publish(); });
     }
     ~FakeRadio() {
@@ -39,7 +43,7 @@ public:
         thread_.join();
     }
     std::string control() const { return control_->endpoint(); }
-    std::string tap() const { return pub_->endpoint(); }
+    std::string data() const { return pub_->endpoint(); }
     json state() {
         std::lock_guard lock(m_);
         return state_;
@@ -51,15 +55,23 @@ public:
     static constexpr std::size_t kBlock = 16384;
 
 private:
-    json handle(const json& req) {
+    std::string handle(std::string_view bytes) {
+        forge::v1::Request req;
+        forge::v1::Reply reply;
+        if (!req.ParseFromArray(bytes.data(), static_cast<int>(bytes.size()))) {
+            return forge::proto::error_reply(400, "bad request").SerializeAsString();
+        }
         std::lock_guard lock(m_);
-        const auto id = req.value("id", std::string());
-        if (!state_.contains(id)) throw fz::Error("unknown control '" + id + "'", 404);
-        if (req["cmd"] == "set") {
-            state_[id] = req["value"];
+        const bool set = req.kind_case() == forge::v1::Request::kSet;
+        const auto id = set ? req.set().id() : req.get().id();
+        if (!state_.contains(id)) return forge::proto::error_reply(404, "unknown control '" + id + "'").SerializeAsString();
+        if (set) {
+            state_[id] = forge::proto::to_json(req.set().value());
             ++sets;
         }
-        return {{"id", id}, {"value", state_[id]}};
+        reply.set_ok(true);
+        *reply.mutable_value() = forge::proto::to_value(state_[id]);
+        return reply.SerializeAsString();
     }
     void publish() {
         std::vector<std::int16_t> iq(2 * kBlock);
@@ -71,15 +83,18 @@ private:
                 iq[2 * i] = static_cast<std::int16_t>(8000 * std::cos(phase) + (i * 7919 % 64) - 32);
                 iq[2 * i + 1] = static_cast<std::int16_t>(8000 * std::sin(phase) + (i * 104729 % 64) - 32);
             }
-            json gain;
+            radio::v1::IqBlock b;
             {
                 std::lock_guard lock(m_);
-                gain = state_["rx2_gain_db"];
+                b.set_rx_gain_db(state_["rx2_gain_db"].get<double>());
             }
-            pub_->send("rx2",
-                       {{"seq", ++seq}, {"samples", kBlock}, {"format", "cs16"}, {"channel", 2},
-                        {"sample_rate", kRate}, {"center_freq", lo.load()}, {"rx_gain_db", gain}},
-                       iq.data(), iq.size() * sizeof(std::int16_t));
+            b.set_channel(2);
+            b.set_samples(kBlock);
+            b.set_format("cs16");
+            b.set_sample_rate(kRate);
+            b.set_center_freq(lo.load());
+            b.set_buffer(++seq);
+            stream_->publish(b, nullptr, iq.data(), iq.size() * sizeof(std::int16_t));  // no owner: copied
             std::this_thread::sleep_for(20ms);
         }
     }
@@ -87,7 +102,8 @@ private:
     std::mutex m_;
     json state_;
     std::unique_ptr<fz::Server> control_;
-    std::unique_ptr<fz::Sender> pub_;
+    std::unique_ptr<fz::Publisher> pub_;
+    fz::Stream* stream_ = nullptr;
     std::atomic<bool> running_{true};
     std::thread thread_;
 };
@@ -109,7 +125,7 @@ std::shared_ptr<const sa::Frame> wait_frame(sa::Engine& e, const std::function<b
 
 sa::RadioTapOptions tap_of(const FakeRadio& r) {
     sa::RadioTapOptions o;
-    o.tap = r.tap();
+    o.data = r.data();
     o.control = r.control();
     o.timeout = 2s;
     return o;
@@ -291,8 +307,8 @@ TEST_CASE("sa radio tap: with the real radio-controller (simulated AD9361, TX1 -
     { std::ofstream(empty) << "# no radio-controller.toml from the working directory\n"; }
     std::vector<std::string> args{"radio-controller", "-c", empty, "--backend", "sim",
                                   "-D", "log.console=false", "-D", "http.enabled=false",
-                                  "-D", "zmq.rx=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-                                  "-D", "zmq.tap=tcp://127.0.0.1:*", "-D", "zmq.control=tcp://127.0.0.1:*",
+                                  "-D", "forge.data=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
+                                  "-D", "forge.control=tcp://127.0.0.1:*",
                                   "-D", "radio.sim.channels=2", "-D", "radio.sim.loopback_rx=2",
                                   "-D", "radio.tap_rx=[2]",
                                   "-D", "radio.rx_lo_hz=2410e6", "-D", "radio.tx_lo_hz=2410e6",
@@ -307,7 +323,7 @@ TEST_CASE("sa radio tap: with the real radio-controller (simulated AD9361, TX1 -
     started.get_future().get();
 
     sa::RadioTapOptions o;
-    o.tap = app.tap_endpoint();
+    o.data = app.data_endpoint();
     o.control = app.control_endpoint();
     sa::Engine e([o] { return sa::make_radio_tap_backend(o); }, {});
     sa::Settings s;
@@ -328,7 +344,10 @@ TEST_CASE("sa radio tap: with the real radio-controller (simulated AD9361, TX1 -
         tx[2 * i + 1] = static_cast<std::int16_t>(16000 * std::sin(ph));
     }
     fz::Sender push(fz::Sender::Kind::push, app.tx_endpoint(), false);
-    REQUIRE(forge::testing::wait_until([&] { return push.send("tx", {{"format", "cs16"}, {"cyclic", true}}, tx.data(), tx.size() * 2); }));
+    radio::v1::TxBlock tb;
+    tb.set_format("cs16");
+    tb.set_cyclic(true);
+    REQUIRE(forge::testing::wait_until([&] { return push.publish("tx", tb, tx.data(), tx.size() * 2); }));
     f = wait_frame(e, [](const sa::Frame& f) {
         return !f.peaks.empty() && std::abs(f.peaks.front().freq_hz - 2411.5e6) < tolerance(f);
     }, 15s);

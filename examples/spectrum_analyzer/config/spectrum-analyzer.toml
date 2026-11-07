@@ -15,8 +15,9 @@ channel = 2                   # RX channel it listens to (radio: must be in radi
 control_gain = true           # set that channel's gain from here; false when radio-controller uses
                               # the channel itself (it then keeps the gain, the analyzer only shows it)
 
-radio_tap = "tcp://127.0.0.1:5558"      # radio: radio-controller [zmq].tap
-radio_control = "tcp://127.0.0.1:5557"  # radio: radio-controller [zmq].control
+radio_data = "tcp://127.0.0.1:5555"     # radio: radio-controller [forge].data (streams rx1/rx2)
+radio_control = "tcp://127.0.0.1:5557"  # radio: radio-controller [forge].control
+# radio_timeout_ms = 3000     # radio: no block for this long = device error
 timeout_ms = 2000
 state_file = ""               # e.g. "/var/lib/spectrum-analyzer/state.json"
 sweep_rate_hz = 61440000      # sample rate of swept (wide) spans; lower it on slow links (USB/network)
@@ -40,9 +41,28 @@ ref_level = 0
 scale_db = 10
 update_hz = 15
 
-[zmq]
-spectrum = "tcp://*:5566"     # PUB: topic "spectrum", header JSON + float32 trace
-control = "tcp://*:5567"      # REP: JSON commands (same controls as the web UI)
+# forge.v1 endpoints (the same in every forgecpp application; forgectl, panels)
+[forge]
+control = "tcp://*:5567"      # requests: controls, commands, alarms, logs, metrics, trace
+events = "tcp://*:5569"       # PUB: state, alarms, log, audit, health, metrics
+data = "tcp://*:5566"         # PUB: stream "spectrum" (sa.v1.Spectrum, newest sweep only)
+
+[console]
+telnet = "0.0.0.0:2324"       # remote console: telnet board 2324 (radio-controller has 2323)
+
+# Acquisition thread (FFT, traces); e.g. pin it away from radio-controller's RX thread.
+[threads.engine]
+policy = "other"              # other | fifo | rr | batch | idle
+# priority = 10               # fifo/rr
+# nice = 0
+# cpus = [1]
+
+# Who may change what (see the forgecpp README); without users everyone is admin.
+# [auth]
+# default_role = "viewer"
+# [auth.users.operator]
+# password = "change-me"
+# role = "operator"
 
 [http]
 enabled = true

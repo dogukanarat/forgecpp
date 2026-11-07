@@ -1,0 +1,158 @@
+// forge.v1 control: the same requests on every transport (ZeroMQ REP,
+// HTTP POST /forge/api/rpc, forgectl, remote panels) and every application.
+syntax = "proto3";
+
+package forge.v1;
+
+import "forge/v1/common.proto";
+import "forge/v1/observability.proto";
+import "google/protobuf/struct.proto";
+
+option cc_enable_arenas = true;
+
+message Control {
+  string id = 1;
+  string group = 2;
+  string label = 3;
+  string kind = 4;          // button | toggle | slider | number | text | select | value
+  google.protobuf.Value value = 5;
+  string unit = 6;
+  string help = 7;
+  bool has_range = 8;
+  double min = 9;
+  double max = 10;
+  double step = 11;
+  int32 precision = 12;     // -1 = not set
+  repeated string options = 13;
+  bool readonly = 14;
+  string role = 15;         // viewer | operator | admin: needed to change it
+  bool persistent = 16;     // kept across restarts
+  string lease_holder = 17; // set while someone holds a lease on it
+}
+
+message Parameter {
+  string name = 1;
+  string type = 2;          // number | integer | bool | text | select
+  string help = 3;
+  google.protobuf.Value default_value = 4;
+  repeated string options = 5;
+  bool required = 6;
+}
+
+message Command {
+  string id = 1;
+  string label = 2;
+  string help = 3;
+  repeated Parameter params = 4;
+  string role = 5;
+}
+
+message Schema {
+  string title = 1;
+  repeated Control controls = 2;
+  repeated Command commands = 3;
+}
+
+message StreamInfo {
+  string name = 1;
+  string endpoint = 2;
+  string topic = 3;
+  string type = 4;          // body message type
+  string policy = 5;        // all | latest
+  double max_rate_hz = 6;   // 0 = unlimited
+  uint64 subscribers = 7;
+  uint64 sent = 8;
+  uint64 dropped = 9;
+}
+
+message StreamList {
+  repeated StreamInfo streams = 1;
+}
+
+message Info {
+  string name = 1;
+  string version = 2;
+  string description = 3;
+  string forgecpp = 4;
+  string host = 5;
+  uint32 pid = 6;
+  int64 uptime_s = 7;
+  map<string, string> endpoints = 8;  // control, events, http, telnet, streams...
+  string protocol = 9;                // "forge.v1"
+}
+
+// --- requests ---------------------------------------------------------------
+message Request {
+  string client = 1;        // e.g. "forgectl@laptop", "panel"
+  string token = 2;         // credentials when [auth] is enabled
+  TraceContext trace = 3;
+
+  oneof kind {
+    Ping ping = 10;
+    GetInfo info = 11;
+    GetSchema schema = 12;
+    GetState state = 13;
+    Get get = 14;
+    Set set = 15;
+    Press press = 16;
+    Call call = 17;
+    GetAlarms alarms = 18;
+    Ack ack = 19;
+    GetLogs logs = 20;
+    GetMetrics metrics = 21;
+    GetTrace trace_dump = 22;
+    GetAudit audit = 23;
+    Lease lease = 24;
+    Release release = 25;
+    GetHealth health = 26;
+    GetStreams streams = 27;
+    SetLogLevel log_level = 28;
+  }
+
+  message Ping {}
+  message GetInfo {}
+  message GetSchema {}
+  message GetState {}
+  message Get { string id = 1; }
+  message Set { string id = 1; google.protobuf.Value value = 2; }
+  message Press { string id = 1; }
+  message Call { string id = 1; google.protobuf.Struct args = 2; }
+  message GetAlarms {}
+  message Ack { string id = 1; }               // "all" acknowledges everything
+  message GetLogs { uint32 limit = 1; }
+  message GetMetrics { string prefix = 1; }
+  message GetTrace { uint32 seconds = 1; }     // 0 = everything recorded
+  message GetAudit { uint32 limit = 1; }
+  message Lease { string id = 1; uint32 seconds = 2; }  // control id or "group:<title>"
+  message Release { string id = 1; }
+  message GetHealth {}
+  message GetStreams {}
+  message SetLogLevel { string logger = 1; string level = 2; }  // logger "" = all
+}
+
+message Reply {
+  bool ok = 1;
+  int32 status = 2;         // HTTP-like: 200, 400, 401, 403, 404, 409, 500, 502, 503
+  string error = 3;
+  TraceContext trace = 4;
+
+  oneof result {
+    Info info = 10;
+    Schema schema = 11;
+    Values state = 12;
+    google.protobuf.Value value = 13;
+    AlarmList alarms = 14;
+    LogList logs = 15;
+    MetricsSnapshot metrics = 16;
+    TraceDump trace_dump = 17;
+    AuditList audit = 18;
+    Health health = 19;
+    StreamList streams = 20;
+    uint32 count = 21;      // e.g. acknowledged alarms
+  }
+}
+
+// --- events (application -> everyone, on the [forge] events socket) ----------
+// Topics: "state", "alarms", "log", "audit", "health", "metrics".
+// state: Values (changed controls), alarms: AlarmList (full list),
+// log: LogRecord, audit: AuditRecord, health: Health, metrics: MetricsSnapshot.

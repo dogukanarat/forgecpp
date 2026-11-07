@@ -116,8 +116,11 @@ struct Auth {
     std::string realm = "forgecpp";
     /// Paths reachable without credentials (exact match, or prefix ending in '/').
     std::vector<std::string> public_paths{"/health"};
+    /// Custom check of the Authorization header (e.g. forge::Auth users);
+    /// replaces user/password/token when set.
+    std::function<bool(const std::string& authorization)> check;
 
-    bool enabled() const { return !user.empty() || !token.empty(); }
+    bool enabled() const { return !user.empty() || !token.empty() || static_cast<bool>(check); }
 };
 
 class Server {

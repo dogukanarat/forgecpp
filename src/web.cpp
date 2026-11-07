@@ -125,6 +125,65 @@ Control& Control::readonly(bool value) {
     def_->readonly = value;
     return *this;
 }
+Control& Control::role(Role r) {
+    def_->role = r;
+    return *this;
+}
+
+Control& Control::persist(bool on) {
+    def_->persist = on;
+    return *this;
+}
+
+CommandRef& CommandRef::help(std::string text) {
+    def_->help = std::move(text);
+    return *this;
+}
+CommandRef& CommandRef::confirm(std::string question) {
+    def_->confirm = std::move(question);
+    return *this;
+}
+CommandRef& CommandRef::role(Role r) {
+    def_->role = r;
+    return *this;
+}
+
+Param number_param(std::string name, std::optional<double> def, std::string help) {
+    Param p{std::move(name), "number", std::move(help), def ? json(*def) : json(nullptr), {}, {}, {}};
+    return p;
+}
+Param integer_param(std::string name, std::optional<std::int64_t> def, std::string help) {
+    return Param{std::move(name), "integer", std::move(help), def ? json(*def) : json(nullptr), {}, {}, {}};
+}
+Param bool_param(std::string name, std::optional<bool> def, std::string help) {
+    return Param{std::move(name), "bool", std::move(help), def ? json(*def) : json(nullptr), {}, {}, {}};
+}
+Param text_param(std::string name, std::optional<std::string> def, std::string help) {
+    return Param{std::move(name), "text", std::move(help), def ? json(*def) : json(nullptr), {}, {}, {}};
+}
+Param select_param(std::string name, std::vector<std::string> options, std::optional<std::string> def,
+                   std::string help) {
+    return Param{std::move(name), "select", std::move(help), def ? json(*def) : json(nullptr), std::move(options), {}, {}};
+}
+
+CommandRef Group::command(const std::string& id, const std::string& label, std::vector<Param> params,
+                          std::function<json(const json&)> handler) {
+    if (owner_.commands_by_id_.count(id) || owner_.by_id_.count(id)) {
+        throw std::invalid_argument("duplicate dashboard id '" + id + "'");
+    }
+    auto def = std::make_unique<detail::CommandDef>();
+    def->id = id;
+    def->label = label;
+    def->group = title_;
+    def->params = std::move(params);
+    def->handler = std::move(handler);
+    auto* stored = def.get();
+    owner_.commands_.push_back(std::move(def));
+    owner_.commands_by_id_[id] = stored;
+    command_ids_.push_back(id);
+    return CommandRef(stored);
+}
+
 Control& Control::primary() {
     def_->style = "primary";
     return *this;
@@ -285,10 +344,33 @@ json Dashboard::schema() const {
             if (c.precision) j["precision"] = *c.precision;
             if (!c.options.empty()) j["options"] = c.options;
             if (c.readonly) j["readonly"] = true;
+            if (c.role != Role::operator_) j["role"] = to_string(c.role);
+            if (c.persist) j["persist"] = true;
             if (c.kind != Kind::button) j["value"] = read_value(c);
             controls.push_back(std::move(j));
         }
-        groups.push_back({{"title", g->title()}, {"controls", std::move(controls)}});
+        json commands = json::array();
+        for (const auto& id : g->command_ids_) {
+            const auto& c = *commands_by_id_.at(id);
+            json params = json::array();
+            for (const auto& p : c.params) {
+                json pj{{"name", p.name}, {"type", p.type}};
+                if (!p.help.empty()) pj["help"] = p.help;
+                if (!p.default_value.is_null()) pj["default"] = p.default_value;
+                if (!p.options.empty()) pj["options"] = p.options;
+                if (p.min) pj["min"] = *p.min;
+                if (p.max) pj["max"] = *p.max;
+                params.push_back(std::move(pj));
+            }
+            json cj{{"id", c.id}, {"label", c.label}, {"params", std::move(params)}};
+            if (!c.help.empty()) cj["help"] = c.help;
+            if (!c.confirm.empty()) cj["confirm"] = c.confirm;
+            if (c.role != Role::operator_) cj["role"] = to_string(c.role);
+            commands.push_back(std::move(cj));
+        }
+        json gj{{"title", g->title()}, {"controls", std::move(controls)}};
+        if (!commands.empty()) gj["commands"] = std::move(commands);
+        groups.push_back(std::move(gj));
     }
     json links = json::array();
     for (const auto& [label, href] : links_) links.push_back({{"label", label}, {"href", href}});
@@ -352,6 +434,69 @@ void Dashboard::set(const std::string& id, const json& value) {
             throw bad("cannot be set");
     }
     c.set(value);
+}
+
+bool Dashboard::has_command(const std::string& id) const { return commands_by_id_.count(id) > 0; }
+
+std::vector<std::string> Dashboard::command_ids() const {
+    std::vector<std::string> out;
+    for (const auto& c : commands_) out.push_back(c->id);
+    return out;
+}
+
+const detail::CommandDef& Dashboard::command(const std::string& id) const {
+    auto it = commands_by_id_.find(id);
+    if (it == commands_by_id_.end()) throw http::HttpError(404, "unknown command '" + id + "'");
+    return *it->second;
+}
+
+json Dashboard::call(const std::string& id, const json& args) {
+    const auto& c = command(id);
+    if (!args.is_null() && !args.is_object()) throw http::HttpError(400, "arguments must be an object");
+    json in = args.is_object() ? args : json::object();
+    json out = json::object();
+    auto bad = [&](const std::string& p, const std::string& why) {
+        return http::HttpError(400, "command '" + id + "': " + p + ": " + why);
+    };
+    for (const auto& p : c.params) {
+        json v = in.contains(p.name) ? in[p.name] : p.default_value;
+        in.erase(p.name);
+        if (v.is_null()) throw bad(p.name, "required");
+        if (p.type == "number" || p.type == "integer") {
+            if (v.is_string()) {  // console / query strings
+                try {
+                    v = json::parse(v.get<std::string>());
+                } catch (...) {
+                }
+            }
+            if (!v.is_number()) throw bad(p.name, "expected a number");
+            const double d = v.get<double>();
+            if (p.type == "integer" && d != std::floor(d)) throw bad(p.name, "expected an integer");
+            if (p.min && d < *p.min) throw bad(p.name, "must be >= " + json(*p.min).dump());
+            if (p.max && d > *p.max) throw bad(p.name, "must be <= " + json(*p.max).dump());
+            if (p.type == "integer") v = static_cast<std::int64_t>(d);
+        } else if (p.type == "bool") {
+            if (v.is_string()) v = (v == "true" || v == "1" || v == "yes" || v == "on");
+            if (!v.is_boolean()) throw bad(p.name, "expected true or false");
+        } else {
+            if (!v.is_string()) v = v.dump();
+            if (p.type == "select" &&
+                std::find(p.options.begin(), p.options.end(), v.get<std::string>()) == p.options.end()) {
+                throw bad(p.name, "must be one of " + json(p.options).dump());
+            }
+        }
+        out[p.name] = v;
+    }
+    if (!in.empty()) throw bad(in.begin().key(), "unknown parameter");
+    return c.handler ? c.handler(out) : json(nullptr);
+}
+
+std::vector<std::string> Dashboard::persistent_ids() const {
+    std::vector<std::string> out;
+    for (const auto& c : controls_) {
+        if (c->persist) out.push_back(c->id);
+    }
+    return out;
 }
 
 json Dashboard::changes() {

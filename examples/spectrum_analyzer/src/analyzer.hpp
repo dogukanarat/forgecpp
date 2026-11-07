@@ -4,9 +4,10 @@
 //   Web UI     /            analyzer display (spectrum, waterfall, markers, menus)
 //              /forge/      generic control panel
 //              /api/frame   latest sweep as JSON, /api/trace.csv, /api/iq.cs16
-//   ZeroMQ     [zmq].spectrum  PUB "spectrum": header JSON + float32 live trace
-//              [zmq].control   REP JSON commands (same controls as the web UI)
-//   Console    -i  (controls / set / press / peaks / markers)
+//   forge.v1   [forge].data     stream "spectrum" (sa.v1.Spectrum, latest only)
+//              [forge].control  controls, commands, alarms (forgectl, panels)
+//              [forge].events   state, alarms, logs, audit, health, metrics
+//   Console    -i or telnet [console].telnet (controls / set / press / peaks / markers)
 
 #include "engine.hpp"
 
@@ -24,10 +25,12 @@ public:
 
     /// Latest frame (for tests and HTTP handlers).
     std::shared_ptr<const Frame> latest() const { return engine_ ? engine_->latest() : nullptr; }
-    std::string control_endpoint() const { return control_ ? control_->endpoint() : ""; }
-    std::string spectrum_endpoint() const { return spectrum_endpoint_; }
+    /// Resolved endpoints (valid after start-up).
+    std::string control_endpoint() const { return endpoint("control"); }
+    std::string spectrum_endpoint() const { return endpoint("data"); }
 
 protected:
+    void setup_config(forge::config::Schema& schema) override;
     void setup_cli(CLI::App& cli) override;
     void setup_web(forge::web::Dashboard& ui) override;
     void setup_http(forge::http::Server& server) override;
@@ -36,6 +39,7 @@ protected:
     void on_stop() override;
 
 private:
+    std::string endpoint(const std::string& name) const;
     void load(const forge::Config& cfg);
     void changed();                       ///< push settings to the engine, persist later
     void set_frequency(double center_hz, double span_hz);
@@ -70,9 +74,7 @@ private:
     bool dirty_ = false;
 
     std::unique_ptr<Engine> engine_;
-    std::unique_ptr<forge::zmq::Server> control_;
-    std::unique_ptr<forge::zmq::Sender> spectrum_pub_;  ///< main loop only
-    std::string spectrum_endpoint_;
+    forge::zmq::Stream* spectrum_ = nullptr;  ///< [forge].data "spectrum"
     std::uint64_t last_seq_ = 0;
     std::chrono::steady_clock::time_point last_overload_{};
     EngineStatus status_;

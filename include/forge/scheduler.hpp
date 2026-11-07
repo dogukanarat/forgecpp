@@ -4,6 +4,12 @@
 // Tasks are handed to an Executor when due. By default they run on the timer
 // thread itself; forge::Application installs an executor that runs them on
 // the application's main loop, so timer callbacks never race with each other.
+//
+// Tests can drive time themselves (no timer thread, no sleeping):
+//
+//   forge::Scheduler s(forge::Scheduler::manual_clock);
+//   s.every(1s, [&] { ++ticks; });
+//   s.advance(10s);          // runs the 10 ticks now, in order, on this thread
 
 #include <chrono>
 #include <condition_variable>
@@ -24,7 +30,12 @@ public:
     using Executor = std::function<void(Task)>;
     using Id = std::uint64_t;
 
+    /// Tag: time only moves with advance() (tests).
+    struct ManualClock {};
+    static constexpr ManualClock manual_clock{};
+
     explicit Scheduler(Executor executor = {});
+    explicit Scheduler(ManualClock, Executor executor = {});
     ~Scheduler();
 
     Scheduler(const Scheduler&) = delete;
@@ -43,6 +54,14 @@ public:
 
     std::size_t pending() const;
 
+    /// Current time of this scheduler (steady_clock, or the manual clock).
+    Clock::time_point now() const;
+    bool manual() const { return manual_; }
+    /// Manual clock only: move time forward by `d` and run every task that
+    /// falls due on the way, in order, on the calling thread (through the
+    /// executor). Returns the number of tasks run.
+    std::size_t advance(Clock::duration d);
+
     /// Stop the timer thread. Pending tasks are discarded.
     void stop();
 
@@ -55,6 +74,9 @@ private:
 
     Id schedule(Clock::time_point due, Clock::duration period, Task task);
     void run();
+    /// Take the first task due at or before `now` (lock held); false if none.
+    bool take_due(Clock::time_point now, Task& task, Id& id, Clock::time_point& due);
+    void execute(Id id, Task task);
 
     Executor executor_;
     mutable std::mutex mutex_;
@@ -64,6 +86,8 @@ private:
     std::multimap<Clock::time_point, Id> queue_;
     Id next_id_ = 1;
     bool stopping_ = false;
+    bool manual_ = false;
+    Clock::time_point manual_now_{};
     std::thread thread_;
 };
 

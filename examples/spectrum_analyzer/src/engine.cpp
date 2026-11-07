@@ -340,6 +340,7 @@ void Engine::finish_frame(const Settings& s, Frame& frame, const Bins& bins) {
 }
 
 void Engine::run() {
+    if (options_.on_thread_start) options_.on_thread_start();
     std::uint64_t seen = ~0ull;
     Settings s;
     while (running_) {

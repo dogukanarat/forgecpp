@@ -5,6 +5,8 @@
 #include <forge/testing.hpp>
 #include <forge/zmq.hpp>
 
+#include "sa/v1/spectrum.pb.h"
+
 #include <atomic>
 #include <cmath>
 #include <fstream>
@@ -157,8 +159,8 @@ TEST_CASE("sa app: controls over ZeroMQ, spectrum stream, persistence") {
                                   "--backend", "sim",
                                   "-D", "log.console=false",
                                   "-D", "http.enabled=false",
-                                  "-D", "zmq.spectrum=tcp://127.0.0.1:*",
-                                  "-D", "zmq.control=tcp://127.0.0.1:*",
+                                  "-D", "forge.data=tcp://127.0.0.1:*",
+                                  "-D", "forge.control=tcp://127.0.0.1:*",
                                   "-D", "analyzer.center_hz=2425e6",
                                   "-D", "analyzer.span_hz=40e6",
                                   "-D", "analyzer.update_hz=30",
@@ -183,59 +185,63 @@ TEST_CASE("sa app: controls over ZeroMQ, spectrum stream, persistence") {
     REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return frames.size() >= 2; }, 10s));
     {
         std::lock_guard lock(m);
-        const auto& h = frames.back().header;
-        CHECK(h["format"] == "f32");
-        CHECK(h["points"] == 1001);
-        CHECK(frames.back().payload.size() == 1001 * sizeof(float));
+        CHECK(frames.back().header.type() == "sa.v1.Spectrum");
+        CHECK(frames.back().header.source() == "spectrum-analyzer");
+        const auto sp = frames.back().as<sa::v1::Spectrum>();
+        CHECK(sp.points() == 1001);
+        CHECK(sp.levels_size() == 1001);
+        CHECK(sp.start_hz() == 2405e6);
+        CHECK(sp.unit() == "dBFS");
+        CHECK(sp.sweep_mode() == "realtime");
     }
 
     fz::Client ctl(app.control_endpoint(), 5s);
-    CHECK(forge::testing::wait_until([&] { return ctl.call("get", {{"id", "connected"}})["value"] == true; }));
-    CHECK(ctl.call("get", {{"id", "start_mhz"}})["value"] == 2405.0);
+    CHECK(forge::testing::wait_until([&] { return ctl.get("connected") == true; }));
+    CHECK(ctl.get("start_mhz") == 2405.0);
 
     // Peak search puts the active marker on the strongest carrier (2412 MHz).
-    CHECK(ctl.call("press", {{"id", "peak_search"}})["ok"] == true);
-    CHECK(std::abs(ctl.call("get", {{"id", "m1_mhz"}})["value"].get<double>() - 2412.0) < 0.2);
-    CHECK(ctl.call("get", {{"id", "m1_on"}})["value"] == true);
-    CHECK(ctl.call("press", {{"id", "peak_right"}})["ok"] == true);
-    const double right = ctl.call("get", {{"id", "m1_mhz"}})["value"].get<double>();
+    CHECK_NOTHROW(ctl.press("peak_search"));
+    CHECK(std::abs(ctl.get("m1_mhz").get<double>() - 2412.0) < 0.2);
+    CHECK(ctl.get("m1_on") == true);
+    CHECK_NOTHROW(ctl.press("peak_right"));
+    const double right = ctl.get("m1_mhz").get<double>();
     CHECK(right > 2412.2);
-    CHECK(ctl.call("press", {{"id", "peak_left"}})["ok"] == true);
-    CHECK(ctl.call("get", {{"id", "m1_mhz"}})["value"].get<double>() < right);
+    CHECK_NOTHROW(ctl.press("peak_left"));
+    CHECK(ctl.get("m1_mhz").get<double>() < right);
 
     // Marker to center, span / start / stop / presets.
-    ctl.call("press", {{"id", "peak_search"}});
-    ctl.call("press", {{"id", "marker_to_center"}});
-    CHECK(std::abs(ctl.call("get", {{"id", "center_mhz"}})["value"].get<double>() - 2412.0) < 0.2);
-    ctl.call("set", {{"id", "start_mhz"}, {"value", 2400}});
-    ctl.call("set", {{"id", "stop_mhz"}, {"value", 2450}});
-    CHECK(ctl.call("get", {{"id", "center_mhz"}})["value"] == 2425.0);
-    CHECK(ctl.call("get", {{"id", "span_mhz"}})["value"] == 50.0);
-    auto status_of = [&](const json& req) { return ctl.request(req).value("status", 0); };
+    ctl.press("peak_search");
+    ctl.press("marker_to_center");
+    CHECK(std::abs(ctl.get("center_mhz").get<double>() - 2412.0) < 0.2);
+    ctl.set("start_mhz", 2400);
+    ctl.set("stop_mhz", 2450);
+    CHECK(ctl.get("center_mhz") == 2425.0);
+    CHECK(ctl.get("span_mhz") == 50.0);
+    auto status_of = [&](const json& req) { return ctl.request_json(req).value("status", 0); };
     CHECK(status_of({{"cmd", "set"}, {"id", "stop_mhz"}, {"value", 2300}}) == 400);  // below start
     CHECK(status_of({{"cmd", "set"}, {"id", "window"}, {"value", "triangle"}}) == 400);
-    ctl.call("set", {{"id", "preset"}, {"value", "ism_433"}});
-    CHECK(ctl.call("get", {{"id", "center_mhz"}})["value"] == 433.92);
-    CHECK(ctl.call("get", {{"id", "preset"}})["value"] == "ism_433");
+    ctl.set("preset", "ism_433");
+    CHECK(ctl.get("center_mhz") == 433.92);
+    CHECK(ctl.get("preset") == "ism_433");
 
     // RBW: manual value, then auto again.
-    ctl.call("set", {{"id", "rbw_khz"}, {"value", 1}});
-    CHECK(ctl.call("get", {{"id", "rbw_auto"}})["value"] == false);
-    ctl.call("set", {{"id", "rbw_auto"}, {"value", true}});
-    CHECK(ctl.call("get", {{"id", "rbw_auto"}})["value"] == true);
+    ctl.set("rbw_khz", 1);
+    CHECK(ctl.get("rbw_auto") == false);
+    ctl.set("rbw_auto", true);
+    CHECK(ctl.get("rbw_auto") == true);
 
     // Manual gain is required to set the gain.
-    ctl.call("set", {{"id", "gain_mode"}, {"value", "slow_attack"}});
+    ctl.set("gain_mode", "slow_attack");
     CHECK(status_of({{"cmd", "set"}, {"id", "rx_gain_db"}, {"value", 20}}) == 409);
-    ctl.call("set", {{"id", "gain_mode"}, {"value", "manual"}});
-    CHECK(ctl.call("set", {{"id", "rx_gain_db"}, {"value", 20}})["value"] == 20);
+    ctl.set("gain_mode", "manual");
+    CHECK(ctl.set("rx_gain_db", 20) == 20);
 
     // Limit line below the 433.92 MHz carrier raises an alarm.
-    ctl.call("set", {{"id", "limit_level"}, {"value", -100}});
-    ctl.call("set", {{"id", "limit_on"}, {"value", true}});
+    ctl.set("limit_level", -100);
+    ctl.set("limit_on", true);
     json alarms;
     const bool limit_raised = forge::testing::wait_until([&] {
-        alarms = ctl.call("alarms")["alarms"];
+        alarms = ctl.request_json({{"cmd", "alarms"}})["alarms"];
         for (const auto& a : alarms) {
             if (a["id"] == "analyzer.limit" && a["active"] == true) return true;
         }
@@ -244,7 +250,7 @@ TEST_CASE("sa app: controls over ZeroMQ, spectrum stream, persistence") {
     CAPTURE(alarms.dump());
     CAPTURE(app.latest() ? app.latest()->seq : 0);
     CHECK(limit_raised);
-    ctl.call("set", {{"id", "limit_on"}, {"value", false}});
+    ctl.set("limit_on", false);
 
     // Frame contents through the application.
     REQUIRE(forge::testing::wait_until([&] {

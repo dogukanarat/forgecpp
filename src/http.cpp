@@ -1,4 +1,5 @@
 #include "forge/http.hpp"
+#include "forge/metrics.hpp"
 
 #include "forge/log.hpp"
 
@@ -7,6 +8,12 @@
 #include <condition_variable>
 #include <cstdint>
 #include <stdexcept>
+
+namespace forge::http {
+namespace {
+thread_local std::chrono::steady_clock::time_point tls_request_start{};
+}  // namespace
+}  // namespace forge::http
 
 namespace forge::http {
 namespace {
@@ -108,6 +115,17 @@ Server::Server() {
         if (res.body.empty()) reply_error(res, res.status, httplib::status_message(res.status));
     });
     server_.set_logger([](const Request& req, const Response& res) {
+        static auto& requests = metrics::registry().counter("forge.http.requests", "HTTP requests answered");
+        static auto& errors = metrics::registry().counter("forge.http.errors", "HTTP requests answered with >= 500");
+        static auto& seconds = metrics::registry().histogram("forge.http.seconds", metrics::latency_buckets(),
+                                                             "HTTP request duration (without SSE streams)", "s");
+        requests.inc();
+        if (res.status >= 500) errors.inc();
+        if (tls_request_start != std::chrono::steady_clock::time_point{} &&
+            res.get_header_value("Content-Type") != "text/event-stream") {
+            seconds.observe(
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - tls_request_start).count());
+        }
         log::debug("http: {} {} -> {}", req.method, req.path, res.status);
     });
     server_.set_pre_routing_handler([this](const Request& req, Response& res) { return pre_route(req, res); });
@@ -232,6 +250,7 @@ bool Server::has_asset(const std::string& path) const {
 
 httplib::Server::HandlerResponse Server::pre_route(const Request& req, Response& res) {
     using R = httplib::Server::HandlerResponse;
+    tls_request_start = std::chrono::steady_clock::now();
     if (!authorized(req)) {
         bool basic = false;
         std::string realm;
@@ -265,6 +284,7 @@ bool Server::authorized(const Request& req) const {
         if (!p.empty() && p.back() == '/' && req.path.compare(0, p.size(), p) == 0) return true;
     }
     const auto header = req.get_header_value("Authorization");
+    if (auth_.check) return auth_.check(header);
     if (!auth_.token.empty() && constant_time_equal(header, "Bearer " + auth_.token)) return true;
     if (!auth_.user.empty() &&
         constant_time_equal(header, "Basic " + httplib::detail::base64_encode(auth_.user + ":" + auth_.password))) {

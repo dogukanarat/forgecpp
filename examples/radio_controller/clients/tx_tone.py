@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """Send a test tone to radio-controller's TX input (ZeroMQ PUSH).
 
-    pip install pyzmq numpy
+    pip install pyzmq numpy protobuf
     ./tx_tone.py tcp://radio:5556 --offset 1e6 --rate 30.72e6            # cyclic: repeated by the hardware
     ./tx_tone.py tcp://radio:5556 --offset 1e6 --rate 30.72e6 --stream 5  # stream for 5 seconds
     ./tx_tone.py tcp://radio:5556 --offset=-2e6                          # negative offsets need "="
 
-TX must be enabled first:  radioctl.py tcp://radio:5557 set tx_enabled true
+TX must be enabled first:  forgectl -e tcp://radio:5557 set tx_enabled true
+Messages: [b"tx"][forge.v1.Header][radio.v1.TxBlock][cs16 samples].
 """
 import argparse
-import json
 import time
 
 import numpy as np
 import zmq
+
+import forge_msg
 
 
 def main():
@@ -39,14 +41,16 @@ def main():
     time.sleep(0.2)  # let the connection come up
 
     if args.stream is None:
-        sock.send_multipart([b"tx", json.dumps({"format": "cs16", "cyclic": True}).encode(), iq.tobytes()])
+        block = forge_msg.radio_pb2.TxBlock(format="cs16", cyclic=True)
+        sock.send_multipart(forge_msg.frames("tx", block, iq.tobytes(), source="tx_tone"))
         print(f"cyclic tone at {args.offset / 1e3:+.1f} kHz ({n} samples) sent")
     else:
-        header = json.dumps({"format": "cs16"}).encode()
+        block = forge_msg.radio_pb2.TxBlock(format="cs16")
         end = time.monotonic() + args.stream
         sent = 0
         while time.monotonic() < end:
-            sock.send_multipart([b"tx", header, iq.tobytes()])  # blocks when the radio's queue is full
+            # blocks when the radio's queue is full
+            sock.send_multipart(forge_msg.frames("tx", block, iq.tobytes(), source="tx_tone"))
             sent += n
         print(f"streamed {sent} samples")
     sock.close(linger=2000)
