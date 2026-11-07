@@ -52,6 +52,11 @@ TEST_CASE("services: LayoutStore keeps page layouts in a file, or only in memory
     forge::detail::LayoutStore reloaded;
     reloaded.load(file, "app", logger);
     CHECK(reloaded.get("panel")["items"][0] == 1);
+    reloaded.put("panel", json{{"items", json::array({2})}}, "vera");
+    forge::detail::LayoutStore again;
+    again.load(file, "app", logger);
+    CHECK(again.get("panel", "vera")["items"][0] == 2);  // users' layouts are kept in the file too
+    CHECK(again.get("panel")["items"][0] == 1);
     reloaded.remove("panel");
     CHECK_FALSE(forge::load_json(file).contains("panel"));
 
@@ -59,7 +64,14 @@ TEST_CASE("services: LayoutStore keeps page layouts in a file, or only in memory
     memory.load("-", "app", logger);
     CHECK(memory.file().empty());
     CHECK_FALSE(memory.put("x", json::object()));
-    CHECK(memory.get("x") == json::object());
+    CHECK(memory.get("x")["scope"] == "device");
+    // Users' layouts next to the device's.
+    CHECK(memory.put("x", json{{"items", 1}}, "vera") == false);
+    CHECK(memory.get("x", "vera")["items"] == 1);
+    CHECK(memory.get("x", "vera")["scope"] == "user");
+    CHECK(memory.get("x", "ada")["scope"] == "device");
+    memory.remove("x", "vera");
+    CHECK(memory.get("x", "vera")["scope"] == "device");
 
     CHECK(forge::detail::LayoutStore::valid_page("radio-1.main_page"));
     CHECK_FALSE(forge::detail::LayoutStore::valid_page("../etc"));

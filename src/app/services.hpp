@@ -48,6 +48,8 @@ private:
 };
 
 /// Card layouts of the web pages (forge.layout in forge.js). Thread-safe.
+/// Each page has the device's layout and, for signed-in users ([auth]), their
+/// own: a user sees theirs when they saved one, else the device's.
 class LayoutStore {
 public:
     /// $STATE_DIRECTORY/web-layout.json, else ~/.local/state/<name>/web-layout.json.
@@ -56,10 +58,12 @@ public:
 
     /// `file`: "" = default_file(app_name), "-" = not stored (kept in memory).
     void load(std::string file, const std::string& app_name, const Logger& logger);
-    json get(const std::string& page) const;
-    /// Returns whether it was stored in a file.
-    bool put(const std::string& page, json layout);
-    void remove(const std::string& page);
+    /// The user's layout of `page` if they have one, else the device's (null: none).
+    json get(const std::string& page, const std::string& user = {}) const;
+    /// The user's layout ("" = the device's). Returns whether it was stored in a file.
+    bool put(const std::string& page, json layout, const std::string& user = {});
+    /// Remove the user's layout (they see the device's again), or the device's ("").
+    void remove(const std::string& page, const std::string& user = {});
     const std::string& file() const { return file_; }
 
 private:

@@ -472,7 +472,10 @@ content until it is resized by hand (then its content scrolls). The layout is
 stored by the application on the device (`[web].layout_file`, default
 `$STATE_DIRECTORY/web-layout.json` or `~/.local/state/<name>/web-layout.json`),
 so every browser shows the same arrangement; without that it stays in the
-browser. On phones the cards are a plain list and the stored layout is left
+browser. With `[auth]`, a signed-in user's changes are their own layout
+(Reset goes back to the device's), and operators and admins change the
+device's layout, the default for everyone, with `?scope=device`
+(`PUT /forge/api/layout/<page>?scope=device`). On phones the cards are a plain list and the stored layout is left
 alone. From JavaScript: `const l = await forge.layout(element, 'page')`,
 `l.add(card)`, `l.remove(card)`, `l.reset()`.
 

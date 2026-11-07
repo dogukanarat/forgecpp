@@ -223,25 +223,42 @@ void HttpFrontend::create_web(const Config& cfg) {
     });
 
     // Card layouts of the pages (forge.layout in forge.js): kept on the device, so
-    // every browser shows the same arrangement.
+    // every browser shows the same arrangement. A signed-in user ([auth]) saves
+    // their own; ?scope=device (admins) changes the device's, which everybody
+    // without their own sees.
     layouts_.load(cfg.value<std::string>("web.layout_file"), app_.id(), logger);
     const auto page_of = [](const http::Request& req) {
         auto page = req.path_params.at("page");
         if (!LayoutStore::valid_page(page)) throw Error(400, "invalid page name");
         return page;
     };
-    http_->get_json(api + "/layout/:page", [this, page_of](const http::Request& req) { return layouts_.get(page_of(req)); });
-    http_->put_json(api + "/layout/:page", [this, page_of](const http::Request& req, const json& body) {
+    // Whose layout a change is: the signed-in user's, or the device's.
+    const auto owner_of = [this, &control](const http::Request& req) {
+        const auto caller = control.identify("web", req.remote_addr, {}, req.get_header_value("Authorization"));
+        if (req.get_param_value("scope") == "device" || caller.user.empty()) {
+            if (app_.auth().enabled() && caller.role < Role::operator_) {
+                throw Error(403, "changing the device's layout needs the operator role");
+            }
+            return std::string();
+        }
+        return caller.user;
+    };
+    http_->get_json(api + "/layout/:page", [this, page_of, &control](const http::Request& req) {
+        const auto caller = control.identify("web", req.remote_addr, {}, req.get_header_value("Authorization"));
+        return layouts_.get(page_of(req), req.get_param_value("scope") == "device" ? std::string() : caller.user);
+    });
+    http_->put_json(api + "/layout/:page", [this, page_of, owner_of](const http::Request& req, const json& body) {
         const auto page = page_of(req);
         if (!body.is_object() || !body.contains("items") || !body["items"].is_array() || body["items"].size() > 500 ||
             req.body.size() > 256 * 1024) {
             throw Error(400, "expected {\"items\": [...]} (at most 500 items)");
         }
-        const bool saved = layouts_.put(page, body);
-        return json{{"page", page}, {"saved", saved}};
+        const auto owner = owner_of(req);
+        const bool saved = layouts_.put(page, body, owner);
+        return json{{"page", page}, {"saved", saved}, {"scope", owner.empty() ? "device" : "user"}};
     });
-    http_->del_json(api + "/layout/:page", [this, page_of](const http::Request& req) {
-        layouts_.remove(page_of(req));
+    http_->del_json(api + "/layout/:page", [this, page_of, owner_of](const http::Request& req) {
+        layouts_.remove(page_of(req), owner_of(req));
         return json(nullptr);
     });
 
@@ -383,21 +400,50 @@ void LayoutStore::load(std::string file, const std::string& app_name, const Logg
     }
 }
 
-json LayoutStore::get(const std::string& page) const {
-    std::lock_guard lock(mutex_);
-    return layouts_.contains(page) ? layouts_[page] : json(nullptr);
+// File: {"<page>": layout, ..., "@users": {"<user>": {"<page>": layout}}}
+// ("@" cannot start a page name).
+namespace {
+constexpr const char* kUsers = "@users";
 }
 
-bool LayoutStore::put(const std::string& page, json layout) {
+json LayoutStore::get(const std::string& page, const std::string& user) const {
     std::lock_guard lock(mutex_);
-    layouts_[page] = std::move(layout);
+    if (!user.empty() && layouts_.contains(kUsers)) {
+        const auto& users = layouts_[kUsers];
+        if (users.contains(user) && users[user].contains(page)) {
+            json l = users[user][page];
+            if (l.is_object()) l["scope"] = "user";
+            return l;
+        }
+    }
+    if (!layouts_.contains(page)) return nullptr;
+    json l = layouts_[page];
+    if (l.is_object()) l["scope"] = "device";
+    return l;
+}
+
+bool LayoutStore::put(const std::string& page, json layout, const std::string& user) {
+    std::lock_guard lock(mutex_);
+    if (layout.is_object()) layout.erase("scope");
+    if (user.empty()) {
+        layouts_[page] = std::move(layout);
+    } else {
+        layouts_[kUsers][user][page] = std::move(layout);
+    }
     save();
     return !file_.empty();
 }
 
-void LayoutStore::remove(const std::string& page) {
+void LayoutStore::remove(const std::string& page, const std::string& user) {
     std::lock_guard lock(mutex_);
-    layouts_.erase(page);
+    if (user.empty()) {
+        layouts_.erase(page);
+    } else if (layouts_.contains(kUsers) && layouts_[kUsers].contains(user)) {
+        auto& mine = layouts_[kUsers][user];
+        mine.erase(page);
+        if (mine.empty()) layouts_[kUsers].erase(user);
+        if (layouts_[kUsers].empty()) layouts_.erase(kUsers);
+    }
     save();
 }
 

@@ -560,6 +560,12 @@ TEST_CASE("web: card layouts are stored on the device and survive a restart") {
                                              {{"id", "markers"}, {"x", 6}, {"y", 0}, {"w", 6}, {"h", 50}, {"fit", true}}})}};
     const std::vector<std::string> args{"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\"",
                                         "-D", "web.layout_file=" + file};
+    auto stored = [](const httplib::Result& res) {  // the layout without the "scope" it was read from
+        json j = json::parse(res->body);
+        CHECK(j["scope"] == "device");
+        j.erase("scope");
+        return j;
+    };
     {
         forge::testing::AppRunner<RolesApp> r(args);
         httplib::Client http("127.0.0.1", r->http()->port());
@@ -568,7 +574,7 @@ TEST_CASE("web: card layouts are stored on the device and survive a restart") {
         REQUIRE(res);
         CHECK(res->status == 200);
         CHECK(json::parse(res->body)["saved"] == true);
-        CHECK(json::parse(http.Get("/forge/api/layout/panel")->body) == layout);
+        CHECK(stored(http.Get("/forge/api/layout/panel")) == layout);
         // invalid page names and bodies are refused
         CHECK(http.Put("/forge/api/layout/..%2Fx", layout.dump(), "application/json")->status >= 400);
         CHECK(http.Put("/forge/api/layout/a%20b", layout.dump(), "application/json")->status == 400);
@@ -582,7 +588,7 @@ TEST_CASE("web: card layouts are stored on the device and survive a restart") {
         // Restarted: the layout is still there; the deleted one is not.
         forge::testing::AppRunner<RolesApp> r(args);
         httplib::Client http("127.0.0.1", r->http()->port());
-        CHECK(json::parse(http.Get("/forge/api/layout/panel")->body) == layout);
+        CHECK(stored(http.Get("/forge/api/layout/panel")) == layout);
         CHECK(http.Get("/forge/api/layout/other")->status == 204);
     }
     {
@@ -601,6 +607,45 @@ TEST_CASE("web: card layouts are stored on the device and survive a restart") {
     CHECK(js->status == 200);
     CHECK(js->body.find("GridStack") != std::string::npos);
     CHECK(http.Get("/forge/vendor/gridstack/gridstack.min.css")->status == 200);
+}
+
+TEST_CASE("web: signed-in users keep their own card layouts; the device's is the default") {
+    forge::testing::TempDir dir;
+    const std::vector<std::string> args{
+        "-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\"",
+        "-D", "web.layout_file=" + (dir / "layout.json").string(), "-D", "auth.enabled=true",
+        "-D", "auth.users.vera.token=\"v\"", "-D", "auth.users.vera.role=\"viewer\"",
+        "-D", "auth.users.ada.token=\"a\"", "-D", "auth.users.ada.role=\"admin\""};
+    const json device{{"items", json::array({{{"id", "a"}, {"x", 0}, {"y", 0}, {"w", 12}, {"h", 10}}})}};
+    const json mine{{"items", json::array({{{"id", "a"}, {"x", 6}, {"y", 0}, {"w", 6}, {"h", 20}}})}};
+    forge::testing::AppRunner<RolesApp> r(args);
+    httplib::Client http("127.0.0.1", r->http()->port());
+    const httplib::Headers vera{{"Authorization", "Bearer v"}}, ada{{"Authorization", "Bearer a"}};
+    auto get = [&](const httplib::Headers& h, const std::string& q = "") {
+        auto res = http.Get("/forge/api/layout/panel" + q, h);
+        return res->status == 200 ? json::parse(res->body) : json(nullptr);
+    };
+
+    // The device's layout: an admin with ?scope=device; anonymous viewers may not.
+    CHECK(http.Put("/forge/api/layout/panel?scope=device", device.dump(), "application/json")->status == 403);
+    auto res = http.Put("/forge/api/layout/panel?scope=device", ada, device.dump(), "application/json");
+    CHECK(json::parse(res->body)["scope"] == "device");
+    CHECK(get(vera)["scope"] == "device");  // nothing of her own yet
+    CHECK(get(vera)["items"] == device["items"]);
+
+    // Vera arranges the page for herself; others keep the device's.
+    res = http.Put("/forge/api/layout/panel", vera, mine.dump(), "application/json");
+    CHECK(res->status == 200);
+    CHECK(json::parse(res->body)["scope"] == "user");
+    CHECK(get(vera)["scope"] == "user");
+    CHECK(get(vera)["items"] == mine["items"]);
+    CHECK(get(ada)["items"] == device["items"]);
+    CHECK(get({})["items"] == device["items"]);
+    CHECK(get(vera, "?scope=device")["items"] == device["items"]);
+    // Reset: back to the device's.
+    CHECK(http.Delete("/forge/api/layout/panel", vera)->status == 204);
+    CHECK(get(vera)["scope"] == "device");
+    CHECK(get(ada)["items"] == device["items"]);
 }
 
 TEST_CASE("instances: --instance names the application <name>@<instance>") {

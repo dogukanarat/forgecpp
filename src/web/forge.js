@@ -578,7 +578,7 @@
     return gridstackLoaded;
   }
 
-  function storageKey(page) { return 'forge.layout.' + location.port + '.' + page; }
+  function storageKey(page) { return 'forge.layout.' + location.port + ROOT + page; }
 
   async function readLayout(page) {
     try {
