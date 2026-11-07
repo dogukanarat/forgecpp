@@ -73,6 +73,11 @@ void QamModem::setup_config(forge::config::Schema& s) {
     s.number("modem.tx_attenuation_db", 20, "TX attenuation").range(0, 89.75).unit("dB");
     s.number("modem.rx_gain_db", 30, "RX gain (manual: bursts confuse the AGC)").range(-3, 71).unit("dB");
     s.integer("modem.radio_buffer", 16384, "radio-controller buffer_size: smaller = less latency").range(1024, 1 << 20);
+    s.integer("modem.radio_tx_max_age_ms", 40,
+              "radio-controller tx_max_age_ms: TX blocks this old are dropped there, so a stall cannot leave "
+              "the latency up; about lead_ms + 15 (0 = off)")
+        .range(0, 60000)
+        .unit("ms");
     s.integer("modem.sps", 4, "Samples per symbol").range(2, 16);
     s.number("modem.rolloff", 0.35, "RRC roll-off").range(0.1, 1.0);
     s.number("modem.tx_level_dbfs", -12, "TX signal RMS").range(-40, -6).unit("dBFS");
@@ -274,6 +279,7 @@ void QamModem::configure_radio() {
     const double atten = cfg.value<double>("modem.tx_attenuation_db");
     const double gain = cfg.value<double>("modem.rx_gain_db");
     const auto buffer = cfg.value<std::size_t>("modem.radio_buffer");
+    const auto max_age = cfg.value<int>("modem.radio_tx_max_age_ms");
     const std::string endpoint = radio_control_;
     const unsigned ch = rx_channel_;
     background(
@@ -290,6 +296,10 @@ void QamModem::configure_radio() {
                 c.set(ch == 1 ? "rx_gain_db" : "rx2_gain_db", gain);
                 c.set("tx_atten_db", atten);
                 if (c.get("buffer_size").get<double>() != static_cast<double>(buffer)) c.set("buffer_size", buffer);
+                try {
+                    c.set("tx_max_age_ms", max_age);
+                } catch (const forge::zmq::Error&) {  // an older radio-controller without it: not fatal
+                }
                 c.set("rx_enabled", true);
                 c.set("tx_enabled", true);
                 return {};

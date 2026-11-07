@@ -129,6 +129,14 @@ public:
         const auto now = Clock::now();
         if (now > deadline_ + period) {
             rx_overflow_ = true;
+            // Nobody read for a while, but the DAC kept playing: drain TX by as much.
+            const double lost = std::chrono::duration<double>(now - deadline_).count();
+            {
+                std::lock_guard lock(tx_mutex_);
+                if (tx_active_ && !tx_cyclic_) {
+                    tx_head_ = std::min(tx_ring_.size(), tx_head_ + static_cast<std::size_t>(lost * s.rate));
+                }
+            }
             deadline_ = now;
         }
         while (Clock::now() < deadline_) {

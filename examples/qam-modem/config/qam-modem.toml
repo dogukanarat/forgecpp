@@ -22,6 +22,8 @@ rf_bandwidth_hz = 2000000   # the signal is 1.01 MHz wide (RRC roll-off 0.35)
 tx_attenuation_db = 20
 rx_gain_db = 30             # manual gain; aim for a level of -15 .. -30 dBFS (panel: Receive / Level)
 radio_buffer = 16384        # radio-controller buffer_size: 5.5 ms at 3 MSPS
+radio_tx_max_age_ms = 40    # radio-controller drops TX this old (about lead_ms + 15): after a stall the
+                            # latency comes back instead of staying up (0 = off)
 
 sps = 4
 rolloff = 0.35

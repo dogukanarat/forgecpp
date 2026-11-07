@@ -31,6 +31,8 @@ rx_gain_db = 30               # RX1, used in manual gain mode
 rx2_gain_mode = "slow_attack" # RX2 (AD9361/AD9363)
 rx2_gain_db = 30
 tx_attenuation_db = 10        # of tx_channel: 0 .. 89.75
+tx_max_age_ms = 0             # drop streaming TX blocks older than this (0 = off): bounds the TX latency
+                              # after a stall; the sender must share the clock (same board). qam-modem sets it.
 
 state_file = ""               # e.g. "/var/lib/radio-controller/state.json": keep runtime changes across restarts
 spectrum_size = 1024          # FFT size for the web spectrum

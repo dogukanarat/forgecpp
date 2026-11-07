@@ -50,7 +50,9 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
   (noise, frequency offset/Doppler, phase noise, clock error, multipath,
   fading, IQ imbalance, DC, interference in the TX path; `common/channel`).
   qam-modem's receiver has a decision feedback equalizer (least squares on
-  the preamble and header, LMS through the packet) and gain tracking. radio-controller's
+  the preamble and header, LMS through the packet) and gain tracking.
+  radio-controller drops streaming TX blocks older than `tx_max_age_ms`, so
+  the TX latency cannot build up after stalls (qam-modem sets it). radio-controller's
   simulator gained a splitter (TX into every RX), path loss and frequency
   error; the libiio backend finds the FMCOMMS5's RX DMA (`cf-ad9361-A`).
 - Toolchain file for Zynq-7000 (`cmake/toolchains/zynq7000-armhf.cmake`).

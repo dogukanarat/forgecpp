@@ -192,6 +192,7 @@ The ones you may change:
 | `configure_radio` | true | false: leave radio-controller's settings alone |
 | `equalizer`, `eq_ff`, `eq_lead`, `eq_fb` | true, 8, 3, 3 | decision feedback equalizer and its size |
 | `max_rx_lag_ms` | 200 | older RX is skipped, the receiver catches up |
+| `radio_tx_max_age_ms` | 40 | set on radio-controller: TX blocks this old are dropped there, so after a stall of the TX path the latency comes back (otherwise every stall would add to it for good) |
 
 ## Threads and CPU
 

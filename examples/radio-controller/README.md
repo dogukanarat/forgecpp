@@ -179,6 +179,18 @@ runtime (web, forgectl, console, telnet) are restored on the next start.
 `radio-controller --help-config` lists every key, `--check-config` validates
 a file.
 
+## TX latency after a stall
+
+A streaming sender (e.g. qam-modem) keeps sending at the sample rate. If
+radio-controller's TX path stalls for a moment (a busy CPU), the DAC plays
+silence meanwhile but the blocks that piled up in the queues are still played
+afterwards: the TX latency grows by the stall, for good, and grows again with
+the next one. `[radio].tx_max_age_ms` (also a control) drops streaming blocks
+whose sender timestamp (forge.v1 Header) is older than that instead of playing
+them late. Set it a little above the sender's normal lead (qam-modem sets 40 ms);
+it needs the sender's clock, i.e. the same board. Dropped blocks are counted
+as **Dropped (late)**.
+
 ## Simulator
 
 `backend = "sim"` emulates an AD9364 (or, with `[radio.sim].channels = 2`,

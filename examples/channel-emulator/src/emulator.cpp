@@ -323,7 +323,7 @@ void ChannelEmulator::on_block(forge::zmq::Message&& m) {
     zmq::pollitem_t item{static_cast<void*>(out_->native()), 0, ZMQ_POLLOUT, 0};
     while (running_) {
         if (zmq::poll(&item, 1, std::chrono::milliseconds(50)) > 0 && (item.revents & ZMQ_POLLOUT) &&
-            out_->publish("tx", tx, m.blob.data(), m.blob.size())) {
+            out_->send(m)) {  // the sender's header (its time: radio-controller's tx_max_age_ms)
             ++blocks_;
             samples_ += n;
             return;

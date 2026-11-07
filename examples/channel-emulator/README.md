@@ -63,6 +63,9 @@ Levels relative to the signal (SNR, dBc) use the signal's power **while it
 is present**: the gaps between packets do not count, so a bursty sender gets
 the SNR asked for while a packet is on the air, whatever its TX level.
 
+Blocks go on with the sender's forge.v1 header (its timestamp), so
+radio-controller's `tx_max_age_ms` measures the age from the sender.
+
 The sample clock error keeps the number of samples (the modem paces its TX by
 the RX samples): the delay drifts by `clock_ppm` inside a burst and goes back
 to zero in a quiet gap, where the jump cannot be seen; a signal without gaps

@@ -121,7 +121,8 @@ private:
     std::atomic<bool> tx_reset_{false};
     std::uint64_t tx_generation_ = 0;   // TX thread only
     std::vector<std::int16_t> tx_pending_;  // TX thread only
-    std::atomic<std::uint64_t> tx_frames_{0}, tx_samples_{0}, tx_underflows_{0}, tx_dropped_{0};
+    std::atomic<std::uint64_t> tx_frames_{0}, tx_samples_{0}, tx_underflows_{0}, tx_dropped_{0}, tx_late_{0};
+    std::atomic<int> tx_max_age_ms_{0};
 
 
     // derived telemetry (main loop)

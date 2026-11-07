@@ -110,6 +110,11 @@ void RadioController::setup_config(forge::config::Schema& s) {
     s.string("radio.rx2_gain_mode", "slow_attack", "RX2 gain control").choices(gain_modes());
     s.number("radio.rx2_gain_db", 30, "RX2 gain (manual mode)").range(Limits::rx_gain_min_db, Limits::rx_gain_max_db).unit("dB");
     s.number("radio.tx_attenuation_db", 10, "TX attenuation of tx_channel").range(0, 89.75).unit("dB");
+    s.integer("radio.tx_max_age_ms", 0,
+              "Streaming TX blocks older than this (sender's header time) are dropped, not played: the TX "
+              "latency cannot build up after a stall (0 = play everything; needs the sender's clock)")
+        .range(0, 60000)
+        .unit("ms");
     s.string("radio.state_file", "", "Keep runtime changes across restarts (JSON)");
     s.integer("radio.spectrum_size", 1024, "FFT size of the web spectrum (power of two)").range(64, 65536);
     s.number("radio.spectrum_hz", 5, "Web spectrum updates per second").range(0.5, 30).unit("Hz");
@@ -279,6 +284,12 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
     tx.value("tx_frames", "Frames", [this] { return tx_frames_.load(); });
     tx.value("tx_underflows", "Underflows", [this] { return tx_underflows_.load(); });
     tx.value("tx_dropped", "Dropped (TX disabled)", [this] { return tx_dropped_.load(); });
+    tx.number("tx_max_age_ms", "Drop TX blocks older than", [this] { return double(tx_max_age_ms_.load()); },
+              [this](double ms) { tx_max_age_ms_ = static_cast<int>(ms); })
+        .range(0, 60000, 1)
+        .unit("ms")
+        .help("0 = play everything. Bounds the TX latency: a backlog after a stall is dropped, not played late.");
+    tx.value("tx_late", "Dropped (late)", [this] { return tx_late_.load(); });
     tx.button("tx_stop", "Stop output", [this] {
           if (backend_) backend_->stop_tx();
           tx_mode_ = TxMode::idle;
@@ -354,6 +365,7 @@ void RadioController::load_settings(const forge::Config& cfg) {
     sim_.loopback_split = cfg.value<bool>("radio.sim.splitter");
     sim_.loopback_db = cfg.value<double>("radio.sim.loopback_db");
     sim_.loopback_cfo_hz = cfg.value<double>("radio.sim.loopback_cfo_hz");
+    tx_max_age_ms_ = cfg.value<int>("radio.tx_max_age_ms");
 
     // Channel roles (fixed at start-up; must fit the transceiver)
     const json radio = cfg.section("radio").to_json();
@@ -695,6 +707,18 @@ void RadioController::on_tx_frame(forge::zmq::Message&& m) {
         ++tx_dropped_;
         logger()->warn("radio: TX frame ignored (need format cs16 and a blob of int16 I/Q pairs)");
         return;
+    }
+    // A backlog (the TX path stalled while the sender kept going) is dropped, not
+    // played late: otherwise the latency would stay up for good.
+    const int max_age = tx_max_age_ms_;
+    if (max_age > 0 && !tx.cyclic() && m.header.time_unix_ns() > 0) {
+        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::system_clock::now().time_since_epoch())
+                                .count();
+        if (now_ns - m.header.time_unix_ns() > std::int64_t(max_age) * 1000000) {
+            ++tx_late_;
+            return;
+        }
     }
     FORGE_TRACE_SCOPE("tx.write", "radio");
     const auto* samples = reinterpret_cast<const std::int16_t*>(m.blob.data());

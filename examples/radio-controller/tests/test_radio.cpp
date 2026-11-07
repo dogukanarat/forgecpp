@@ -466,6 +466,38 @@ TEST_CASE("radio-controller: listens to both RX channels and drives TX2") {
     CHECK(ctl.get("tx_channel") == "TX2");
 }
 
+TEST_CASE("radio-controller: streaming TX blocks older than tx_max_age_ms are dropped, not played late") {
+    RunningRadio r({"-D", "radio.tx_enabled=true", "-D", "radio.sample_rate_hz=5e6", "-D", "radio.buffer_size=8192"});
+    fz::Client ctl(r.app.control_endpoint(), 5s);
+    CHECK(ctl.get("tx_max_age_ms") == 0.0);  // off by default
+    ctl.set("tx_max_age_ms", 100);
+    fz::Sender push(fz::Sender::Kind::push, r.app.tx_endpoint(), false);
+    const auto iq = tone(4096, 1e5, 5e6, 0.3);
+    auto block = [&](std::int64_t age_ms) {  // a sender whose block waited age_ms somewhere
+        radio::v1::TxBlock b;
+        b.set_format("cs16");
+        fz::Message m;
+        m.topic = "tx";
+        m.header = forge::proto::make_header("tx", b.GetTypeName());
+        m.header.set_time_unix_ns(m.header.time_unix_ns() - age_ms * 1000000);
+        m.body = b.SerializeAsString();
+        m.blob.assign(reinterpret_cast<const char*>(iq.data()), iq.size() * 2);
+        return m;
+    };
+    REQUIRE(forge::testing::wait_until([&] { return push.send(block(0)); }));
+    CHECK(forge::testing::wait_until([&] { return ctl.get("tx_frames") == 1.0; }));
+    REQUIRE(push.send(block(500)));
+    REQUIRE(push.send(block(500)));
+    CHECK(forge::testing::wait_until([&] { return ctl.get("tx_late") == 2.0; }));
+    CHECK(ctl.get("tx_frames") == 1.0);
+    REQUIRE(push.send(block(10)));
+    CHECK(forge::testing::wait_until([&] { return ctl.get("tx_frames") == 2.0; }));
+    ctl.set("tx_max_age_ms", 0);  // off: old blocks play
+    REQUIRE(push.send(block(500)));
+    CHECK(forge::testing::wait_until([&] { return ctl.get("tx_frames") == 3.0; }));
+    CHECK(ctl.get("tx_late") == 2.0);
+}
+
 TEST_CASE("radio-controller: a configuration the transceiver cannot do is reported") {
     RunningRadio r({"-D", "radio.tap_rx=[2]"});  // simulated AD9364: one RX, one TX
     fz::Client ctl(r.app.control_endpoint(), 5s);
