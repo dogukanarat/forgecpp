@@ -137,6 +137,78 @@ TEST_CASE("zmq: request/reply server and a client that recovers from timeouts") 
 }
 
 namespace {
+// One raw REQ exchange; "" on timeout.
+std::string req_exchange(const std::string& endpoint, const std::string& body, std::chrono::milliseconds timeout = 3s) {
+    ::zmq::socket_t s(fz::context(), ::zmq::socket_type::req);
+    s.set(::zmq::sockopt::linger, 0);
+    s.connect(endpoint);
+    s.send(::zmq::buffer(body), ::zmq::send_flags::none);
+    ::zmq::pollitem_t item{s.handle(), 0, ZMQ_POLLIN, 0};
+    if (::zmq::poll(&item, 1, timeout) <= 0) return {};
+    ::zmq::message_t m;
+    (void)s.recv(m);
+    return m.to_string();
+}
+}  // namespace
+
+TEST_CASE("zmq: a slow request does not hold up the others; replies go to the client that asked") {
+    std::atomic<int> slow_running{0};
+    fz::ServerOptions options;
+    options.workers = 2;
+    fz::Server server("tcp://127.0.0.1:*", [&](std::string_view req) {
+        if (req == "slow") {
+            ++slow_running;
+            std::this_thread::sleep_for(800ms);
+            return std::string("slow done");
+        }
+        return "re:" + std::string(req);
+    }, options);
+    CHECK(server.workers() == 2);
+
+    std::string slow_reply;
+    std::thread slow([&] { slow_reply = req_exchange(server.endpoint(), "slow"); });
+    while (slow_running == 0) std::this_thread::sleep_for(1ms);
+    const auto t0 = std::chrono::steady_clock::now();
+    CHECK(req_exchange(server.endpoint(), "ping") == "re:ping");
+    CHECK(std::chrono::steady_clock::now() - t0 < 400ms);
+
+    // Many clients at once: each gets its own answer.
+    std::vector<std::thread> clients;
+    std::atomic<int> right{0};
+    for (int i = 0; i < 16; ++i) {
+        clients.emplace_back([&, i] {
+            if (req_exchange(server.endpoint(), std::to_string(i)) == "re:" + std::to_string(i)) ++right;
+        });
+    }
+    for (auto& c : clients) c.join();
+    CHECK(right == 16);
+    slow.join();
+    CHECK(slow_reply == "slow done");
+    CHECK(server.requests() == 18);
+}
+
+TEST_CASE("zmq: requests that waited too long for a worker are refused with 503, not handled") {
+    std::atomic<int> handled{0};
+    fz::ServerOptions options;
+    options.workers = 1;
+    options.max_queue_wait = 100ms;
+    fz::Server server("tcp://127.0.0.1:*", [&](std::string_view req) {
+        ++handled;
+        if (req == "slow") std::this_thread::sleep_for(400ms);
+        return std::string("ok");
+    }, options);
+    std::thread slow([&] { CHECK(req_exchange(server.endpoint(), "slow") == "ok"); });
+    while (handled == 0) std::this_thread::sleep_for(1ms);
+    const auto reply = req_exchange(server.endpoint(), "late");
+    v1::Reply r;
+    REQUIRE(r.ParseFromString(reply));
+    CHECK(r.status() == 503);
+    slow.join();
+    CHECK(handled == 1);
+    CHECK(server.rejected() == 1);
+}
+
+namespace {
 struct ControlledApp : forge::Application {
     ControlledApp() : Application({"zmqapp", "3.0.0"}) {}
     double freq = 100.0;

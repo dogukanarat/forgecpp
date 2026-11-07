@@ -13,20 +13,12 @@ pre-production security work: forgecpp is used in the lab for now.
 | Sanitizers only run by hand | CI job `sanitizers`: ASan+UBSan and TSan, the bundled libraries instrumented too, all tests. ccache for every CI job. |
 | `invoke()` shared exception objects between threads (TSan) | Errors are described on the main loop and thrown anew on the caller's thread. |
 | A stuck main loop hung forgectl and the panel | `invoke_for(timeout, fn)`: forge.v1 and the framework's HTTP routes wait at most `[forge].request_timeout_ms` (2000) for the main loop, then answer `503 main loop busy` with the loop's lag (metric `forge.control.timeouts`); a request that timed out is never applied later. info, health, metrics, logs, audit, trace, alarms and streams do not need the loop. |
+| `[forge].control` served one request at a time (REP) | `zmq::Server` is a ROUTER socket with an I/O thread and a worker pool (`[forge].control_workers`, 2); replies go back to the client that asked, requests that waited too long for a worker (or beyond 256 waiting) get 503 without being handled. Clients and messages unchanged. |
 
 ## Plan
 
 Ordered by risk to the running system. Each step lands on its own with tests,
 without changing behaviour that is not named.
-
-### 2. One slow request must not block the control endpoint
-
-*Problem.* `[forge].control` is a single REP socket: requests are served one by
-one; a trace dump or a request waiting for the main loop holds up everybody.
-
-*Plan.* ROUTER socket with a small worker pool (default 2) and per-request
-deadlines; replies keep the request's identity. forge.v1 messages and clients
-do not change. Test: a slow request does not delay a concurrent `ping`.
 
 ### 3. A transport-neutral error type
 

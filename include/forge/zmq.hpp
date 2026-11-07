@@ -273,13 +273,27 @@ private:
     std::thread thread_;
 };
 
-/// Request/reply server (REP) with its own thread. The handler gets the raw
-/// request frame and returns the raw reply frame.
+/// Request/reply server for REQ (and DEALER) clients. A ROUTER socket on its
+/// own I/O thread hands requests to `workers` threads, so a slow request does
+/// not hold up the others; every reply goes back to the client that asked.
+/// The handler gets the raw request frame and returns the raw reply frame; with
+/// more than one worker it must be thread-safe.
+struct ServerOptions {
+    int workers = 1;
+    /// Requests that waited longer than this for a worker are answered 503
+    /// without being handled (their client has most likely given up).
+    std::chrono::milliseconds max_queue_wait{std::chrono::seconds(5)};
+    /// Requests beyond this many waiting ones are answered 503 at once.
+    std::size_t max_queued = 256;
+    std::string thread_name = "forge-rep";
+};
+
 class Server {
 public:
     using Handler = std::function<std::string(std::string_view request)>;
 
     Server(const std::string& endpoint, Handler handler, SocketOptions options = {});
+    Server(const std::string& endpoint, Handler handler, ServerOptions server, SocketOptions options = {});
     ~Server();
 
     Server(const Server&) = delete;
@@ -287,16 +301,34 @@ public:
 
     void stop();
     std::string endpoint() const { return endpoint_; }
+    /// Requests received / answered 503 because the server was too busy.
     std::uint64_t requests() const { return requests_; }
+    std::uint64_t rejected() const { return rejected_; }
+    int workers() const { return static_cast<int>(workers_.size()); }
 
 private:
+    struct Job {
+        std::vector<std::string> envelope;  ///< routing frames up to the empty delimiter
+        std::string body;
+        std::chrono::steady_clock::time_point received;
+    };
     void run();
+    void work();
+    void send_reply(::zmq::socket_t& out, const Job& job, const std::string& reply);
 
     ::zmq::socket_t socket_;
     Handler handler_;
-    std::string endpoint_;
+    ServerOptions server_options_;
+    std::string endpoint_, replies_endpoint_;
     std::atomic<bool> running_{true};
-    std::atomic<std::uint64_t> requests_{0};
+    std::atomic<std::uint64_t> requests_{0}, rejected_{0};
+
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::deque<Job> queue_;
+    bool stopping_ = false;
+    ::zmq::socket_t replies_;  ///< PULL: workers' replies to the I/O thread
+    std::vector<std::thread> workers_;
     std::thread thread_;
 };
 
@@ -339,10 +371,11 @@ private:
     std::unique_ptr<::zmq::socket_t> socket_;
 };
 
-/// Serve a ControlService on a REP socket: forge.v1 Request frames, and the
+/// Serve a ControlService (REQ clients): forge.v1 Request frames, and the
 /// older JSON commands (a frame starting with '{'). Applications do this
 /// themselves for [forge].control; call it for additional endpoints.
-std::unique_ptr<Server> serve_control(ControlService& service, const std::string& endpoint);
+/// `workers` requests are handled at the same time (ControlService is thread-safe).
+std::unique_ptr<Server> serve_control(ControlService& service, const std::string& endpoint, int workers = 2);
 
 /// Compatibility: serve_control(app.control(), endpoint).
 std::unique_ptr<Server> serve_application(Application& app, const std::string& endpoint);

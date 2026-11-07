@@ -276,10 +276,11 @@ telnet_max_sessions = 4
 telnet_idle_s = 0
 
 [forge]                  # forge.v1 endpoints (empty = off; "tcp://127.0.0.1:*" = any free port)
-control = ""             # REP: requests (forgectl, panels), e.g. "tcp://*:5557"
+control = ""             # requests from REQ clients (forgectl, panels), e.g. "tcp://*:5557"
 events = ""              # PUB: state, alarms, log, audit, health, metrics
 data = ""                # PUB: the application's streams (ephemeral port when empty and used)
 metrics_interval_s = 5
+control_workers = 2      # [forge].control requests handled at the same time
 request_timeout_ms = 2000 # requests waiting for a busy main loop answer 503 after this
 
 [auth]                   # users and roles for web, forge.v1 and telnet (see below)
@@ -499,7 +500,7 @@ The protocol is defined in [`proto/forge/v1`](proto/forge/v1) (installed in
 
 | Endpoint (`[forge]`) | Socket | Carries |
 |---|---|---|
-| `control` | REP | `forge.v1.Request` → `forge.v1.Reply`: info, schema, state, get/set/press, call (commands), alarms/ack, logs, metrics, trace, audit, health, streams, lease/release, log level |
+| `control` | ROUTER (REQ clients) | `forge.v1.Request` → `forge.v1.Reply`: info, schema, state, get/set/press, call (commands), alarms/ack, logs, metrics, trace, audit, health, streams, lease/release, log level |
 | `events` | PUB | topics `state` (`Values`), `alarms`, `log`, `audit`, `health`, `metrics` |
 | `data` | PUB | the application's own streams (its messages, e.g. `radio.v1.IqBlock`) |
 | HTTP `POST /forge/api/rpc` | | the same `Request`/`Reply`, as protobuf (`application/x-protobuf`) or JSON |
@@ -560,8 +561,8 @@ s = pump_pb2.Sample(); s.ParseFromString(body)
 
 Lower-level pieces: `Publisher`/`Stream` (thread-safe PUB with per-topic
 subscriber counts), `Sender` (PUB/PUSH from one thread), `Receiver` (SUB/PULL
-thread), `Server` (REP), `serve_control(service, endpoint)` for extra control
-endpoints. The REP endpoint also accepts the older JSON commands
+thread), `Server` (ROUTER + worker threads), `serve_control(service, endpoint, workers)` for extra control
+endpoints. The control endpoint also accepts the older JSON commands
 (`{"cmd":"set","id":"speed","value":1500}`) for existing scripts.
 
 ### Access control, leases and the audit trail

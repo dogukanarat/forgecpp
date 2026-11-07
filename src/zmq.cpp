@@ -397,12 +397,30 @@ void Receiver::run() {
 // Server
 
 Server::Server(const std::string& endpoint, Handler handler, SocketOptions options)
-    : socket_(context(), ::zmq::socket_type::rep), handler_(std::move(handler)) {
+    : Server(endpoint, std::move(handler), ServerOptions{}, options) {}
+
+Server::Server(const std::string& endpoint, Handler handler, ServerOptions server, SocketOptions options)
+    : socket_(context(), ::zmq::socket_type::router),
+      handler_(std::move(handler)),
+      server_options_(std::move(server)),
+      replies_(context(), ::zmq::socket_type::pull) {
+    static std::atomic<std::uint64_t> instances{0};
     apply(socket_, options);
     socket_.bind(endpoint);
     endpoint_ = resolved_endpoint(socket_, endpoint);
+    replies_endpoint_ = "inproc://forge-server-" + std::to_string(++instances);
+    replies_.set(::zmq::sockopt::linger, 0);
+    replies_.bind(replies_endpoint_);
+    const int n = std::max(server_options_.workers, 1);
+    for (int i = 0; i < n; ++i) {
+        workers_.emplace_back([this, i, n] {
+            trace::set_thread_name(n == 1 ? server_options_.thread_name
+                                          : server_options_.thread_name + "-" + std::to_string(i));
+            work();
+        });
+    }
     thread_ = std::thread([this] {
-        trace::set_thread_name("forge-rep");
+        trace::set_thread_name(server_options_.thread_name + "-io");
         run();
     });
 }
@@ -410,39 +428,139 @@ Server::Server(const std::string& endpoint, Handler handler, SocketOptions optio
 Server::~Server() { stop(); }
 
 void Server::stop() {
+    // Workers first (they finish the request in hand; queued ones are dropped),
+    // then the I/O thread, which still takes their last replies.
+    {
+        std::lock_guard lock(mutex_);
+        stopping_ = true;
+        queue_.clear();
+    }
+    cv_.notify_all();
+    for (auto& t : workers_) {
+        if (t.joinable()) t.join();
+    }
     running_ = false;
     if (thread_.joinable()) thread_.join();
 }
 
+void Server::send_reply(::zmq::socket_t& out, const Job& job, const std::string& reply) {
+    for (const auto& frame : job.envelope) out.send(::zmq::buffer(frame), ::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait);
+    out.send(::zmq::buffer(reply), ::zmq::send_flags::dontwait);
+}
+
+namespace {
+std::string busy_reply(const std::string& why) {
+    std::string out;
+    proto::error_reply(503, why).SerializeToString(&out);
+    return out;
+}
+}  // namespace
+
+void Server::work() {
+    ::zmq::socket_t out(context(), ::zmq::socket_type::push);
+    out.set(::zmq::sockopt::linger, 0);
+    out.connect(replies_endpoint_);
+    for (;;) {
+        Job job;
+        {
+            std::unique_lock lock(mutex_);
+            cv_.wait(lock, [&] { return stopping_ || !queue_.empty(); });
+            if (stopping_) break;
+            job = std::move(queue_.front());
+            queue_.pop_front();
+        }
+        std::string reply;
+        if (std::chrono::steady_clock::now() - job.received > server_options_.max_queue_wait) {
+            ++rejected_;
+            reply = busy_reply("server busy: the request waited too long");
+        } else {
+            try {
+                reply = handler_(job.body);
+            } catch (const std::exception& e) {
+                proto::error_reply(500, e.what()).SerializeToString(&reply);
+            }
+        }
+        try {
+            send_reply(out, job, reply);
+        } catch (const ::zmq::error_t& e) {
+            if (e.num() == ETERM) break;
+            log::warn("zmq: server {} could not reply: {}", endpoint_, e.what());
+        }
+    }
+    out.close();
+}
+
 void Server::run() {
-    ::zmq::pollitem_t item{socket_.handle(), 0, ZMQ_POLLIN, 0};
+    ::zmq::pollitem_t items[] = {{socket_.handle(), 0, ZMQ_POLLIN, 0}, {replies_.handle(), 0, ZMQ_POLLIN, 0}};
+    std::vector<::zmq::message_t> frames;
+    const auto receive_all = [&](::zmq::socket_t& from) {
+        frames.clear();
+        for (;;) {
+            ::zmq::message_t m;
+            if (!from.recv(m, ::zmq::recv_flags::dontwait)) return !frames.empty();
+            const bool more = m.more();
+            frames.push_back(std::move(m));
+            if (!more) return true;
+        }
+    };
     while (running_) {
         try {
-            if (::zmq::poll(&item, 1, kPollInterval) <= 0) continue;
-            ::zmq::message_t msg;
-            if (!socket_.recv(msg, ::zmq::recv_flags::dontwait)) continue;
-            // REP sockets may receive multipart requests; only the first frame matters.
-            while (msg.more()) {
-                ::zmq::message_t rest;
-                (void)socket_.recv(rest);
-                if (!rest.more()) break;
+            if (::zmq::poll(items, 2, kPollInterval) <= 0) continue;
+            // Replies from the workers: forward them as they are (envelope + body).
+            if (items[1].revents & ZMQ_POLLIN) {
+                while (receive_all(replies_)) {
+                    for (std::size_t i = 0; i < frames.size(); ++i) {
+                        socket_.send(frames[i], i + 1 < frames.size() ? ::zmq::send_flags::sndmore
+                                                                      : ::zmq::send_flags::dontwait);
+                    }
+                }
             }
-            ++requests_;
-            std::string reply;
-            try {
-                reply = handler_(msg.to_string_view());
-            } catch (const std::exception& e) {
-                std::string out;
-                proto::error_reply(500, e.what()).SerializeToString(&out);
-                reply = out;
+            if (!(items[0].revents & ZMQ_POLLIN)) continue;
+            while (receive_all(socket_)) {
+                // [identity...][empty][request][more frames ignored]; DEALER clients
+                // may leave out the empty delimiter.
+                Job job;
+                job.received = std::chrono::steady_clock::now();
+                std::size_t i = 0;
+                bool delimited = false;
+                for (; i < frames.size(); ++i) {
+                    job.envelope.push_back(frames[i].to_string());
+                    if (frames[i].size() == 0) {
+                        delimited = true;
+                        ++i;
+                        break;
+                    }
+                }
+                if (!delimited) {
+                    // no delimiter: the first frame is the identity, the next one the request
+                    job.envelope.assign(1, frames[0].to_string());
+                    i = 1;
+                }
+                if (i >= frames.size()) continue;  // no request frame
+                job.body = frames[i].to_string();
+                ++requests_;
+                bool queued = false;
+                {
+                    std::lock_guard lock(mutex_);
+                    if (!stopping_ && queue_.size() < server_options_.max_queued) {
+                        queue_.push_back(std::move(job));
+                        queued = true;
+                    }
+                }
+                if (queued) {
+                    cv_.notify_one();
+                } else {
+                    ++rejected_;
+                    send_reply(socket_, job, busy_reply("server busy: too many requests waiting"));
+                }
             }
-            socket_.send(::zmq::buffer(reply), ::zmq::send_flags::none);
         } catch (const ::zmq::error_t& e) {
             if (e.num() == ETERM) break;
             log::warn("zmq: server {} failed: {}", endpoint_, e.what());
         }
     }
     socket_.close();
+    replies_.close();
 }
 
 // ---------------------------------------------------------------------------
@@ -537,7 +655,10 @@ json Client::request_json(const json& req) {
 // ---------------------------------------------------------------------------
 // serve_control
 
-std::unique_ptr<Server> serve_control(ControlService& service, const std::string& endpoint) {
+std::unique_ptr<Server> serve_control(ControlService& service, const std::string& endpoint, int workers) {
+    ServerOptions options;
+    options.workers = workers;
+    options.thread_name = "forge-control";
     return std::make_unique<Server>(endpoint, [&service](std::string_view request) -> std::string {
         Caller transport;
         transport.channel = "zmq";
@@ -549,7 +670,7 @@ std::unique_ptr<Server> serve_control(ControlService& service, const std::string
             return reply.dump(-1, ' ', false, json::error_handler_t::replace);
         }
         return service.handle_bytes(request, transport);
-    });
+    }, options);
 }
 
 std::unique_ptr<Server> serve_application(Application& app, const std::string& endpoint) {

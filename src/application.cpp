@@ -1221,10 +1221,11 @@ void Application::declare_framework_config(config::Schema& s) {
     s.integer("console.telnet_idle_s", 0, "Close idle telnet sessions after (0 = never)").range(0, 86400).unit("s");
 
     s.section("forge", "forge.v1 on ZeroMQ: control, events and streams");
-    s.string("forge.control", "", "REP: forge.v1 requests (forgectl, panels), e.g. \"tcp://*:5557\"");
+    s.string("forge.control", "", "forge.v1 requests (forgectl, panels), e.g. \"tcp://*:5557\"");
     s.string("forge.events", "", "PUB: state, alarms, log, audit, health, metrics, e.g. \"tcp://*:5559\"");
     s.string("forge.data", "", "PUB: the application's streams (empty: an ephemeral port when used)");
     s.integer("forge.metrics_interval_s", 5, "Metrics event interval").range(1, 3600).unit("s");
+    s.integer("forge.control_workers", 2, "Requests on [forge].control handled at the same time").range(1, 16);
     s.integer("forge.request_timeout_ms", 2000,
               "How long a request (forge.v1, HTTP) waits for a busy main loop before answering 503")
         .range(10, 600000)
@@ -1397,7 +1398,7 @@ void Application::start_messaging(const Config& cfg) {
     }
     const auto control = cfg.get_or<std::string>("forge.control", "");
     if (!control.empty()) {
-        control_server_ = zmq::serve_control(*control_, control);
+        control_server_ = zmq::serve_control(*control_, control, cfg.get_or<int>("forge.control_workers", 2));
         logger_->info("forge: control on {}", control_server_->endpoint());
     }
 }
