@@ -497,3 +497,54 @@ TEST_CASE("framework: invoke() runs on the main loop and carries errors back as 
     CHECK_THROWS_AS(r->invoke([] { throw std::out_of_range("x"); }), std::out_of_range);
     CHECK_THROWS_WITH_AS(r->invoke([] { throw 42; }), "unknown exception", std::runtime_error);
 }
+
+TEST_CASE("web: card layouts are stored on the device and survive a restart") {
+    forge::testing::TempDir dir;
+    const auto file = (dir / "state" / "web-layout.json").string();
+    const json layout{{"version", 1},
+                      {"items", json::array({{{"id", "frequency"}, {"x", 0}, {"y", 0}, {"w", 6}, {"h", 30}, {"fit", false}},
+                                             {{"id", "markers"}, {"x", 6}, {"y", 0}, {"w", 6}, {"h", 50}, {"fit", true}}})}};
+    const std::vector<std::string> args{"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\"",
+                                        "-D", "web.layout_file=" + file};
+    {
+        forge::testing::AppRunner<RolesApp> r(args);
+        httplib::Client http("127.0.0.1", r->http()->port());
+        CHECK(http.Get("/forge/api/layout/panel")->status == 204);  // nothing stored yet
+        auto res = http.Put("/forge/api/layout/panel", layout.dump(), "application/json");
+        REQUIRE(res);
+        CHECK(res->status == 200);
+        CHECK(json::parse(res->body)["saved"] == true);
+        CHECK(json::parse(http.Get("/forge/api/layout/panel")->body) == layout);
+        // invalid page names and bodies are refused
+        CHECK(http.Put("/forge/api/layout/..%2Fx", layout.dump(), "application/json")->status >= 400);
+        CHECK(http.Put("/forge/api/layout/a%20b", layout.dump(), "application/json")->status == 400);
+        CHECK(http.Put("/forge/api/layout/panel", "[1,2]", "application/json")->status == 400);
+        CHECK(http.Put("/forge/api/layout/hub", R"({"items": 5})", "application/json")->status == 400);
+        http.Put("/forge/api/layout/other", layout.dump(), "application/json");
+        CHECK(http.Delete("/forge/api/layout/other")->status == 204);
+    }
+    REQUIRE(std::filesystem::exists(file));
+    {
+        // Restarted: the layout is still there; the deleted one is not.
+        forge::testing::AppRunner<RolesApp> r(args);
+        httplib::Client http("127.0.0.1", r->http()->port());
+        CHECK(json::parse(http.Get("/forge/api/layout/panel")->body) == layout);
+        CHECK(http.Get("/forge/api/layout/other")->status == 204);
+    }
+    {
+        // "-": not stored on the device (the page falls back to the browser's storage).
+        forge::testing::AppRunner<RolesApp> r({"-D", "http.enabled=true", "-D", "http.port=0", "-D",
+                                               "http.host=\"127.0.0.1\"", "-D", "web.layout_file=-"});
+        httplib::Client http("127.0.0.1", r->http()->port());
+        auto res = http.Put("/forge/api/layout/panel", layout.dump(), "application/json");
+        CHECK(json::parse(res->body)["saved"] == false);
+    }
+    // The vendored GridStack is served with the panel.
+    forge::testing::AppRunner<RolesApp> r({"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\""});
+    httplib::Client http("127.0.0.1", r->http()->port());
+    const auto js = http.Get("/forge/vendor/gridstack/gridstack-all.js");
+    REQUIRE(js);
+    CHECK(js->status == 200);
+    CHECK(js->body.find("GridStack") != std::string::npos);
+    CHECK(http.Get("/forge/vendor/gridstack/gridstack.min.css")->status == 200);
+}

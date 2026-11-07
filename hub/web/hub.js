@@ -78,12 +78,14 @@
     const hasPage = a.static_entry ? !!a.url : running && app.http_port > 0;
     const title = app.title || app.name;
 
-    const head = el('header', {}, [
+    // The header is the drag handle of the card (forge.layout).
+    const head = el('header', { title: 'Drag to move' }, [
       el('span', { class: 'hub-led', 'aria-hidden': 'true' }),
       el('h2', {}, [
         hasPage ? el('a', { href: appUrl(a), text: title }) : document.createTextNode(title),
         app.version ? el('span', { class: 'hub-version', text: app.version }) : null
       ]),
+      app.group ? el('span', { class: 'hub-group-chip', text: app.group }) : null,
       el('span', { class: 'hub-state', text: st[0] })
     ]);
 
@@ -138,7 +140,7 @@
       actions.appendChild(right);
     }
 
-    return el('article', { class: 'hub-card ' + tone, 'data-app': app.name }, [
+    return el('article', { class: 'hub-card forge-card ' + tone, 'data-app': app.name, 'data-forge-card': app.name }, [
       head,
       app.description ? el('p', { class: 'hub-desc', text: app.description }) : null,
       stats,
@@ -148,7 +150,22 @@
     ]);
   }
 
-  function render(list) {
+  // Cards stay in place (they live on the movable grid): their content is
+  // replaced, cards of new applications are added, gone ones removed.
+  let layout = null, layoutPending = null;
+  const cards = {};
+
+  async function ensureLayout(root) {
+    if (layout) return layout;
+    if (!layoutPending) {
+      layoutPending = forge.layout(root, 'hub', { width: 4, items: '.hub-card' })
+        .then(function (l) { layout = l; return l; })
+        .catch(function (e) { console.warn('forge-hub: layout:', e); return null; });
+    }
+    return layoutPending;
+  }
+
+  async function render(list) {
     const apps = (list.apps || []).slice().sort(function (x, y) {
       const gx = x.app.group || '', gy = y.app.group || '';
       if (gx !== gy) return gx < gy ? -1 : 1;
@@ -164,32 +181,48 @@
     });
 
     const root = $('hub-apps');
-    root.textContent = '';
-    if (!apps.length) {
-      root.appendChild(el('div', { class: 'forge-empty' }, [
-        document.createTextNode('No applications have registered yet. forgecpp applications register by themselves when they start ([hub] in their configuration); others can be listed under [static.<name>] in the hub\'s configuration.')
-      ]));
-      return;
-    }
-    let group = null, grid = null;
+    $('hub-empty').hidden = apps.length > 0;
+    const seen = {};
+    const fresh = [];
     apps.forEach(function (a) {
-      const g = a.app.group || '';
-      if (grid === null || g !== group) {
-        group = g;
-        if (g) root.appendChild(el('h2', { class: 'hub-group', text: g }));
-        grid = el('div', { class: 'hub-grid' });
-        root.appendChild(grid);
+      const name = a.app.name;
+      seen[name] = true;
+      const next = card(a);
+      const current = cards[name];
+      if (current) {
+        // The header element stays: it is the drag handle GridStack listens on.
+        current.className = next.className;
+        const head = current.querySelector(':scope > header');
+        const nextHead = next.querySelector(':scope > header');
+        head.replaceChildren.apply(head, Array.prototype.slice.call(nextHead.childNodes));
+        Array.prototype.slice.call(current.children).forEach(function (c) { if (c !== head) c.remove(); });
+        Array.prototype.slice.call(next.childNodes).forEach(function (c) { if (c !== nextHead) current.appendChild(c); });
+      } else {
+        cards[name] = next;
+        fresh.push(next);
       }
-      grid.appendChild(card(a));
+    });
+    if (!layout && !layoutPending) {
+      fresh.forEach(function (c) { root.appendChild(c); });  // the first cards: laid out together
+      await ensureLayout(root);
+    } else {
+      const l = await ensureLayout(root);
+      fresh.forEach(function (c) { if (l) l.add(c); else root.appendChild(c); });
+    }
+    Object.keys(cards).forEach(function (name) {
+      if (seen[name]) return;
+      if (layout) layout.remove(cards[name]); else cards[name].remove();
+      delete cards[name];
     });
   }
 
   async function refresh() {
     try {
-      render(await forge.api('/api/apps'));
+      await render(await forge.api('/api/apps'));
+      $('hub-error').hidden = true;
     } catch (e) {
-      $('hub-apps').textContent = '';
-      $('hub-apps').appendChild(el('div', { class: 'forge-empty', text: 'Cannot load the applications: ' + e.message }));
+      $('hub-error').hidden = false;
+      $('hub-error').textContent = 'Cannot load the applications: ' + e.message;
     }
   }
 

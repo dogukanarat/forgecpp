@@ -156,6 +156,10 @@
     });
     document.querySelectorAll('[data-pane]').forEach(function (p) { p.hidden = p.dataset.pane !== tab; });
     document.querySelector('.forge-main').dataset.tab = tab;  // the log card belongs to "controls"
+    if (tab === 'controls' && forge.getLayout && forge.getLayout('panel')) {
+      // Heights measured while the tab was hidden are wrong: fit them again.
+      requestAnimationFrame(function () { forge.getLayout('panel').refit(); });
+    }
     stop();
     if (pages[tab]) { refresh(); timer = setInterval(refresh, REFRESH_MS); }
     try { window.history.replaceState(null, '', '#' + tab); } catch (e) { /* file:// */ }

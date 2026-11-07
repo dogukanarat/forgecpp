@@ -7,7 +7,8 @@ HOMEPAGE = "https://github.com/dogukanarat/forgecpp"
 SECTION = "libs"
 # forgecpp (MIT) + bundled: spdlog, nlohmann/json, toml++, cpp-httplib, doctest,
 # BS::thread_pool (MIT), CLI11 (BSD-3-Clause), replxx (BSD-3-Clause),
-# moodycamel::ConcurrentQueue (BSD-2-Clause or BSL-1.0), protobuf (BSD-3-Clause).
+# moodycamel::ConcurrentQueue (BSD-2-Clause or BSL-1.0), protobuf (BSD-3-Clause),
+# GridStack.js (MIT, embedded in the web pages).
 # libzmq: MPL-2.0. libiio: LGPL-2.1-or-later, its command line tools GPL-2.0-or-later
 # (packaged separately in ${PN}-iio-tools).
 LICENSE = "MIT & BSD-3-Clause & BSD-2-Clause & MPL-2.0 & LGPL-2.1-or-later & GPL-2.0-or-later"
@@ -18,6 +19,7 @@ LIC_FILES_CHKSUM = " \
     file://third_party/CLI11/LICENSE;md5=744e78b25a90f01b35b087d9fb985ed4 \
     file://third_party/libzmq/LICENSE;md5=9741c346eef56131163e13b9db1241b3 \
     file://third_party/protobuf/LICENSE;md5=37b5762e07f0af8c74ce80a8bda4266b \
+    file://src/web/vendor/gridstack/LICENSE;md5=edb97b6dc3fdc07939ff20bd634870d5 \
     file://third_party/libiio/COPYING.txt;md5=7c13b3376cea0ce68d2d2da0a1b3a72c \
     file://third_party/libiio/COPYING_GPL.txt;md5=b234ee4d69f5fce4486a80fdaf4a4263 \
 "

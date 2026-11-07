@@ -117,6 +117,8 @@
       form, out]);
   }
 
+  let panelLayout = null;
+
   function render(schema) {
     const title = schema.title || 'Dashboard';
     $('forge-title').textContent = title;
@@ -128,6 +130,7 @@
 
     const initial = {};
     const groups = $('forge-groups');
+    if (panelLayout) { panelLayout.destroy(); panelLayout = null; }
     groups.textContent = '';
     (schema.groups || []).forEach(function (g) {
       const card = el('section', { class: 'forge-card' }, [el('h2', { text: g.title })]);
@@ -157,6 +160,11 @@
     Object.keys(initial).forEach(function (k) { if (!(k in forge.state)) missing[k] = initial[k]; });
     Object.assign(forge.state, missing);
     forge.bind(groups);
+    // Cards on a grid: drag by the title, resize from the corner; kept on the device.
+    if ((schema.groups || []).length) {
+      forge.layout(groups, 'panel', { width: 4 }).then(function (l) { panelLayout = l; })
+        .catch(function (e) { console.warn('forge: layout:', e); });
+    }
   }
 
   function formatUptime(s) {

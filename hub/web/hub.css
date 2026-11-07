@@ -3,13 +3,15 @@
 .hub-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
   background: var(--forge-surface); border: 1px solid var(--forge-border); font-size: 13px; }
 .hub-chip b { font-variant-numeric: tabular-nums; }
-.hub-group { margin: 22px 0 10px; font-size: 13px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase;
-  color: var(--forge-muted); }
-.hub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; }
+.hub-group-chip { flex: none; margin-left: auto; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--forge-muted); border: 1px solid var(--forge-border); border-radius: 999px; padding: 1px 7px; margin-top: 3px; }
+.hub-card > header { cursor: move; }
+.hub-group-chip + .hub-state { margin-left: 6px; }
 .hub-card { background: var(--forge-surface); border: 1px solid var(--forge-border); border-radius: var(--forge-radius);
   box-shadow: var(--forge-shadow); padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .hub-card header { display: flex; align-items: flex-start; gap: 10px; }
-.hub-card h2 { margin: 0; font-size: 17px; font-weight: 650; min-width: 0; overflow-wrap: anywhere; }
+.hub-card h2, .hub-card.forge-card > header h2 { margin: 0; font-size: 17px; font-weight: 650; min-width: 0;
+  overflow-wrap: anywhere; text-transform: none; letter-spacing: 0; color: var(--forge-text); }
 .hub-card h2 a { color: inherit; text-decoration: none; }
 .hub-card h2 a:hover { text-decoration: underline; }
 .hub-card .hub-version { color: var(--forge-muted); font-size: 12px; font-weight: 500; margin-left: 4px; }
@@ -36,6 +38,5 @@
 .hub-actions .forge-btn { font-size: 13px; padding: 5px 12px; }
 a.forge-btn { display: inline-block; text-decoration: none; }
 @media (max-width: 600px) {
-  .hub-grid { grid-template-columns: 1fr; }
-  .hub-stats { grid-template-columns: repeat(2, 1fr); }
+    .hub-stats { grid-template-columns: repeat(2, 1fr); }
 }

@@ -372,6 +372,8 @@ private:
     void start_messaging(const Config& config);
     void start_telnet(const Config& config);
     void start_hub_client(const Config& config);
+    static std::string default_layout_file(const std::string& name);
+    void save_layouts();
     void restore_state();
     void save_state();
     void publish_event(const std::string& topic, const google::protobuf::Message& body);
@@ -439,6 +441,10 @@ private:
     std::unique_ptr<zmq::Server> control_server_;
     std::unique_ptr<Telnet> telnet_;
     std::unique_ptr<hub::Client> hub_client_;
+    // Card layouts of the web pages (forge.layout), stored on the device.
+    std::mutex layout_mutex_;
+    json web_layouts_ = json::object();
+    std::string layout_file_;
     bool hub_registration_ = true;
     std::atomic<int> stop_signal_{0};                 ///< signal that asked us to stop (0 = none)
     std::atomic<std::int64_t> loop_tick_ms_{0};       ///< last main loop heartbeat (steady clock)

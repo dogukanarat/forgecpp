@@ -437,7 +437,23 @@ and served under `/`. `forge.js` binds them to the same controls with attributes
 <button data-forge-press="stop" data-forge-confirm="Are you sure?">Stop</button>
 <div data-forge-show="enabled">only visible while enabled</div>
 <div class="forge-alarms-host" data-forge-alarms></div>               <!-- alarm bell + banner + panel -->
+<div data-forge-layout="main">                                          <!-- movable, resizable cards -->
+  <section class="forge-card"><h2>Receiver</h2>...</section>
+</div>
+<button data-forge-layout-reset>Reset layout</button>
 ```
+
+**Movable cards.** The cards of the control panel (`/forge/`), of forge-hub's
+page and of any container marked `data-forge-layout="<page>"` sit on a
+12-column grid ([GridStack.js](https://gridstackjs.com), bundled): drag a card
+by its title, resize it from its corner. A card keeps the height of its
+content until it is resized by hand (then its content scrolls). The layout is
+stored by the application on the device (`[web].layout_file`, default
+`$STATE_DIRECTORY/web-layout.json` or `~/.local/state/<name>/web-layout.json`),
+so every browser shows the same arrangement; without that it stays in the
+browser. On phones the cards are a plain list and the stored layout is left
+alone. From JavaScript: `const l = await forge.layout(element, 'page')`,
+`l.add(card)`, `l.remove(card)`, `l.reset()`.
 
 From JavaScript: `forge.on('state', changed => ...)`, `await forge.set('speed', 1200)`,
 `await forge.press('start')`, `forge.on('alarm', d => ...)` (server side:
@@ -457,6 +473,7 @@ While developing, `-D web.root=web` serves the pages from disk: save, reload the
 | `POST /forge/api/alarms/<id>/ack`, `POST /forge/api/alarms/ack` | Acknowledge one / all alarms |
 | `GET /forge/api/events` | SSE: `state`, `alarms`, `log`, `app` events |
 | `GET /forge/api/logs` | Recent log lines |
+| `GET/PUT/DELETE /forge/api/layout/<page>` | Card layout of a page (`{"items": [{id, x, y, w, h, fit}]}`) |
 | `GET /health` | Status + alarm summary (for monitoring; no auth required) |
 
 ```sh
@@ -834,7 +851,8 @@ install.sh, get.sh installation
 ## License
 
 MIT (see [LICENSE](LICENSE)). The bundled libraries come with their own
-licenses (MIT, BSD-2/3-Clause, BSL-1.0; protobuf BSD-3-Clause; libzmq MPL-2.0; libiio LGPL-2.1-or-later
+licenses (MIT, BSD-2/3-Clause, BSL-1.0; protobuf BSD-3-Clause; GridStack.js MIT in
+`src/web/vendor/gridstack`; libzmq MPL-2.0; libiio LGPL-2.1-or-later
 with GPL-2.0-or-later command line tools); see `third_party/*/LICENSE*` and
 `third_party/libiio/COPYING*.txt`. Link libzmq and libiio dynamically (the
 default) to keep the LGPL/MPL obligations simple.

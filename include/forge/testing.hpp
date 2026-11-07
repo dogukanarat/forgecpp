@@ -80,7 +80,9 @@ public:
         const auto config = dir_ / "empty.toml";
         std::ofstream(config) << "# test configuration: everything comes from -D\n";
         // No registration with a hub that may run on the machine (pass -D hub.register=true to test it).
-        args_ = {"app", "-c", config.string(), "-D", "log.console=false", "-D", "hub.register=false"};
+        // Card layouts stay in the test's directory, not in ~/.local/state.
+        args_ = {"app", "-c", config.string(), "-D", "log.console=false", "-D", "hub.register=false",
+                 "-D", "web.layout_file=" + (dir_ / "web-layout.json").string()};
         args_.insert(args_.end(), args.begin(), args.end());
         for (auto& a : args_) argv_.push_back(a.data());
         auto started = std::make_shared<std::promise<void>>();

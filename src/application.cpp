@@ -21,6 +21,7 @@
 #include <spdlog/sinks/base_sink.h>
 
 #include <algorithm>
+#include <cctype>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -677,6 +678,50 @@ void Application::create_web(const Config& cfg) {
         return json{{"id", id}, {"seconds", s.count()}};
     });
     http_->get_json(api + "/leases", [this](const http::Request&) { return control_->leases(); });
+    // Card layouts of the pages (forge.layout in forge.js): kept on the device, so
+    // every browser shows the same arrangement.
+    layout_file_ = cfg.get_or<std::string>("web.layout_file", "");
+    if (layout_file_.empty()) layout_file_ = default_layout_file(info_.name);
+    if (layout_file_ == "-") layout_file_.clear();
+    if (!layout_file_.empty() && std::filesystem::exists(layout_file_)) {
+        try {
+            auto j = load_json(layout_file_);
+            if (j.is_object()) web_layouts_ = std::move(j);
+        } catch (const std::exception& e) {
+            logger_->warn("ignoring {}: {}", layout_file_, e.what());
+        }
+    }
+    auto valid_page = [](const std::string& p) {
+        return !p.empty() && p.size() <= 64 && std::all_of(p.begin(), p.end(), [](unsigned char c) {
+            return std::isalnum(c) || c == '-' || c == '_' || c == '.';
+        });
+    };
+    http_->get_json(api + "/layout/:page", [this, valid_page](const http::Request& req) {
+        const auto page = req.path_params.at("page");
+        if (!valid_page(page)) throw http::HttpError(400, "invalid page name");
+        std::lock_guard lock(layout_mutex_);
+        return web_layouts_.contains(page) ? web_layouts_[page] : json(nullptr);
+    });
+    http_->put_json(api + "/layout/:page", [this, valid_page](const http::Request& req, const json& body) {
+        const auto page = req.path_params.at("page");
+        if (!valid_page(page)) throw http::HttpError(400, "invalid page name");
+        if (!body.is_object() || !body.contains("items") || !body["items"].is_array() || body["items"].size() > 500 ||
+            req.body.size() > 256 * 1024) {
+            throw http::HttpError(400, "expected {\"items\": [...]} (at most 500 items)");
+        }
+        std::lock_guard lock(layout_mutex_);
+        web_layouts_[page] = body;
+        save_layouts();
+        return json{{"page", page}, {"saved", !layout_file_.empty()}};
+    });
+    http_->del_json(api + "/layout/:page", [this, valid_page](const http::Request& req) {
+        const auto page = req.path_params.at("page");
+        if (!valid_page(page)) throw http::HttpError(400, "invalid page name");
+        std::lock_guard lock(layout_mutex_);
+        web_layouts_.erase(page);
+        save_layouts();
+        return json(nullptr);
+    });
     http_->get_json(api + "/whoami", [web_caller](const http::Request& req) {
         const auto c = web_caller(req);
         return json{{"user", c.user}, {"role", to_string(c.role)}, {"client", c.client}};
@@ -1132,6 +1177,9 @@ void Application::declare_framework_config(config::Schema& s) {
     s.integer("web.refresh_ms", 500, "Live update interval").range(50, 60000).unit("ms");
     s.integer("web.max_clients", 8, "Open pages at once").range(1, 1000);
     s.boolean("web.logs", true, "Show the log in the panel");
+    s.string("web.layout_file", "",
+             "Card layouts of the pages (default: $STATE_DIRECTORY/web-layout.json, else "
+             "~/.local/state/<name>/web-layout.json; \"-\" = not stored on the device)");
     s.integer("web.log_history", 200, "Log lines shown").range(1, 100000);
     s.string("web.log_level", "info", "Lowest level shown in the panel");
 
@@ -1475,6 +1523,30 @@ void Component::setup_config(config::Schema&) {}
 void Component::setup_web(web::Dashboard&) {}
 void Component::setup_console(Console&) {}
 void Component::setup_http(http::Server&) {}
+std::string Application::default_layout_file(const std::string& name) {
+    // systemd's StateDirectory= (the units forge_add_app generates have one).
+    if (const char* sd = std::getenv("STATE_DIRECTORY"); sd && *sd) {
+        std::string dir(sd);
+        return dir.substr(0, dir.find(':')) + "/web-layout.json";
+    }
+    if (const char* xdg = std::getenv("XDG_STATE_HOME"); xdg && *xdg) return std::string(xdg) + "/" + name + "/web-layout.json";
+    if (const char* home = std::getenv("HOME"); home && *home) {
+        return std::string(home) + "/.local/state/" + name + "/web-layout.json";
+    }
+    return {};
+}
+
+void Application::save_layouts() {
+    if (layout_file_.empty()) return;
+    try {
+        const std::filesystem::path p(layout_file_);
+        if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path());
+        save_json(p, web_layouts_, 1);
+    } catch (const std::exception& e) {
+        logger_->warn("cannot save {}: {}", layout_file_, e.what());
+    }
+}
+
 void Application::start_hub_client(const Config& cfg) {
     if (!hub_registration_ || !cfg.get_or<bool>("hub.register", true)) return;
     const auto endpoint = cfg.get_or<std::string>("hub.endpoint", hub::default_endpoint);
