@@ -3,6 +3,26 @@
 `recipes-support/forgecpp/forgecpp_git.bb` builds forgecpp and all bundled
 libraries with the Yocto toolchain via `install.sh`.
 
+This directory is a layer (`meta-forgecpp`, `conf/layer.conf`; needs meta-oe
+and meta-python): add it to `bblayers.conf`, or copy the recipes into one of
+your layers as below.
+
+## Try it in QEMU (kas)
+
+`kas/qemuarm64.yml` builds a qemuarm64 image (systemd) with forgecpp, forge-hub,
+radio-controller on its simulator and spectrum-analyzer, from this checkout:
+
+```sh
+pip install kas
+FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml                # the image
+FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml -c testimage   # boot in QEMU + runtime tests
+```
+
+The runtime tests (`lib/oeqa/runtime/cases/forgecpp.py`) check that the units
+are active, forge-hub lists both applications, `forgectl` reaches
+radio-controller and the `forge.v1` Python package imports. The `yocto`
+workflow runs this nightly (and on demand).
+
 1. Copy `recipes-support/forgecpp` (both recipes: `forgecpp` and
    `forgecpp-protoc-native`) into one of your layers.
 2. Pin `SRCREV` to a commit or tag (the recipe defaults to `${AUTOREV}`).
