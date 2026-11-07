@@ -122,14 +122,15 @@ TEST_CASE("config schema: sources do not repeat the default of a declared key") 
     namespace fs = std::filesystem;
     const fs::path root = FORGE_SOURCE_DIR;
     const std::set<std::string> computed{"console.color"};  // default depends on the environment
-    const std::regex declared(R"re(\.(?:boolean|integer|number|string|array)\(\s*"([a-z0-9_.]+)")re");
-    const std::regex read(R"re(get_or<[^;]*?>\(\s*"([a-z0-9_.]+)")re");
+    const std::regex declared(R"re(\.(?:boolean|integer|number|string|array)\(\s*"([A-Za-z0-9_.${}]+)")re");
+    const std::regex read(R"re(get_or<[^;]*?>\(\s*"([A-Za-z0-9_.${}]+)")re");
     std::set<std::string> keys;
     std::vector<std::pair<std::string, std::string>> reads;  // key, file
-    for (const auto* dir : {"src", "hub/src", "examples", "include"}) {
+    for (const auto* dir : {"src", "hub/src", "examples", "include", "tools"}) {
         for (const auto& e : fs::recursive_directory_iterator(root / dir)) {
             const auto ext = e.path().extension();
-            if (!e.is_regular_file() || (ext != ".cpp" && ext != ".hpp")) continue;
+            const bool scaffolder = e.path().filename() == "forgecpp-new";  // generates C++
+            if (!e.is_regular_file() || (ext != ".cpp" && ext != ".hpp" && !scaffolder)) continue;
             std::ifstream in(e.path());
             const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
             for (std::sregex_iterator it(text.begin(), text.end(), declared), end; it != end; ++it) keys.insert((*it)[1]);

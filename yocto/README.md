@@ -56,7 +56,8 @@ because they are GPL-2.0-or-later.
 The `forgecpp` recipe also builds forge-hub (`PACKAGECONFIG` "hub", on by
 default) into its own package. Add it to an image to get the device dashboard
 on port 80; every forgecpp application on the device registers with it by
-itself and gets restarted by the policy in its own `[hub]` section:
+itself (configured by its own `[hub]` section) and is restarted by its systemd
+unit, whose state the hub shows:
 
 ```
 IMAGE_INSTALL:append = " forgecpp-hub"
@@ -131,7 +132,8 @@ DEPENDS = "forgecpp forgecpp-protoc-native"
 inherit cmake systemd
 
 # the application's .proto files (forge_add_proto) are compiled with this protoc
-EXTRA_OECMAKE += "-DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/forgecpp-protoc"
+EXTRA_OECMAKE += "-DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/forgecpp-protoc \
+                  -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir}"
 
 SYSTEMD_SERVICE:${PN} = "pump-ctl.service"
 ```
@@ -142,7 +144,9 @@ forge_add_app(pump-ctl
     SOURCES src/main.cpp
     CONFIG  config/pump-ctl.toml        # -> /etc/pump-ctl/pump-ctl.toml
     WEB     web                         # pages compiled into the binary
-    SERVICE pump-ctl.service)           # -> /usr/lib/systemd/system
+    # generated pump-ctl.service (-> ${systemd_system_unitdir} with
+    # -DFORGE_SYSTEMD_UNIT_DIR, as the recipes here pass it) with its restart policy:
+    RESTART on-failure MAX_RESTARTS 3 RESTART_WINDOW 600 WATCHDOG 30)
 ```
 
 The web pages are embedded in the binary, so nothing else has to be

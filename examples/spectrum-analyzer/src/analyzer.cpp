@@ -103,7 +103,9 @@ void Analyzer::setup_config(forge::config::Schema& s) {
     s.string("analyzer.state_file", "", "Keep measurement settings across restarts (JSON)");
     s.number("analyzer.sweep_rate_hz", 61.44e6, "Sample rate of swept spans").range(2.083334e6, 61.44e6).unit("Hz");
     s.number("analyzer.usable_fraction", 0.8, "Part of each capture used in swept mode").range(0.3, 0.95);
-    s.integer("analyzer.settle_buffers", 3, "Buffers dropped after a retune (default 3 iio, 1 sim)").range(0, 100);
+    s.integer("analyzer.settle_buffers", 3, "Buffers dropped after a retune (default: 3 for iio, 1 for sim and radio)")
+        .range(0, 100)
+        .computed();  // depends on the backend: not filled in from the schema
     // initial measurement setup
     s.number("analyzer.center_hz", 2440e6, "Center frequency").range(kMinFreq, kMaxFreq).unit("Hz");
     s.number("analyzer.span_hz", 100e6, "Span").range(10e3, kMaxFreq - kMinFreq).unit("Hz");
@@ -203,7 +205,7 @@ void Analyzer::load(const forge::Config& cfg) {
     s.channel_bw_hz = std::max(1e3, j.value("channel_bw_hz", s.channel_bw_hz));
     s.obw_percent = std::clamp(j.value("obw_percent", s.obw_percent), 50.0, 99.99);
     s.update_hz = std::clamp(j.value("update_hz", s.update_hz), 1.0, 30.0);
-    s.settle_buffers = j.value("settle_buffers", backend_kind_ == "iio" ? std::size_t{3} : std::size_t{1});
+    s.settle_buffers = j.value("settle_buffers", backend_kind_ == "iio" ? std::size_t{3} : std::size_t{1});  // computed default
     // validate names early: a bad config should fail at start-up, not in the engine
     radio::dsp::parse_window(s.window);
     parse_detector(s.detector);

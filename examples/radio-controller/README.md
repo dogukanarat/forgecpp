@@ -11,7 +11,7 @@ control panel, `forgectl`, the console and telnet.
 clients  <-- PUB  [forge].data    5555  "iq" IqBlock     <--  RX thread  <--  cf-ad9361-lpc (RX DMA)   rx_channels
 analyzer <--                            "rx1"/"rx2"      <--  RX thread      (shared channels)         tap_rx
 clients  --> PULL [zmq].tx        5556  "tx" TxBlock     -->  TX thread  -->  cf-ad9361-dds-core-lpc   tx_channel
-clients  <-> REP  [forge].control 5557  Request/Reply    -->  main loop  -->  ad9361-phy (LO, rate, gain, ...)
+clients  <-> ROUTER [forge].control 5557 Request/Reply   -->  main loop  -->  ad9361-phy (LO, rate, gain, ...)
 clients  <-- PUB  [forge].events  5559  state, alarms, logs, audit, health, metrics
 browser  <-> HTTP :8080  /  spectrum + waterfall + controls,  /forge/  control panel
 telnet   <-> 2323  console
@@ -153,7 +153,7 @@ register), `radio.temperature` (above `temperature_alarm_c`).
 `clients/` (installed to `share/radio-controller/clients`, need `pyzmq`,
 `numpy` and `protobuf`; `forge.v1` comes with forgecpp and `radio.v1` with
 radio-controller, both in site-packages; from build directories set
-`PYTHONPATH=<forgecpp build>/python:<build>/examples/common/ad936x/python`):
+`PYTHONPATH=<forgecpp build>/python:<build>/examples/radio-controller/ad936x/python`):
 
 ```sh
 forgectl -e tcp://radio:5557 set rx_lo_mhz 2437            # control

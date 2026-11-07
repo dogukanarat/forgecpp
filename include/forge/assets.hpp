@@ -1,7 +1,7 @@
 #pragma once
 // Static web assets compiled into the binary.
 //
-// forge_add_web(<target> DIR web) (or force_add_app(... WEB web)) turns every
+// forge_add_web(<target> DIR web) (or forge_add_app(... WEB web)) turns every
 // file under web/ into an Asset and registers it at startup; the HTTP server
 // then serves them from memory. No files need to be deployed next to the binary.
 

@@ -81,7 +81,7 @@ Build
   --sanitize LIST       Build everything with sanitizers: address,undefined or thread (debugging;
                         use a separate --prefix, the libraries are instrumented too)
   --without-iio         Skip libiio (the AD9364 examples then only have their simulator)
-  --without-hub         Do not build forge-hub (the device dashboard and supervisor)
+  --without-hub         Do not build forge-hub (the dashboard of the device's applications)
   --iio-usb             Build libiio's USB backend (needs libusb-1.0)
   --no-rpath            Do not set \$ORIGIN rpaths on installed libraries
   --cmake-arg ARG       Extra argument passed to every CMake configure (repeatable)

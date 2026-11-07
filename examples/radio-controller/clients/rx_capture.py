@@ -8,7 +8,7 @@
 Messages: [topic][forge.v1.Header][radio.v1.IqBlock][cs16 samples].
 Needs the forge-v1 Python package (installed with forgecpp) and radio.v1
 (installed with radio-controller); from build directories set PYTHONPATH to
-<forgecpp build>/python:<build>/examples/common/ad936x/python.
+<forgecpp build>/python:<build>/examples/radio-controller/ad936x/python.
 """
 import argparse
 import sys

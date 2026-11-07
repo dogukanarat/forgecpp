@@ -37,7 +37,7 @@ DEPENDS = "openssl zlib libxml2 forgecpp-protoc-native"
 
 inherit cmake pkgconfig systemd python3-dir
 
-# forge-hub, the device dashboard and supervisor (port 80): built with the
+# forge-hub, the dashboard of the device's applications (port 80): built with the
 # "hub" PACKAGECONFIG, installed only when the image asks for it:
 #   IMAGE_INSTALL:append = " forgecpp-hub"
 # Remove it from the build with PACKAGECONFIG:remove:pn-forgecpp = "hub".

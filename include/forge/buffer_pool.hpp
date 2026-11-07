@@ -1,10 +1,11 @@
 #pragma once
 // Recycled buffers for hot paths: no allocation per message once warm.
 //
-//   forge::BufferPool<std::int16_t> pool(2 * 65536, 16);   // 16 buffers of 128 k int16
-//   auto buf = pool.acquire();            // shared_ptr<std::vector<int16_t>>, sized
+//   auto pool = forge::BufferPool<std::int16_t>::create(2 * 65536, 16);  // 16 buffers of 128 k int16
+//   auto buf = pool->acquire();           // shared_ptr<std::vector<int16_t>>, sized
 //   fill(buf->data());
-//   stream.publish(msg, buf);             // returns to the pool when the last user drops it
+//   // zero copy: the stream holds `buf` until sent, then it returns to the pool
+//   stream.publish(msg, buf, buf->data(), buf->size() * sizeof(std::int16_t));
 //
 // acquire() never blocks: when every buffer is in use it allocates a new one
 // (counted in allocations()) and the pool keeps up to `max_free` for later.

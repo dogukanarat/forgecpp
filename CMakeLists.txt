@@ -20,7 +20,7 @@ option(FORGECPP_BUILD_EXAMPLES  "Build the example applications"       ${FORGECP
 option(FORGECPP_BUILD_TESTS     "Build the unit tests (needs doctest)"  ${FORGECPP_TOP_LEVEL})
 option(FORGECPP_INSTALL_TOOLS   "Install the forgecpp-new scaffolder"   ON)
 option(FORGECPP_WARNINGS        "Enable extra compiler warnings"        ${FORGECPP_TOP_LEVEL})
-option(FORGECPP_BUILD_HUB       "Build forge-hub (device dashboard and supervisor)" ${FORGECPP_TOP_LEVEL})
+option(FORGECPP_BUILD_HUB       "Build forge-hub (dashboard of the device's applications)" ${FORGECPP_TOP_LEVEL})
 # ZeroMQ and protobuf are core dependencies: every application speaks forge.v1.
 set(FORGECPP_WITH_ZMQ ON CACHE STRING "Deprecated: ZeroMQ is always used")
 set(FORGECPP_SANITIZE "" CACHE STRING

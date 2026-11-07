@@ -143,12 +143,15 @@ Generated project:
 
 ```
 my-daemon/
-├── CMakeLists.txt              find_package(forgecpp) + forge_add_app() + forge_add_test()
-├── src/main.cpp                forge::Application subclass (controls in setup_web)
+├── CMakeLists.txt              find_package(forgecpp) + forge_add_app() (systemd unit with
+│                               its restart policy) + forge_proto + forge_add_test()
+├── src/my_daemon.hpp, main.cpp forge::Application subclass (schema, controls, commands, stream)
+├── proto/my_daemon/v1/my_daemon.proto   its own messages (a "ticks" stream)
 ├── web/index.html              the application's own page (embedded in the binary)
 ├── config/my-daemon.toml       default configuration
-├── systemd/my-daemon.service.in  Type=notify, watchdog, reload
-└── tests/test_my_daemon.cpp    doctest
+├── tests/test_my_daemon.cpp    doctest + forge::testing::AppRunner
+├── clients/watch.py            Python client of the stream (forge.v1 package)
+└── README.md
 ```
 
 In your own CMake project:
@@ -856,7 +859,8 @@ them that way. Both use `examples/common/ad936x` (libiio backend, simulator,
 FFT/windows).
 
 Every example has a generated systemd unit next to its binary
-(`build/forgecpp/examples/<name>.service`) with a restart policy that suits it:
+(`build/forgecpp/examples/<name>.service`, `.../examples/<name>/<name>.service`
+for radio-controller and spectrum-analyzer) with a restart policy that suits it:
 hello on-failure without a watchdog, sensor-service and pipeline on-failure
 with a watchdog, thermostat `always`, radio-controller and spectrum-analyzer
 on-failure (3 in 10 minutes) with a 30 s watchdog.
@@ -887,7 +891,7 @@ src/web/           built-in control panel, forge.js, forge.css (embedded in the 
 third_party/       submodules
 cmake/             package config, pkg-config, forge_add_app/forge_add_web/forge_add_test
 tools/             forgecpp-new (project scaffolder), forgectl (forge.v1 client)
-hub/               forge-hub: device dashboard and supervisor (a product, not an example)
+hub/               forge-hub: device dashboard and registry (a product, not an example)
 examples/          hello, sensor-service, pipeline (multi-threaded), thermostat (web site),
                    radio-controller (AD9364 over libiio + ZeroMQ),
                    spectrum-analyzer (AD936x spectrum analyzer), common/ad936x

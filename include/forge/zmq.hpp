@@ -9,7 +9,8 @@
 //   frame 3: blob    (optional raw bytes, e.g. IQ samples, described by the body)
 //
 // Control requests and replies are single frames: forge.v1.Request / Reply
-// (a REP socket also accepts the older JSON commands, see ControlService).
+// on [forge].control, a ROUTER socket with worker threads (it also accepts the
+// older, deprecated JSON commands, see ControlService).
 //
 // Building blocks:
 //   Publisher  PUB socket shared by many streams, thread-safe, with per-topic
@@ -19,10 +20,10 @@
 //              (its own streams).
 //   Sender     PUB or PUSH socket used from one thread
 //   Receiver   SUB or PULL with its own thread; restores the trace context
-//   Server     request/reply (REP) with its own thread
+//   Server     request/reply for REQ clients: ROUTER, an I/O thread and a pool of workers
 //   Client     forge.v1 control client (REQ) with timeout and reconnect
 //
-//   auto& spectrum = app.streams().add("spectrum", "sa.v1.Spectrum", {.max_rate_hz = 20});
+//   auto& spectrum = app.stream("spectrum", "sa.v1.Spectrum", {.max_rate_hz = 20});
 //   if (spectrum.wanted()) spectrum.publish(frame);           // any thread
 //
 //   forge::zmq::Receiver sub(forge::zmq::Receiver::Kind::sub, "tcp://host:5558",
