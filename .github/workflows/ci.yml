@@ -169,6 +169,38 @@ jobs:
         run: ./install.sh --uninstall --prefix "$HOME/forgecpp" && test -z "$(find "$HOME/forgecpp" -type f)"
 
   # Everything (the bundled libraries too) built with sanitizers, all tests run.
+  # The applications as real systemd units: restarts, start-limit-hit, forge-hub's view and buttons.
+  systemd:
+    name: systemd units and forge-hub
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-systemd-${{ github.sha }}
+          restore-keys: ccache-systemd-
+      - name: Install forgecpp and forge-hub, then radio-controller with its generated unit
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 400M
+        run: |
+          ./install.sh --prefix /usr/local --without-iio \
+            --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake -S examples/radio_controller -B build/radio-controller -G Ninja -DCMAKE_PREFIX_PATH=/usr/local \
+            -DBUILD_TESTING=OFF -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          ninja -C build/radio-controller
+          sudo cmake --install build/radio-controller
+          sudo ldconfig
+      - name: Crash, restart, start-limit-hit, the hub's restart and stop
+        run: sudo .github/scripts/systemd-units.sh
+
   sanitizers:
     strategy:
       fail-fast: false
