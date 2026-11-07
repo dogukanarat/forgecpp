@@ -12,3 +12,7 @@ forge_add_test(forgecpp_tests
         test_scheduler.cpp
         test_thread_pool.cpp
         test_web.cpp)
+
+if(TARGET forgecpp_zmq)
+    forge_add_test(forgecpp_zmq_tests SOURCES test_zmq.cpp LIBS forgecpp_zmq)
+endif()

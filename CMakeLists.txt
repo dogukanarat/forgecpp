@@ -20,6 +20,8 @@ option(FORGECPP_BUILD_EXAMPLES  "Build the example applications"       ${FORGECP
 option(FORGECPP_BUILD_TESTS     "Build the unit tests (needs doctest)"  ${FORGECPP_TOP_LEVEL})
 option(FORGECPP_INSTALL_TOOLS   "Install the forgecpp-new scaffolder"   ON)
 option(FORGECPP_WARNINGS        "Enable extra compiler warnings"        ${FORGECPP_TOP_LEVEL})
+set(FORGECPP_WITH_ZMQ AUTO CACHE STRING "Build forgecpp::zmq (ON, OFF or AUTO = if ZeroMQ is found)")
+option(FORGECPP_BUILD_APPS      "Build the bundled daemons in apps/"    OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -47,6 +49,26 @@ find_package(nlohmann_json   CONFIG REQUIRED)
 find_package(tomlplusplus    CONFIG REQUIRED)
 find_package(httplib         CONFIG REQUIRED)
 find_package(doctest         CONFIG)
+
+# Optional: ZeroMQ messaging (forgecpp::zmq).
+set(FORGECPP_HAS_ZMQ OFF)
+if(NOT FORGECPP_WITH_ZMQ STREQUAL "OFF")
+    if(FORGECPP_WITH_ZMQ STREQUAL "ON")
+        find_package(cppzmq CONFIG REQUIRED)
+    else()
+        find_package(cppzmq CONFIG QUIET)
+    endif()
+    if(cppzmq_FOUND)
+        set(FORGECPP_HAS_ZMQ ON)
+        # cppzmq-static is the variant for a static libzmq build.
+        if(TARGET libzmq)
+            set(FORGECPP_CPPZMQ_TARGET cppzmq)
+        else()
+            set(FORGECPP_CPPZMQ_TARGET cppzmq-static)
+        endif()
+    endif()
+endif()
+message(STATUS "forgecpp: ZeroMQ support ${FORGECPP_HAS_ZMQ}")
 
 # BS::thread_pool is a single header without a CMake package; we ship it
 # ourselves next to the forgecpp headers.
@@ -120,21 +142,44 @@ if(doctest_FOUND)
     target_link_libraries(forgecpp_testing PUBLIC forgecpp doctest::doctest)
 endif()
 
+# ZeroMQ messaging: a separate library so daemons that do not use it do not
+# link libzmq.
+if(FORGECPP_HAS_ZMQ)
+    add_library(forgecpp_zmq src/zmq.cpp)
+    add_library(forgecpp::zmq ALIAS forgecpp_zmq)
+    set_target_properties(forgecpp_zmq PROPERTIES
+        EXPORT_NAME zmq
+        VERSION   ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR})
+    target_link_libraries(forgecpp_zmq PUBLIC forgecpp ${FORGECPP_CPPZMQ_TARGET})
+    if(FORGECPP_WARNINGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(forgecpp_zmq PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
 # ---------------------------------------------------------------------------
-# Examples / tests
+# Examples / tests / apps
 # ---------------------------------------------------------------------------
+
+# enable_testing() must come before the subdirectories that add tests (apps/).
+if(FORGECPP_BUILD_TESTS AND NOT doctest_FOUND)
+    message(WARNING "doctest not found: unit tests are disabled")
+    set(FORGECPP_BUILD_TESTS OFF)
+endif()
+if(FORGECPP_BUILD_TESTS)
+    enable_testing()
+endif()
 
 if(FORGECPP_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
+if(FORGECPP_BUILD_APPS)
+    add_subdirectory(apps)
+endif()
+
 if(FORGECPP_BUILD_TESTS)
-    if(NOT doctest_FOUND)
-        message(WARNING "doctest not found: unit tests are disabled")
-    else()
-        enable_testing()
-        add_subdirectory(tests)
-    endif()
+    add_subdirectory(tests)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -147,6 +192,9 @@ set(FORGECPP_HAS_TESTING OFF)
 if(TARGET forgecpp_testing)
     list(APPEND _forge_targets forgecpp_testing)
     set(FORGECPP_HAS_TESTING ON)
+endif()
+if(TARGET forgecpp_zmq)
+    list(APPEND _forge_targets forgecpp_zmq)
 endif()
 
 install(TARGETS ${_forge_targets}

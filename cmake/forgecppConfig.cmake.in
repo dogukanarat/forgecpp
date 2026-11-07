@@ -13,6 +13,12 @@ find_dependency(httplib         CONFIG)
 
 # Private dependency, but required by the export set for static builds.
 find_dependency(replxx          CONFIG)
+# Needed for forgecpp::zmq.
+if(@FORGECPP_HAS_ZMQ@)
+    find_dependency(cppzmq      CONFIG)
+endif()
+set(forgecpp_zmq_FOUND @FORGECPP_HAS_ZMQ@)
+
 # Needed for forgecpp::testing.
 if(@FORGECPP_HAS_TESTING@)
     find_dependency(doctest     CONFIG)

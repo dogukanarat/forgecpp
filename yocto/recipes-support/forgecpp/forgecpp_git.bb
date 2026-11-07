@@ -7,10 +7,17 @@ SECTION = "libs"
 # forgecpp (MIT) + bundled: spdlog, nlohmann/json, toml++, cpp-httplib, doctest,
 # BS::thread_pool (MIT), CLI11 (BSD-3-Clause), replxx (BSD-3-Clause),
 # moodycamel::ConcurrentQueue (BSD-2-Clause or BSL-1.0).
-LICENSE = "MIT & BSD-3-Clause & BSD-2-Clause"
+# libzmq: MPL-2.0. libiio: LGPL-2.1-or-later, its command line tools GPL-2.0-or-later
+# (packaged separately in ${PN}-iio-tools).
+LICENSE = "MIT & BSD-3-Clause & BSD-2-Clause & MPL-2.0 & LGPL-2.1-or-later & GPL-2.0-or-later"
+LICENSE:${PN} = "MIT & BSD-3-Clause & BSD-2-Clause & MPL-2.0 & LGPL-2.1-or-later"
+LICENSE:${PN}-iio-tools = "GPL-2.0-or-later"
 LIC_FILES_CHKSUM = " \
     file://LICENSE;md5=d651bd6255f4ea85c3b1b170b8dd19c6 \
     file://third_party/CLI11/LICENSE;md5=744e78b25a90f01b35b087d9fb985ed4 \
+    file://third_party/libzmq/LICENSE;md5=9741c346eef56131163e13b9db1241b3 \
+    file://third_party/libiio/COPYING.txt;md5=7c13b3376cea0ce68d2d2da0a1b3a72c \
+    file://third_party/libiio/COPYING_GPL.txt;md5=b234ee4d69f5fce4486a80fdaf4a4263 \
 "
 
 SRC_URI = "gitsm://github.com/dogukanarat/forgecpp.git;protocol=https;branch=master"
@@ -20,7 +27,7 @@ PV = "0.2.0+git${SRCPV}"
 
 S = "${WORKDIR}/git"
 
-DEPENDS = "openssl zlib"
+DEPENDS = "openssl zlib libxml2"
 
 inherit cmake pkgconfig
 
@@ -54,8 +61,9 @@ do_install() {
 
 # Headers, CMake packages, pkg-config files and the static test helper are
 # development files; libforgecpp, libspdlog and libreplxx are runtime.
-PACKAGES =+ "${PN}-tools"
+PACKAGES =+ "${PN}-tools ${PN}-iio-tools"
 FILES:${PN}-tools = "${bindir}/forgecpp-new"
+FILES:${PN}-iio-tools = "${bindir}/iio_*"
 RDEPENDS:${PN}-tools = "bash"
 FILES:${PN}-dev += "${datadir}/cmake ${libdir}/cmake ${datadir}/pkgconfig ${datadir}/licenses"
 FILES:${PN}-staticdev += "${libdir}/libforgecpp_testing.a"

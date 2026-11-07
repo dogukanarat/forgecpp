@@ -271,6 +271,12 @@ int Application::run(int argc, char** argv) {
                       version_string, ::getpid(), pool_->get_thread_count());
         if (!cfg.source().empty()) logger_->info("configuration: {}", cfg.source().string());
 
+        // The control registry exists even without HTTP: the console and
+        // other channels (e.g. forge::zmq::serve_application) use it too.
+        dashboard_ = std::make_unique<web::Dashboard>(cfg.get_or<std::string>("web.title", info_.name));
+        setup_web(*dashboard_);
+        for (auto& h : hooks_.web) h(*this, *dashboard_);
+
         create_http(cfg);
         create_console(cfg);
 
@@ -282,7 +288,7 @@ int Application::run(int argc, char** argv) {
             const auto port = cfg.get_or<int>("http.port", 8080);
             http_->start(host, port);
         }
-        if (dashboard_) {
+        if (web_events_) {
             const auto refresh = std::max(cfg.get_or<int>("web.refresh_ms", 500), 50);
             every(std::chrono::milliseconds(refresh), [this] { push_web_state(); });
             logger_->info("web dashboard: http://{}:{}/forge/",
@@ -438,7 +444,6 @@ void Application::create_http(const Config& cfg) {
 void Application::create_web(const Config& cfg) {
     if (!cfg.get_or<bool>("web.enabled", true)) return;
 
-    dashboard_ = std::make_unique<web::Dashboard>(cfg.get_or<std::string>("web.title", info_.name));
     web_events_ = std::make_shared<http::EventStream>(cfg.get_or<std::size_t>("web.max_clients", 8));
     web_events_->on_connect([this] {
         std::vector<http::EventStream::Message> greeting;
@@ -518,8 +523,6 @@ void Application::create_web(const Config& cfg) {
     // "/" shows the application's own index.html when there is one, else the dashboard.
     http_->get("/", [](const http::Request&, http::Response& res) { res.set_redirect("/forge/"); });
 
-    setup_web(*dashboard_);
-    for (auto& h : hooks_.web) h(*this, *dashboard_);
 }
 
 void Application::push_web_state() {

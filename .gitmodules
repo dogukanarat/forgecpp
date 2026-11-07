@@ -25,3 +25,12 @@
 [submodule "third_party/doctest"]
 	path = third_party/doctest
 	url = https://github.com/doctest/doctest.git
+[submodule "third_party/libzmq"]
+	path = third_party/libzmq
+	url = https://github.com/zeromq/libzmq.git
+[submodule "third_party/cppzmq"]
+	path = third_party/cppzmq
+	url = https://github.com/zeromq/cppzmq.git
+[submodule "third_party/libiio"]
+	path = third_party/libiio
+	url = https://github.com/analogdevicesinc/libiio.git

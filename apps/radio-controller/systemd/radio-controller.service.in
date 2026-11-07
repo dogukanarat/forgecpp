@@ -1,0 +1,16 @@
+[Unit]
+Description=AD9364 radio controller (forgecpp)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/radio-controller --config @CMAKE_INSTALL_FULL_SYSCONFDIR@/radio-controller/radio-controller.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+WatchdogSec=30
+StateDirectory=radio-controller
+
+[Install]
+WantedBy=multi-user.target

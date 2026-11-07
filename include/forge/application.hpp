@@ -162,7 +162,9 @@ public:
     Scheduler& scheduler();
     /// nullptr unless the HTTP server is enabled.
     http::Server* http() { return http_.get(); }
-    /// nullptr unless the web dashboard is enabled ([web].enabled, default on with HTTP).
+    /// Control registry declared in setup_web(); valid from on_start() until run()
+    /// returns, with or without HTTP. Served at /forge/ when the web UI is enabled,
+    /// and by the console and forge::zmq::serve_application().
     web::Dashboard* dashboard() { return dashboard_.get(); }
     /// Alarm list shown in the web UI (bell, banner, panel) and the console
     /// (`alarms`, `ack`). Thread-safe.

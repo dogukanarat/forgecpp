@@ -1,0 +1,45 @@
+# radio-controller configuration
+# Reload with: systemctl reload radio-controller   (or kill -HUP <pid>)
+
+[radio]
+backend = "sim"               # sim | iio  (also: --backend)
+uri = ""                      # iio: "local:" (on the board), "ip:192.168.2.1", "usb:1.2.5"; "" = libiio default
+timeout_ms = 2000
+buffer_size = 65536           # samples per RX/TX DMA buffer
+rx_enabled = true
+tx_enabled = false
+
+rx_lo_hz = 2412000000
+tx_lo_hz = 2412000000
+sample_rate_hz = 30720000     # 2.083334 .. 61.44 MSPS
+rx_bandwidth_hz = 18000000
+tx_bandwidth_hz = 18000000
+gain_mode = "slow_attack"     # manual | slow_attack | fast_attack | hybrid
+rx_gain_db = 30               # used in manual gain mode
+tx_attenuation_db = 10        # 0 .. 89.75
+
+state_file = ""               # e.g. "/var/lib/radio-controller/state.json": keep runtime changes across restarts
+spectrum_size = 1024          # FFT size for the web spectrum
+spectrum_hz = 5
+temperature_alarm_c = 75
+
+[radio.sim]
+loopback = true               # transmitted samples appear in RX (shifted by TX LO - RX LO)
+
+[zmq]
+rx = "tcp://*:5555"           # PUB: topic "iq", header JSON + cs16 samples
+tx = "tcp://*:5556"           # PULL: header JSON + cs16 samples ({"cyclic": true} repeats the frame)
+control = "tcp://*:5557"      # REP: JSON commands
+
+[http]
+enabled = true
+host = "0.0.0.0"
+port = 8080
+
+# [http.auth]
+# user = "admin"
+# password = "change-me"
+
+[web]
+title = "Radio controller"
+refresh_ms = 250

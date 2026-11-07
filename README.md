@@ -5,8 +5,8 @@ A **batteries-included** C++17 framework for Linux daemons and services.
 Best-in-class libraries are bundled as git submodules, installed with a single
 `install.sh`, and wired together into an application skeleton under the
 `forge::` namespace. Every daemon you build shares the same foundation:
-logging, configuration, CLI, thread pool, HTTP, **web UI**, console, signal
-handling and systemd integration.
+logging, configuration, CLI, thread pool, HTTP, **web UI**, **ZeroMQ**,
+console, signal handling and systemd integration.
 
 Applications are operated from web pages: you declare controls once in C++ and
 forgecpp publishes them as a ready-made control panel, a JSON API, live updates
@@ -63,11 +63,14 @@ kill -HUP $(pidof pump)            # reload the configuration
 | [toml++](https://github.com/marzer/tomlplusplus) | v3.4.0 | TOML configuration | `forge::Config` |
 | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | v0.65.0 | HTTP/HTTPS client and server | `forge::http::Server`, `forge::http::Client` |
 | [doctest](https://github.com/doctest/doctest) | v2.5.3 | Unit testing | `forge/testing.hpp`, `forge_add_test()` |
+| [libzmq](https://github.com/zeromq/libzmq) + [cppzmq](https://github.com/zeromq/cppzmq) | v4.3.5 / v4.11.0 | ZeroMQ messaging (pub/sub, push/pull, request/reply) | `forgecpp::zmq`, `forge/zmq.hpp` |
+| [libiio](https://github.com/analogdevicesinc/libiio) | v0.26 | Industrial I/O devices (ADI transceivers, ADCs, ...) | `apps/radio-controller` |
 
 ## Installation
 
-Requirements: CMake ≥ 3.16, a C++17 compiler (GCC ≥ 9 / Clang ≥ 10), git.
-Optional: `ninja`, OpenSSL (for HTTPS), zlib (for compression).
+Requirements: CMake ≥ 3.16, a C++17 compiler (GCC ≥ 9 / Clang ≥ 10), git,
+libxml2 (for libiio; skip with `--without-iio`).
+Optional: `ninja`, OpenSSL (for HTTPS), zlib (for compression), libusb-1.0 (`--iio-usb`).
 
 ```sh
 git clone --recursive https://github.com/dogukanarat/forgecpp.git
@@ -96,6 +99,8 @@ into the same prefix (each with its own `find_package` config), then builds
 | `--destdir DIR` | Stage the install under `DIR` (packaging) |
 | `--package [--arch A]` | Produce `forgecpp-<version>-<arch>.tar.gz` without touching the system |
 | `--without-ssl`, `--with-ssl`, `--without-zlib` | cpp-httplib features |
+| `--without-zmq`, `--without-iio`, `--iio-usb` | Skip ZeroMQ / libiio, or build libiio's USB backend |
+| `--apps` | Build and install the bundled daemons (`apps/`, e.g. `radio-controller`) |
 | `--libdir DIR` | e.g. `lib64` instead of `lib` |
 | `--skip-deps`, `--deps-only` | Only forgecpp / only the dependencies |
 | `--uninstall` | Remove everything that was installed |
@@ -395,6 +400,40 @@ HTTPS, put the application behind a reverse proxy or use cpp-httplib's
 controls are available through `controls`, `set <id> <value>`, `press <id>`,
 and alarms through `alarms` and `ack <id|all>` (with tab completion).
 
+### ZeroMQ (`forgecpp::zmq`)
+
+A separate library (link `forgecpp::zmq`, include `<forge/zmq.hpp>`), so
+daemons that do not need it do not pull in libzmq. Messages are multipart:
+**topic**, **JSON header**, optional **binary payload**.
+
+```cpp
+// fan-out (slow subscribers drop instead of stalling the others)
+forge::zmq::Sender pub(forge::zmq::Sender::Kind::pub, "tcp://*:5555");
+pub.send("iq", {{"seq", seq}, {"samples", n}}, samples.data(), bytes);
+pub.subscriptions();                                  // who is listening?
+
+// receive on a background thread
+forge::zmq::Receiver::Options opts;
+opts.topics = {"iq"};
+forge::zmq::Receiver sub(forge::zmq::Receiver::Kind::sub, "tcp://radio:5555",
+                         [this](forge::zmq::Message&& m) { post([this, m] { handle(m); }); }, opts);
+
+// lossless work distribution: Sender::Kind::push / Receiver::Kind::pull
+
+// JSON request/reply
+forge::zmq::Server server("tcp://*:5600", [](const forge::json& req) { return forge::json{{"pong", true}}; });
+forge::zmq::Client client("tcp://host:5600", 2s);     // timeout + automatic reconnect
+auto reply = client.call("ping");                     // throws forge::zmq::Error on failure
+```
+
+**Controls over ZeroMQ:** `forge::zmq::serve_application(app, "tcp://*:5557")`
+(call it in `on_start()`) exposes the same controls and alarms as the web UI
+and the console, with the same validation:
+`{"cmd":"set","id":"speed","value":1500}`, `get`, `state`, `ui`, `press`,
+`alarms`, `ack`, `info`, `ping`. The controls exist even when HTTP is
+disabled, so a headless daemon can be operated over ZeroMQ alone.
+`apps/radio-controller/clients/radioctl.py` is a ready-made command line client.
+
 ### Alarms (`forge::Alarms`)
 
 A persistent, HMI/SCADA-style alarm list for conditions that need operator
@@ -492,6 +531,20 @@ cd build/forgecpp/examples
 ./sensor_service -c sensor_service.toml -i --simulate-spikes
 ```
 
+## Bundled daemons
+
+| Daemon | What it does |
+|---|---|
+| [`apps/radio-controller`](apps/radio-controller/README.md) | Controls an **AD9364** through **libiio** (LO, sample rate, bandwidth, AGC/gain, TX attenuation) and streams IQ samples over **ZeroMQ** (RX via PUB, TX via PULL, JSON control via REP). Web UI with live spectrum and waterfall, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, and a hardware simulator for development without a board. |
+
+```sh
+./install.sh --apps
+radio-controller --backend sim                         # http://localhost:8080/
+radio-controller --backend iio --uri ip:192.168.2.1    # real AD936x via iiod
+```
+
+Each daemon is also a standalone CMake project and has its own Yocto recipe.
+
 ## Updating dependencies
 
 ```sh
@@ -509,12 +562,16 @@ third_party/       submodules
 cmake/             package config, pkg-config, forge_add_app/forge_add_web/forge_add_test
 tools/forgecpp-new project scaffolder
 examples/          hello, sensor_service, pipeline (multi-threaded), thermostat (web site)
+apps/              bundled daemons (radio-controller)
 tests/             doctest unit tests
-yocto/             bitbake recipe
+yocto/             bitbake recipes (forgecpp, radio-controller)
 install.sh, get.sh installation
 ```
 
 ## License
 
 MIT (see [LICENSE](LICENSE)). The bundled libraries come with their own
-licenses (MIT, BSD-2/3-Clause, BSL-1.0); see `third_party/*/LICENSE*`.
+licenses (MIT, BSD-2/3-Clause, BSL-1.0; libzmq MPL-2.0; libiio LGPL-2.1-or-later
+with GPL-2.0-or-later command line tools); see `third_party/*/LICENSE*` and
+`third_party/libiio/COPYING*.txt`. Link libzmq and libiio dynamically (the
+default) to keep the LGPL/MPL obligations simple.

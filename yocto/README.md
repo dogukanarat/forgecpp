@@ -15,6 +15,26 @@ libraries with the Yocto toolchain via `install.sh`.
 Extra `install.sh` options can be passed with `FORGECPP_INSTALL_ARGS`,
 e.g. `FORGECPP_INSTALL_ARGS = "--without-ssl"` or `"--static"`.
 
+The recipe builds ZeroMQ (forgecpp::zmq) and libiio as well; it needs
+`libxml2` for libiio's network/XML backends. The libiio command line tools
+(`iio_info`, `iio_attr`, ...) are packaged separately in `forgecpp-iio-tools`
+because they are GPL-2.0-or-later.
+
+## radio-controller
+
+`recipes-connectivity/radio-controller/radio-controller_git.bb` builds the
+AD9364 daemon from `apps/radio-controller` and configures it for the on-board
+radio (`backend = "iio"`, `uri = "local:"`) with its state kept in
+`/var/lib/radio-controller`. Override with `RADIO_URI = "ip:192.168.2.1"` etc.
+
+```
+IMAGE_INSTALL:append = " radio-controller forgecpp-iio-tools"
+```
+
+The device tree must describe the AD9364 (`adi,ad9364` with the AXI AD9361
+HDL cores), so that the kernel exposes `ad9361-phy`, `cf-ad9361-lpc` and
+`cf-ad9361-dds-core-lpc`; `iio_info -u local:` on the target should list them.
+
 ## Application recipes
 
 A project created with `forgecpp-new` builds in Yocto without changes:
@@ -72,9 +92,11 @@ has not yet been run in a full bitbake build.
   `S = "${WORKDIR}/git"`, which is correct up to scarthgap (5.0 LTS). Newer
   releases unpack sources elsewhere; adjust `S` there.
 - **Overlap with meta-oe:** forgecpp installs its own copies of the bundled
-  libraries (spdlog, nlohmann-json, CLI11, ...) into `/usr`. If an image also
-  pulls in the meta-oe recipes for the same libraries, bitbake reports files
-  installed by multiple recipes. Use one source for those libraries per image.
+  libraries (spdlog, nlohmann-json, CLI11, libzmq, cppzmq, libiio, ...) into
+  `/usr`. If an image also pulls in the meta-oe recipes for the same libraries,
+  bitbake reports files installed by multiple recipes. Use one source for those
+  libraries per image (e.g. `FORGECPP_INSTALL_ARGS = "--without-iio"` and
+  `DEPENDS += "libiio"` when the image already uses meta-oe's libiio).
 - **Reproducibility:** pin `SRCREV`; `${AUTOREV}` follows the branch.
 - **Init system:** systemd is supported out of the box. With sysvinit the
   daemons run fine (systemd notifications are no-ops), but you have to provide

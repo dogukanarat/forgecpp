@@ -29,6 +29,10 @@ DESTDIR_ARG="${DESTDIR:-}"
 LIBDIR=""
 WITH_SSL="auto"
 WITH_ZLIB="auto"
+WITH_ZMQ="ON"
+WITH_IIO="ON"
+IIO_USB="OFF"
+BUILD_APPS="OFF"
 BUILD_TESTS="OFF"
 RUN_TESTS="OFF"
 BUILD_EXAMPLES="OFF"
@@ -44,7 +48,7 @@ USE_SUDO="auto"
 QUIET="OFF"
 
 # name | source dir | extra cmake args
-DEPS=(spdlog CLI11 replxx concurrentqueue json tomlplusplus cpp-httplib doctest)
+DEPS=(spdlog CLI11 replxx concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq libiio)
 
 usage() {
     cat <<EOF
@@ -67,12 +71,16 @@ Build
   --without-ssl         Build cpp-httplib without OpenSSL (no HTTPS)
   --with-ssl            Require OpenSSL (fail if missing)
   --without-zlib        Build cpp-httplib without zlib compression
+  --without-zmq         Skip ZeroMQ (libzmq, cppzmq) and the forgecpp::zmq library
+  --without-iio         Skip libiio (radio-controller then only has its simulator)
+  --iio-usb             Build libiio's USB backend (needs libusb-1.0)
   --no-rpath            Do not set \$ORIGIN rpaths on installed libraries
   --cmake-arg ARG       Extra argument passed to every CMake configure (repeatable)
 
 Extras
   --tests               Build and run the forgecpp unit tests
   --examples            Build the example applications (in the build dir)
+  --apps                Build and install the bundled daemons (apps/, e.g. radio-controller)
   --package             Do not touch the system; stage into the build dir and
                         create forgecpp-<version>-<arch>.tar.gz (extract with tar -C /)
   --arch NAME           Architecture name used in the package file name
@@ -143,6 +151,10 @@ while [[ $# -gt 0 ]]; do
         --without-ssl)  WITH_SSL="OFF"; shift ;;
         --with-ssl)     WITH_SSL="ON"; shift ;;
         --without-zlib) WITH_ZLIB="OFF"; shift ;;
+        --without-zmq)  WITH_ZMQ="OFF"; shift ;;
+        --without-iio)  WITH_IIO="OFF"; shift ;;
+        --iio-usb)      IIO_USB="ON"; shift ;;
+        --apps)         BUILD_APPS="ON"; shift ;;
         --with-zlib)    WITH_ZLIB="ON"; shift ;;
         --no-rpath)     RPATH="OFF"; shift ;;
         --rpath)        RPATH="ON"; shift ;;
@@ -344,6 +356,19 @@ dep_args() {
                 OFF) echo "-DHTTPLIB_USE_ZLIB_IF_AVAILABLE=OFF" ;;
                 *)   echo "-DHTTPLIB_USE_ZLIB_IF_AVAILABLE=ON" ;;
             esac ;;
+        libzmq)
+            echo "-DBUILD_TESTS=OFF -DWITH_PERF_TOOL=OFF -DWITH_DOCS=OFF -DENABLE_DRAFTS=OFF"
+            echo "-DENABLE_PRECOMPILED=OFF -DWITH_LIBSODIUM=OFF -DENABLE_CURVE=OFF -DWITH_LIBBSD=OFF"
+            if [[ "${SHARED}" == "ON" ]]; then echo "-DBUILD_SHARED=ON -DBUILD_STATIC=OFF"
+            else echo "-DBUILD_SHARED=OFF -DBUILD_STATIC=ON"; fi ;;
+        cppzmq)
+            echo "-DCPPZMQ_BUILD_TESTS=OFF" ;;
+        libiio)
+            # Local (in-kernel IIO) + network (iiod, e.g. ip:192.168.2.1) + XML backends.
+            echo "-DBUILD_SHARED_LIBS=${SHARED} -DWITH_IIOD=OFF -DWITH_TESTS=ON -DWITH_EXAMPLES=OFF"
+            echo "-DWITH_DOC=OFF -DWITH_MAN=OFF -DPYTHON_BINDINGS=OFF -DCSHARP_BINDINGS=OFF -DCPP_BINDINGS=OFF"
+            echo "-DHAVE_DNS_SD=OFF -DWITH_SERIAL_BACKEND=OFF -DINSTALL_UDEV_RULE=OFF -DWITH_ZSTD=OFF"
+            echo "-DWITH_USB_BACKEND=${IIO_USB} -DOSX_PACKAGE=OFF" ;;
         doctest)
             echo "-DDOCTEST_WITH_TESTS=OFF -DDOCTEST_WITH_MAIN_IN_STATIC_LIB=ON" ;;
         *) ;;
@@ -405,6 +430,8 @@ echo
 
 if [[ "${SKIP_DEPS}" != "ON" ]]; then
     for dep in "${DEPS[@]}"; do
+        if [[ "${WITH_ZMQ}" == "OFF" && ( "${dep}" == "libzmq" || "${dep}" == "cppzmq" ) ]]; then continue; fi
+        if [[ "${WITH_IIO}" == "OFF" && "${dep}" == "libiio" ]]; then continue; fi
         # shellcheck disable=SC2046
         build_project "${dep}" "${TP_DIR}/${dep}" $(dep_args "${dep}")
     done
@@ -415,6 +442,8 @@ if [[ "${DEPS_ONLY}" != "ON" ]]; then
         "-DBUILD_SHARED_LIBS=${SHARED}" \
         "-DFORGECPP_BUILD_TESTS=${BUILD_TESTS}" \
         "-DFORGECPP_BUILD_EXAMPLES=${BUILD_EXAMPLES}" \
+        "-DFORGECPP_WITH_ZMQ=${WITH_ZMQ}" \
+        "-DFORGECPP_BUILD_APPS=${BUILD_APPS}" \
         "-DFORGECPP_WARNINGS=ON"
 
     if [[ "${RUN_TESTS}" == "ON" ]]; then
