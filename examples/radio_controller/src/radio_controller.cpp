@@ -337,17 +337,17 @@ void RadioController::control(const char* what, F&& fn) {
 // Lifecycle
 
 void RadioController::load_settings(const forge::Config& cfg) {
-    backend_kind_ = cli_backend_.empty() ? cfg.get_or<std::string>("radio.backend", "sim") : cli_backend_;
-    uri_ = cli_uri_.empty() ? cfg.get_or<std::string>("radio.uri", "") : cli_uri_;
-    timeout_ms_ = cfg.get_or<unsigned>("radio.timeout_ms", 2000);
-    state_file_ = cfg.get_or<std::string>("radio.state_file", "");
-    spectrum_size_ = cfg.get_or<std::size_t>("radio.spectrum_size", 1024);
+    backend_kind_ = cli_backend_.empty() ? cfg.value<std::string>("radio.backend") : cli_backend_;
+    uri_ = cli_uri_.empty() ? cfg.value<std::string>("radio.uri") : cli_uri_;
+    timeout_ms_ = cfg.value<unsigned>("radio.timeout_ms");
+    state_file_ = cfg.value<std::string>("radio.state_file");
+    spectrum_size_ = cfg.value<std::size_t>("radio.spectrum_size");
     if (!dsp::is_power_of_two(spectrum_size_)) throw forge::ConfigError("radio.spectrum_size must be a power of two");
-    temperature_alarm_c_ = cfg.get_or<double>("radio.temperature_alarm_c", 75);
-    sim_.loopback = cfg.get_or<bool>("radio.sim.loopback", true);
-    sim_.channels = std::clamp(cfg.get_or<unsigned>("radio.sim.channels", 1), 1u, 2u);
-    sim_.loopback_tx = std::clamp(cfg.get_or<unsigned>("radio.sim.loopback_tx", 1), 1u, 2u) - 1;
-    sim_.loopback_rx = std::clamp(cfg.get_or<unsigned>("radio.sim.loopback_rx", 1), 1u, 2u) - 1;
+    temperature_alarm_c_ = cfg.value<double>("radio.temperature_alarm_c");
+    sim_.loopback = cfg.value<bool>("radio.sim.loopback");
+    sim_.channels = std::clamp(cfg.value<unsigned>("radio.sim.channels"), 1u, 2u);
+    sim_.loopback_tx = std::clamp(cfg.value<unsigned>("radio.sim.loopback_tx"), 1u, 2u) - 1;
+    sim_.loopback_rx = std::clamp(cfg.value<unsigned>("radio.sim.loopback_rx"), 1u, 2u) - 1;
 
     // Channel roles (fixed at start-up; must fit the transceiver)
     const json radio = cfg.section("radio").to_json();
@@ -356,8 +356,8 @@ void RadioController::load_settings(const forge::Config& cfg) {
     const unsigned tx = channel_mask(radio, "tx_channel", 1);
     if (tx != 1 && tx != 2) throw forge::ConfigError("radio.tx_channel is one channel: 1 or 2");
     tx_channel_ = tx == 1 ? 0 : 1;
-    tap_hz_ = std::clamp(cfg.get_or<double>("radio.tap_hz", 20.0), 0.0, 1000.0);
-    tap_samples_ = cfg.get_or<std::size_t>("radio.tap_samples", 65536);
+    tap_hz_ = std::clamp(cfg.value<double>("radio.tap_hz"), 0.0, 1000.0);
+    tap_samples_ = cfg.value<std::size_t>("radio.tap_samples");
     if (tap_samples_ < 1024 || tap_samples_ > (1u << 22)) {
         throw forge::ConfigError("radio.tap_samples must be between 1024 and 4194304");
     }
@@ -400,7 +400,7 @@ void RadioController::on_start() {
     tx_opts.bind = true;
     tx_opts.socket.recv_hwm = 64;  // backpressure towards fast senders
     tx_receiver_ = std::make_unique<forge::zmq::Receiver>(
-        forge::zmq::Receiver::Kind::pull, cfg.get_or<std::string>("zmq.tx", "tcp://*:5556"),
+        forge::zmq::Receiver::Kind::pull, cfg.value<std::string>("zmq.tx"),
         [this](forge::zmq::Message&& m) { on_tx_frame(std::move(m)); }, tx_opts);
     logger()->info("zmq: streams on {}, TX input on {}", data_endpoint(), tx_endpoint());
     logger()->info("channels: listens to {}, drives TX{}, shares {}", channel_list(rx_mask_, "RX"), tx_channel_ + 1,
@@ -409,7 +409,7 @@ void RadioController::on_start() {
     open_backend();
 
     every(500ms, [this] { telemetry(); });
-    const double spectrum_hz = std::clamp(cfg.get_or<double>("radio.spectrum_hz", 5.0), 0.5, 30.0);
+    const double spectrum_hz = std::clamp(cfg.value<double>("radio.spectrum_hz"), 0.5, 30.0);
     every(std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / spectrum_hz)),
           [this] { update_spectrum(); });
     every(5s, [this] {

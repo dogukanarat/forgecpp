@@ -59,8 +59,8 @@ std::string Caller::describe() const {
 
 void Auth::load(const Config& cfg) {
     users_.clear();
-    enabled_ = cfg.get_or<bool>("auth.enabled", false);
-    default_role_ = parse_role(cfg.get_or<std::string>("auth.default_role", "viewer"));
+    enabled_ = cfg.value<bool>("auth.enabled");
+    default_role_ = parse_role(cfg.value<std::string>("auth.default_role"));
     const auto users = cfg.section("auth.users").to_json();
     if (users.is_object()) {
         for (const auto& [name, u] : users.items()) {

@@ -326,11 +326,19 @@ Unknown keys are reported with a suggestion (`htpp.port` → did you mean
 reload) with a clear message. Applications declare their own keys in
 `setup_config(forge::config::Schema&)`.
 
+A default is written once, in the declaration: after loading, every declared
+key the file leaves out is filled in with its default (`--print-config` shows
+them), so declared keys are read with `cfg.value<T>("key")`, never with
+`get_or("key", <the default again>)` (a test of forgecpp checks its sources for
+that). `get_or` is for keys nobody declared. A default that depends on the
+environment is marked `.computed()` and not filled in.
+
 ### `forge::Config` (toml++ + nlohmann/json)
 
 ```cpp
 auto cfg = forge::Config::load_file("/etc/app/app.toml");
-int port   = cfg.get_or<int>("http.port", 8080);            // default when missing
+int port   = cfg.value<int>("http.port");                  // declared key: the schema's default
+int extra  = cfg.get_or<int>("my.extra", 3);                // undeclared key: default when missing
 auto name  = cfg.require<std::string>("device.name");       // ConfigError when missing
 auto hosts = cfg.get_or<std::vector<std::string>>("peers", {});
 auto first = cfg.get<std::string>("servers[0].host");       // std::optional

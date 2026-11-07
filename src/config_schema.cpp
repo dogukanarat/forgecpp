@@ -73,6 +73,11 @@ Key& Key::required(bool r) {
     is_required = r;
     return *this;
 }
+Key& Key::computed(bool c) {
+    is_computed = c;
+    return *this;
+}
+
 Key& Key::secret(bool s) {
     is_secret = s;
     return *this;
@@ -194,6 +199,31 @@ Schema::Result Schema::validate(const Config& cfg) const {
                                           : fmt::format("{}: unknown key (did you mean {}?)", path, best));
     }
     return r;
+}
+
+void Schema::apply_defaults(Config& cfg) const {
+    for (const auto& [path, k] : keys_) {
+        if (k.type == Type::table || k.type == Type::any || k.default_value.is_null() || k.is_computed) continue;
+        if (cfg.contains(path)) continue;
+        if (k.default_value.is_array()) {
+            const bool scalars = std::all_of(k.default_value.begin(), k.default_value.end(),
+                                             [](const json& v) { return v.is_primitive() && !v.is_null(); });
+            if (!scalars) continue;
+        } else if (!k.default_value.is_primitive()) {
+            continue;
+        }
+        // Leave it to validation when a parent is not a table (e.g. `http = 5`).
+        bool parents_ok = true;
+        for (auto p = parent_of(path); !p.empty(); p = parent_of(p)) {
+            if (auto v = cfg.get<json>(p); v && !v->is_object()) {
+                parents_ok = false;
+                break;
+            }
+        }
+        if (!parents_ok) continue;
+        // A JSON scalar or array of scalars is a valid TOML value.
+        cfg.apply_override(path + "=" + k.default_value.dump());
+    }
 }
 
 std::string Schema::help() const {

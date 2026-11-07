@@ -2,7 +2,8 @@
 // TOML configuration built on toml++, with JSON export via nlohmann/json.
 //
 //   auto cfg = forge::Config::load_file("/etc/mydaemon/mydaemon.toml");
-//   int port      = cfg.get_or<int>("http.port", 8080);
+//   int port      = cfg.value<int>("http.port");           // declared key: default from the schema
+//   int extra     = cfg.get_or<int>("my.undeclared", 3);   // undeclared key
 //   auto name     = cfg.require<std::string>("device.name");
 //   auto peers    = cfg.get_or<std::vector<std::string>>("peers", {});
 //   cfg.apply_override("log.level=debug");   // e.g. from `-D log.level=debug`
@@ -56,6 +57,14 @@ public:
     T get_or(std::string_view path, T fallback) const {
         auto v = get<T>(path);
         return v ? std::move(*v) : std::move(fallback);
+    }
+
+    /// Value of a declared key: the file's, or the schema's default, which
+    /// forge::Application fills in (config::Schema::apply_defaults). Throws
+    /// ConfigError when missing (an undeclared key: use get_or).
+    template <class T>
+    T value(std::string_view path) const {
+        return require<T>(path);
     }
 
     /// Value at path; throws ConfigError when missing.

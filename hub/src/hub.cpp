@@ -160,13 +160,13 @@ void Hub::setup_console(forge::Console& c) {
 
 void Hub::on_start() {
     const auto cfg = config();
-    state_file_ = cfg.get_or<std::string>("registry.state_file", "");
-    tick_ms_ = cfg.get_or<int>("registry.tick_ms", 1000);
-    probe_interval_ms_ = cfg.get_or<int>("registry.probe_interval_ms", 2000);
-    probe_timeout_ms_ = cfg.get_or<int>("registry.probe_timeout_ms", 1500);
-    unresponsive_after_s_ = cfg.get_or<int>("registry.unresponsive_after_s", 5);
-    use_systemd_ = cfg.get_or<bool>("registry.systemd", true);
-    boot_id_ = boot_id(cfg.get_or<std::string>("registry.boot_id_file", "/proc/sys/kernel/random/boot_id"));
+    state_file_ = cfg.value<std::string>("registry.state_file");
+    tick_ms_ = cfg.value<int>("registry.tick_ms");
+    probe_interval_ms_ = cfg.value<int>("registry.probe_interval_ms");
+    probe_timeout_ms_ = cfg.value<int>("registry.probe_timeout_ms");
+    unresponsive_after_s_ = cfg.value<int>("registry.unresponsive_after_s");
+    use_systemd_ = cfg.value<bool>("registry.systemd");
+    boot_id_ = boot_id(cfg.value<std::string>("registry.boot_id_file"));
 
     {
         std::lock_guard lock(mutex_);
@@ -192,7 +192,7 @@ void Hub::on_start() {
     load_registry();
 
     registry_ = std::make_unique<forge::zmq::Server>(
-        cfg.get_or<std::string>("registry.listen", forge::hub::default_endpoint),
+        cfg.value<std::string>("registry.listen"),
         [this](std::string_view req) { return handle(req); });
     logger()->info("registry on {}", registry_->endpoint());
     apps_stream_ = &stream("apps", "forge.v1.AppList", {"latest", 2});

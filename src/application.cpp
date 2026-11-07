@@ -353,6 +353,7 @@ int Application::run(int argc, char** argv) {
     Config cfg;
     try {
         cfg = load_config();
+        schema_.apply_defaults(cfg);  // the schema is the one place defaults are written
     } catch (const std::exception& e) {
         std::cerr << info_.name << ": " << e.what() << "\n";
         return 1;
@@ -383,7 +384,7 @@ int Application::run(int argc, char** argv) {
 
     int rc = 0;
     try {
-        const auto workers = cfg.get_or<int>("threads.workers", 0);
+        const auto workers = cfg.value<int>("threads.workers");
         pool_ = std::make_unique<ThreadPool>(workers > 0 ? static_cast<std::size_t>(workers)
                                                          : std::thread::hardware_concurrency());
         scheduler_ = std::make_unique<Scheduler>([this](Scheduler::Task t) { post(std::move(t)); });
@@ -401,13 +402,13 @@ int Application::run(int argc, char** argv) {
         trace::set_thread_name("main");
 
         auth_.load(cfg);
-        request_timeout_ms_ = cfg.get_or<int>("forge.request_timeout_ms", 2000);
+        request_timeout_ms_ = cfg.value<int>("forge.request_timeout_ms");
         start_observability(cfg);
         control_ = std::make_unique<ControlService>(*this);
 
         // The control registry exists even without HTTP: the console and
         // other channels (ZeroMQ, forgectl, telnet) use it too.
-        dashboard_ = std::make_unique<web::Dashboard>(cfg.get_or<std::string>("web.title", info_.name));
+        dashboard_ = std::make_unique<web::Dashboard>(cfg.value<std::string>("web.title"));
         setup_web(*dashboard_);
         for (auto& c : components_) c->setup_web(*dashboard_);
         for (auto& h : hooks_.web) h(*this, *dashboard_);
@@ -423,18 +424,18 @@ int Application::run(int argc, char** argv) {
         for (auto& h : hooks_.start) h(*this);
 
         if (http_) {
-            const auto host = cfg.get_or<std::string>("http.host", "0.0.0.0");
-            const auto port = cfg.get_or<int>("http.port", 8080);
+            const auto host = cfg.value<std::string>("http.host");
+            const auto port = cfg.value<int>("http.port");
             http_->start(host, port);
         }
         if (web_events_) {
-            const auto refresh = std::max(cfg.get_or<int>("web.refresh_ms", 500), 50);
+            const auto refresh = std::max(cfg.value<int>("web.refresh_ms"), 50);
             every(std::chrono::milliseconds(refresh), [this] { push_web_state(); });
             logger_->info("web dashboard: http://{}:{}/forge/",
-                          is_loopback(cfg.get_or<std::string>("http.host", "0.0.0.0")) ? "127.0.0.1" : host_name(),
+                          is_loopback(cfg.value<std::string>("http.host")) ? "127.0.0.1" : host_name(),
                           http_->port());
         }
-        if (console_ && cfg.get_or<bool>("console.enabled", false)) console_->start();
+        if (console_ && cfg.value<bool>("console.enabled")) console_->start();
 
         if (auto wd = systemd::watchdog_interval()) {
             every(*wd / 2, [this] { watchdog_tick(); }, true);
@@ -520,18 +521,18 @@ Config Application::load_config() const {
 
 void Application::setup_logging(const Config& cfg) {
     log::Options o;
-    o.format = cfg.get_or<std::string>("log.format", o.format);
-    o.history = cfg.get_or<std::size_t>("log.history", o.history);
+    o.format = cfg.value<std::string>("log.format");
+    o.history = cfg.value<std::size_t>("log.history");
     o.name = info_.name;
-    o.level = cfg.get_or<std::string>("log.level", o.level);
-    o.pattern = cfg.get_or<std::string>("log.pattern", o.pattern);
-    o.console = cfg.get_or<bool>("log.console", o.console);
-    o.file = cfg.get_or<std::string>("log.file", o.file);
-    o.max_size_mb = cfg.get_or<std::size_t>("log.max_size_mb", o.max_size_mb);
-    o.max_files = cfg.get_or<std::size_t>("log.max_files", o.max_files);
-    o.syslog = cfg.get_or<bool>("log.syslog", o.syslog);
-    o.flush_level = cfg.get_or<std::string>("log.flush_level", o.flush_level);
-    o.flush_interval_s = cfg.get_or<int>("log.flush_interval_s", o.flush_interval_s);
+    o.level = cfg.value<std::string>("log.level");
+    o.pattern = cfg.value<std::string>("log.pattern");
+    o.console = cfg.value<bool>("log.console");
+    o.file = cfg.value<std::string>("log.file");
+    o.max_size_mb = cfg.value<std::size_t>("log.max_size_mb");
+    o.max_files = cfg.value<std::size_t>("log.max_files");
+    o.syslog = cfg.value<bool>("log.syslog");
+    o.flush_level = cfg.value<std::string>("log.flush_level");
+    o.flush_interval_s = cfg.value<int>("log.flush_interval_s");
     log::init(o);
     logger_ = log::get();
 }
@@ -568,20 +569,20 @@ void Application::stop_signal_thread() {
 }
 
 void Application::create_http(const Config& cfg) {
-    if (!cfg.get_or<bool>("http.enabled", false)) return;
+    if (!cfg.value<bool>("http.enabled")) return;
     http_ = std::make_unique<http::Server>();
-    http_->threads(static_cast<std::size_t>(std::max(cfg.get_or<int>("http.threads", 8), 2)));
+    http_->threads(static_cast<std::size_t>(std::max(cfg.value<int>("http.threads"), 2)));
 
     // Credentials: [auth] users (roles are checked per request by ControlService).
     // Anonymous callers get [auth].default_role, unless [auth].anonymous = false.
-    if (auth_.enabled() && !cfg.get_or<bool>("auth.anonymous", true)) {
+    if (auth_.enabled() && !cfg.value<bool>("auth.anonymous")) {
         http::Auth auth;
         auth.check = [this](const std::string& header) { return auth_.by_http_header(header).has_value(); };
         auth.public_paths.push_back("/metrics");
         http_->auth(auth);
-    } else if (!auth_.enabled() && !is_loopback(cfg.get_or<std::string>("http.host", "0.0.0.0"))) {
+    } else if (!auth_.enabled() && !is_loopback(cfg.value<std::string>("http.host"))) {
         logger_->warn("http: no [auth] configured - anyone who can reach port {} can use the API",
-                      cfg.get_or<int>("http.port", 8080));
+                      cfg.value<int>("http.port"));
     }
 
     http_->get("/health", [this](const http::Request& req, http::Response& res) {
@@ -624,9 +625,9 @@ void Application::create_http(const Config& cfg) {
 }
 
 void Application::create_web(const Config& cfg) {
-    if (!cfg.get_or<bool>("web.enabled", true)) return;
+    if (!cfg.value<bool>("web.enabled")) return;
 
-    web_events_ = std::make_shared<http::EventStream>(cfg.get_or<std::size_t>("web.max_clients", 8));
+    web_events_ = std::make_shared<http::EventStream>(cfg.value<std::size_t>("web.max_clients"));
     web_events_->on_connect([this] {
         std::vector<http::EventStream::Message> greeting;
         if (!stopping()) {
@@ -643,7 +644,7 @@ void Application::create_web(const Config& cfg) {
     // Pages: the built-in dashboard under /forge/, the application's own pages
     // (embedded with forge_add_web, or served from [web].root while developing).
     http_->assets(web::builtin_assets());
-    const auto root = cfg.get_or<std::string>("web.root", "");
+    const auto root = cfg.value<std::string>("web.root");
     if (!root.empty()) {
         if (!http_->mount("/", root)) throw ConfigError("web.root '" + root + "' is not a directory");
         logger_->info("web: serving pages from {}", root);
@@ -651,9 +652,9 @@ void Application::create_web(const Config& cfg) {
         http_->assets(web::registered_assets());
     }
 
-    if (cfg.get_or<bool>("web.logs", true)) {
-        auto sink = std::make_shared<WebLogSink>(web_events_, cfg.get_or<std::size_t>("web.log_history", 200));
-        sink->set_level(log::parse_level(cfg.get_or<std::string>("web.log_level", "info")));
+    if (cfg.value<bool>("web.logs")) {
+        auto sink = std::make_shared<WebLogSink>(web_events_, cfg.value<std::size_t>("web.log_history"));
+        sink->set_level(log::parse_level(cfg.value<std::string>("web.log_level")));
         web_log_sink_ = sink;
         log::add_sink(web_log_sink_);
     }
@@ -708,7 +709,7 @@ void Application::create_web(const Config& cfg) {
     http_->get_json(api + "/leases", [this](const http::Request&) { return control_->leases(); });
     // Card layouts of the pages (forge.layout in forge.js): kept on the device, so
     // every browser shows the same arrangement.
-    layout_file_ = cfg.get_or<std::string>("web.layout_file", "");
+    layout_file_ = cfg.value<std::string>("web.layout_file");
     if (layout_file_.empty()) layout_file_ = default_layout_file(info_.name);
     if (layout_file_ == "-") layout_file_.clear();
     if (!layout_file_.empty() && std::filesystem::exists(layout_file_)) {
@@ -890,8 +891,8 @@ void Application::create_console(const Config& cfg) {
     // The command registry always exists (telnet uses it); the local REPL
     // only runs with [console].enabled / -i.
     Console::Options o;
-    o.prompt = cfg.get_or<std::string>("console.prompt", info_.name + "> ");
-    o.history_file = cfg.get_or<std::string>("console.history", "");
+    o.prompt = cfg.value<std::string>("console.prompt");
+    o.history_file = cfg.value<std::string>("console.history");
     if (o.history_file.empty()) {
         if (const char* home = std::getenv("HOME")) {
             o.history_file = std::string(home) + "/." + info_.name + "_history";
@@ -1002,6 +1003,7 @@ void Application::do_reload() {
     Config fresh;
     try {
         fresh = load_config();
+        schema_.apply_defaults(fresh);
     } catch (const std::exception& e) {
         logger_->error("reload failed, keeping the current configuration: {}", e.what());
         return;
@@ -1014,7 +1016,7 @@ void Application::do_reload() {
         std::lock_guard lock(config_mutex_);
         config_ = fresh;
     }
-    request_timeout_ms_ = fresh.get_or<int>("forge.request_timeout_ms", 2000);
+    request_timeout_ms_ = fresh.value<int>("forge.request_timeout_ms");
     if (auto level = fresh.get<std::string>("log.level")) {
         try {
             log::set_level(*level);
@@ -1109,7 +1111,7 @@ zmq::Stream& Application::stream(const std::string& name, const std::string& typ
     std::lock_guard lock(data_mutex_);
     if (!data_pub_) {
         // No [forge].data configured: an ephemeral port, listed in Info.endpoints.
-        const auto ep = config().get_or<std::string>("forge.data", "");
+        const auto ep = config().value<std::string>("forge.data");
         data_pub_ = std::make_unique<zmq::Publisher>(ep.empty() ? "tcp://*:0" : ep);
         logger_->info("forge: streams on {}", data_pub_->endpoint());
     }
@@ -1216,7 +1218,7 @@ void Application::declare_framework_config(config::Schema& s) {
     s.boolean("console.enabled", false, "Run the console on the terminal (same as -i)");
     s.string("console.prompt", info_.name + "> ", "Prompt");
     s.string("console.history", "", "History file (default ~/.<app>_history)");
-    s.boolean("console.color", true, "Colors");
+    s.boolean("console.color", true, "Colors (default: on a terminal)").computed();
     s.string("console.telnet", "", "Telnet console HOST:PORT, e.g. \"0.0.0.0:2323\" (empty = off)");
     s.integer("console.telnet_max_sessions", 4, "Telnet sessions at once").range(1, 64);
     s.integer("console.telnet_idle_s", 0, "Close idle telnet sessions after (0 = never)").range(0, 86400).unit("s");
@@ -1294,11 +1296,11 @@ bool Application::validate_config(const Config& cfg, bool at_start) {
 }
 
 void Application::start_observability(const Config& cfg) {
-    trace::configure(cfg.get_or<bool>("trace.enabled", true), cfg.get_or<std::size_t>("trace.capacity", 65536));
-    audit_.configure(cfg.get_or<std::size_t>("audit.history", 500), cfg.get_or<std::string>("audit.file", ""));
+    trace::configure(cfg.value<bool>("trace.enabled"), cfg.value<std::size_t>("trace.capacity"));
+    audit_.configure(cfg.value<std::size_t>("audit.history"), cfg.value<std::string>("audit.file"));
 
-    if (cfg.get_or<bool>("crash.enabled", true)) {
-        std::string dir = cfg.get_or<std::string>("crash.dir", "");
+    if (cfg.value<bool>("crash.enabled")) {
+        std::string dir = cfg.value<std::string>("crash.dir");
         if (dir.empty()) {
             const char* state = std::getenv("STATE_DIRECTORY");  // systemd StateDirectory=
             dir = state ? std::string(state).substr(0, std::string(state).find(':')) : "/tmp";
@@ -1319,7 +1321,7 @@ void Application::start_observability(const Config& cfg) {
         }
         crash::install(info_.name, dir);
     }
-    if (cfg.get_or<bool>("process.mlockall", false)) {
+    if (cfg.value<bool>("process.mlockall")) {
         if (auto err = rt::lock_memory(); err.empty()) {
             logger_->info("memory locked (mlockall)");
         } else {
@@ -1363,7 +1365,7 @@ void Application::start_observability(const Config& cfg) {
 }
 
 void Application::start_messaging(const Config& cfg) {
-    const auto events = cfg.get_or<std::string>("forge.events", "");
+    const auto events = cfg.value<std::string>("forge.events");
     if (!events.empty()) {
         zmq::SocketOptions so;
         so.send_hwm = 1000;
@@ -1387,31 +1389,31 @@ void Application::start_messaging(const Config& cfg) {
         audit_.on_record([this](const v1::AuditRecord& r) { publish_event("audit", r); });
         health_.on_change([this](const v1::Health& h) { publish_event("health", h); });
         log_listener_ = log::add_listener([this](const v1::LogRecord& r) { publish_event("log", r); });
-        const auto interval = std::chrono::seconds(std::max(cfg.get_or<int>("forge.metrics_interval_s", 5), 1));
+        const auto interval = std::chrono::seconds(std::max(cfg.value<int>("forge.metrics_interval_s"), 1));
         every(interval, [this] { publish_event("metrics", metrics::registry().snapshot()); });
         logger_->info("forge: events on {}", events_pub_->endpoint());
     }
-    const auto data = cfg.get_or<std::string>("forge.data", "");
+    const auto data = cfg.value<std::string>("forge.data");
     if (!data.empty()) {
         std::lock_guard lock(data_mutex_);
         data_pub_ = std::make_unique<zmq::Publisher>(data);
         logger_->info("forge: streams on {}", data_pub_->endpoint());
     }
-    const auto control = cfg.get_or<std::string>("forge.control", "");
+    const auto control = cfg.value<std::string>("forge.control");
     if (!control.empty()) {
-        control_server_ = zmq::serve_control(*control_, control, cfg.get_or<int>("forge.control_workers", 2));
+        control_server_ = zmq::serve_control(*control_, control, cfg.value<int>("forge.control_workers"));
         logger_->info("forge: control on {}", control_server_->endpoint());
     }
 }
 
 void Application::start_telnet(const Config& cfg) {
-    const auto listen = cfg.get_or<std::string>("console.telnet", "");
+    const auto listen = cfg.value<std::string>("console.telnet");
     if (listen.empty() || !console_) return;
     Telnet::Options o;
     o.listen = listen;
-    o.max_sessions = cfg.get_or<std::size_t>("console.telnet_max_sessions", 4);
-    o.idle_s = cfg.get_or<unsigned>("console.telnet_idle_s", 0);
-    o.prompt = cfg.get_or<std::string>("console.prompt", info_.name + "> ");
+    o.max_sessions = cfg.value<std::size_t>("console.telnet_max_sessions");
+    o.idle_s = cfg.value<unsigned>("console.telnet_idle_s");
+    o.prompt = cfg.value<std::string>("console.prompt");
     o.banner = fmt::format("{} {} on {} (forgecpp {})", info_.name, info_.version, host_name(), version_string);
     telnet_ = std::make_unique<Telnet>(*console_, auth_, o);
     telnet_->start();
@@ -1419,7 +1421,7 @@ void Application::start_telnet(const Config& cfg) {
 }
 
 void Application::restore_state() {
-    state_file_ = config().get_or<std::string>("state.file", "");
+    state_file_ = config().value<std::string>("state.file");
     if (state_file_.empty() || !dashboard_) return;
     std::error_code ec;
     if (!std::filesystem::exists(state_file_, ec)) return;
@@ -1454,7 +1456,7 @@ void Application::save_state() {
 }
 
 void Application::watchdog_tick() {
-    const double grace = config().get_or<double>("health.watchdog_grace_s", 0);
+    const double grace = config().value<double>("health.watchdog_grace_s");
     if (grace > 0) {
         if (auto failed = health_.critical_failed_for(); failed && *failed > grace) {
             if (!watchdog_paused_) {
@@ -1595,10 +1597,10 @@ void Application::save_layouts() {
 }
 
 void Application::start_hub_client(const Config& cfg) {
-    if (!hub_registration_ || !cfg.get_or<bool>("hub.register", true)) return;
-    const auto endpoint = cfg.get_or<std::string>("hub.endpoint", hub::default_endpoint);
+    if (!hub_registration_ || !cfg.value<bool>("hub.register")) return;
+    const auto endpoint = cfg.value<std::string>("hub.endpoint");
     if (endpoint.empty()) return;
-    const auto retry = std::chrono::seconds(std::max(cfg.get_or<int>("hub.retry_s", 30), 0));
+    const auto retry = std::chrono::seconds(std::max(cfg.value<int>("hub.retry_s"), 0));
     hub_client_ = std::make_unique<hub::Client>(endpoint, retry, [this] {
         const auto c = config();
         v1::AppRegistration r;
@@ -1610,9 +1612,9 @@ void Application::start_hub_client(const Config& cfg) {
         for (const auto& [k, v] : endpoints()) {
             if (k != "http") (*r.mutable_endpoints())[k] = v;
         }
-        r.set_critical(c.get_or<bool>("hub.critical", false));
-        r.set_group(c.get_or<std::string>("hub.group", ""));
-        r.set_title(c.get_or<std::string>("hub.title", ""));
+        r.set_critical(c.value<bool>("hub.critical"));
+        r.set_group(c.value<std::string>("hub.group"));
+        r.set_title(c.value<std::string>("hub.title"));
         r.set_unit(hub::unit_of(::getpid()));
         r.set_forgecpp(version_string);
         return r;

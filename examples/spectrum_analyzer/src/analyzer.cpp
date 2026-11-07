@@ -144,23 +144,23 @@ void Analyzer::setup_cli(CLI::App& cli) {
 // configuration and persistence
 
 void Analyzer::load(const forge::Config& cfg) {
-    backend_kind_ = cli_backend_.empty() ? cfg.get_or<std::string>("analyzer.backend", "sim") : cli_backend_;
-    uri_ = cli_uri_.empty() ? cfg.get_or<std::string>("analyzer.uri", "") : cli_uri_;
-    timeout_ms_ = cfg.get_or<unsigned>("analyzer.timeout_ms", 2000);
+    backend_kind_ = cli_backend_.empty() ? cfg.value<std::string>("analyzer.backend") : cli_backend_;
+    uri_ = cli_uri_.empty() ? cfg.value<std::string>("analyzer.uri") : cli_uri_;
+    timeout_ms_ = cfg.value<unsigned>("analyzer.timeout_ms");
     if (backend_kind_ != "sim" && backend_kind_ != "iio" && backend_kind_ != "radio") {
         throw forge::ConfigError("analyzer.backend must be sim, iio or radio");
     }
-    tap_.data = cfg.get_or<std::string>("analyzer.radio_data", "tcp://127.0.0.1:5555");
-    tap_.control = cfg.get_or<std::string>("analyzer.radio_control", "tcp://127.0.0.1:5557");
-    tap_.timeout = std::chrono::milliseconds(std::max(cfg.get_or<unsigned>("analyzer.radio_timeout_ms", 3000), 500u));
-    channel_ = cfg.get_or<unsigned>("analyzer.channel", 1);
+    tap_.data = cfg.value<std::string>("analyzer.radio_data");
+    tap_.control = cfg.value<std::string>("analyzer.radio_control");
+    tap_.timeout = std::chrono::milliseconds(std::max(cfg.value<unsigned>("analyzer.radio_timeout_ms"), 500u));
+    channel_ = cfg.value<unsigned>("analyzer.channel");
     if (channel_ < 1 || channel_ > 2) throw forge::ConfigError("analyzer.channel must be 1 (RX1) or 2 (RX2)");
-    control_gain_ = cfg.get_or<bool>("analyzer.control_gain", true);
+    control_gain_ = cfg.value<bool>("analyzer.control_gain");
     tap_.channel = channel_;
     tap_.control_gain = control_gain_;
-    state_file_ = cfg.get_or<std::string>("analyzer.state_file", "");
-    limits_.sweep_rate_hz = std::clamp(cfg.get_or<double>("analyzer.sweep_rate_hz", 61.44e6), 2.083334e6, 61.44e6);
-    limits_.usable_fraction = std::clamp(cfg.get_or<double>("analyzer.usable_fraction", 0.8), 0.3, 0.95);
+    state_file_ = cfg.value<std::string>("analyzer.state_file");
+    limits_.sweep_rate_hz = std::clamp(cfg.value<double>("analyzer.sweep_rate_hz"), 2.083334e6, 61.44e6);
+    limits_.usable_fraction = std::clamp(cfg.value<double>("analyzer.usable_fraction"), 0.3, 0.95);
 
     json j = cfg.section("analyzer").to_json();
     if (!state_file_.empty() && std::filesystem::exists(state_file_)) {

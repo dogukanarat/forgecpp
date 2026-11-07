@@ -42,6 +42,9 @@ public:
     Key& required(bool r = true);
     /// Do not print the value (passwords, tokens).
     Key& secret(bool s = true);
+    /// The default depends on the environment (e.g. colors on a terminal):
+    /// `default_value` is documentation only, not filled in by apply_defaults().
+    Key& computed(bool c = true);
 
     std::string path;
     Type type = Type::any;
@@ -51,6 +54,7 @@ public:
     std::vector<std::string> choice_values;
     bool is_required = false;
     bool is_secret = false;
+    bool is_computed = false;
 };
 
 class Schema {
@@ -76,6 +80,12 @@ public:
         bool ok() const { return errors.empty(); }
     };
     Result validate(const Config& cfg) const;
+
+    /// Fill in the default of every declared key the configuration leaves out,
+    /// so the schema is the only place a default is written. forge::Application
+    /// does this after loading (and reloading): read declared keys with
+    /// cfg.value<T>(key), not get_or(key, <default again>).
+    void apply_defaults(Config& cfg) const;
 
     /// Human-readable reference of every key (TOML-like, grouped by section).
     std::string help() const;

@@ -67,6 +67,13 @@ public:
     SensorService() : Application({"sensor-service", "1.0.0", "Example forgecpp sensor service"}) {}
 
 protected:
+    void setup_config(forge::config::Schema& s) override {
+        s.section("sensor", "Simulated sensor");
+        s.number("sensor.rate_hz", 10.0, "Samples per second").range(0.1, 10000).unit("Hz");
+        s.integer("sensor.window", 50, "Samples per statistics window").range(1, 100000);
+        s.number("sensor.alarm_threshold", 80.0, "Alarm when the window mean exceeds this");
+    }
+
     void setup_cli(CLI::App& cli) override {
         cli.add_flag_callback("--simulate-spikes", [this] { spikes_ = true; },
                               "Inject random spikes to trigger alarms");
@@ -167,9 +174,10 @@ protected:
 
 private:
     void apply_config(const forge::Config& cfg) {
-        rate_hz_ = cfg.get_or<double>("sensor.rate_hz", 10.0);
-        window_size_ = cfg.get_or<std::size_t>("sensor.window", 50);
-        threshold_ = cfg.get_or<double>("sensor.alarm_threshold", 80.0);
+        // Declared in setup_config(): the defaults come from there.
+        rate_hz_ = cfg.value<double>("sensor.rate_hz");
+        window_size_ = cfg.value<std::size_t>("sensor.window");
+        threshold_ = cfg.value<double>("sensor.alarm_threshold");
         logger()->info("sensor: {} Hz, window {}, alarm > {}", rate_hz_.load(), window_size_, threshold_);
     }
 
