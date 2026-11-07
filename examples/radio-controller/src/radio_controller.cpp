@@ -119,6 +119,9 @@ void RadioController::setup_config(forge::config::Schema& s) {
     s.boolean("radio.sim.loopback", true, "Simulated TX -> RX cable");
     s.integer("radio.sim.loopback_tx", 1, "Cable from TX channel").range(1, 2);
     s.integer("radio.sim.loopback_rx", 1, "... to RX channel").range(1, 2);
+    s.boolean("radio.sim.splitter", false, "The cable goes through a splitter to every RX channel (loopback_rx ignored)");
+    s.number("radio.sim.loopback_db", -20, "Loss of the simulated cable, splitter and attenuators").range(-120, 0).unit("dB");
+    s.number("radio.sim.loopback_cfo_hz", 0, "Frequency error of the looped back signal").range(-1e6, 1e6).unit("Hz");
     s.section("zmq", "Radio sockets");
     s.string("zmq.tx", "tcp://*:5556", "PULL: radio.v1.TxBlock + cs16 samples");
 }
@@ -348,6 +351,9 @@ void RadioController::load_settings(const forge::Config& cfg) {
     sim_.channels = std::clamp(cfg.value<unsigned>("radio.sim.channels"), 1u, 2u);
     sim_.loopback_tx = std::clamp(cfg.value<unsigned>("radio.sim.loopback_tx"), 1u, 2u) - 1;
     sim_.loopback_rx = std::clamp(cfg.value<unsigned>("radio.sim.loopback_rx"), 1u, 2u) - 1;
+    sim_.loopback_split = cfg.value<bool>("radio.sim.splitter");
+    sim_.loopback_db = cfg.value<double>("radio.sim.loopback_db");
+    sim_.loopback_cfo_hz = cfg.value<double>("radio.sim.loopback_cfo_hz");
 
     // Channel roles (fixed at start-up; must fit the transceiver)
     const json radio = cfg.section("radio").to_json();

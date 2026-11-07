@@ -45,7 +45,10 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
   '-' (warning otherwise); `forgecpp-new` converts names.
 - Examples: spectrum-analyzer (AD936x, web UI) running next to
   radio-controller; sensor-service, pipeline and thermostat declare their
-  configuration.
+  configuration; qam-modem (16QAM packet modem through radio-controller,
+  UDP in and out, 2.9 Mbit/s at 750 ksym/s) with `echo.py`. radio-controller's
+  simulator gained a splitter (TX into every RX), path loss and frequency
+  error; the libiio backend finds the FMCOMMS5's RX DMA (`cf-ad9361-A`).
 - Toolchain file for Zynq-7000 (`cmake/toolchains/zynq7000-armhf.cmake`).
 - Deterministic time for tests: `Application::use_manual_clock()` /
   `advance_time()`, `AppRunner(args, {.manual_time = true})` + `r.advance(d)`,

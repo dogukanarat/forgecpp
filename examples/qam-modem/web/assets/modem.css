@@ -1,0 +1,8 @@
+.modem { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.modem canvas { width: 100%; max-width: 360px; aspect-ratio: 1; display: block; margin: 0 auto;
+  background: var(--forge-bg, #fff); border: 1px solid var(--forge-border, #ccc); border-radius: 6px; }
+.modem .legend { text-align: center; color: var(--forge-muted, #666); }
+.modem .kv { display: grid; grid-template-columns: auto 1fr; gap: .35rem 1rem; margin: 0; }
+.modem .kv dt { color: var(--forge-muted, #666); }
+.modem .kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.modem .row { display: flex; gap: .5rem; align-items: center; margin: .5rem 0; flex-wrap: wrap; }

@@ -1,0 +1,64 @@
+# qam-modem configuration
+#
+# FMCOMMS5 (two AD9361) on a ZC702/ZC706 - radio-controller drives chip A:
+#
+#   TX1 --[30 dB]--+-- resistive splitter --[10 dB]-- RX1  (this modem demodulates it)
+#                  +------------------------[10 dB]-- RX2  (spectrum-analyzer, radio-controller tap_rx = [2])
+#
+# Never connect TX to RX without attenuation: the AD9361 RX input is damaged
+# above about +2.5 dBm. With -12 dBFS and tx_attenuation_db = 20 the TX output is
+# around -20 dBm; 40-50 dB of loss in total puts RX1 near -65 dBm.
+
+[modem]
+radio_control = "tcp://127.0.0.1:5557"   # radio-controller [forge].control
+radio_data = "tcp://127.0.0.1:5555"      # radio-controller [forge].data ("iq" stream)
+radio_tx = "tcp://127.0.0.1:5556"        # radio-controller [zmq].tx
+rx_channel = 1                            # must be in radio-controller's [radio] rx_channels
+
+configure_radio = true      # set the radio up at start (and retry until it answers)
+lo_hz = 2100000000          # 2.1 GHz, RX and TX
+sample_rate_hz = 3000000    # 3 MSPS, 4 samples per symbol -> 750 ksym/s, 3 Mbit/s raw 16QAM
+rf_bandwidth_hz = 2000000   # the signal is 1.01 MHz wide (RRC roll-off 0.35)
+tx_attenuation_db = 20
+rx_gain_db = 30             # manual gain; aim for a level of -15 .. -30 dBFS (panel: Receive / Level)
+radio_buffer = 16384        # radio-controller buffer_size: 5.5 ms at 3 MSPS
+
+sps = 4
+rolloff = 0.35
+tx_level_dbfs = -12         # RMS; 16QAM + RRC peaks ~8 dB higher
+detect_threshold = 0.6
+max_payload = 1500          # UDP payloads up to this size; larger ones are dropped (counted)
+block_samples = 4096        # TX block to radio-controller
+lead_ms = 25                # TX runs this far ahead of RX
+queue_packets = 64
+
+udp_listen = "0.0.0.0:6000" # send packets here to put them on the air
+udp_reply = ""              # received packets go here; "" = back to the last sender (echo)
+
+test_mode = false           # send numbered test packets when idle (panel: Test)
+test_size = 1400
+
+[forge]
+control = "tcp://*:5577"      # spectrum-analyzer has 5567, radio-controller 5557
+events = "tcp://*:5579"
+data = "tcp://*:5575"
+
+[console]
+telnet = "0.0.0.0:2325"
+
+[threads.tx]
+policy = "other"            # fifo + priority 70 on the board
+[threads.udp]
+policy = "other"
+
+[hub]
+group = "Radio"
+
+[http]
+enabled = true
+host = "0.0.0.0"
+port = 8082
+
+[web]
+title = "QAM modem"
+refresh_ms = 500

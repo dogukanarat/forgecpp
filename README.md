@@ -874,6 +874,7 @@ without extra files.
 | `examples/pipeline` | **Multi-threaded application:** N producer threads → lock-free `Channel` → dispatcher thread → `ThreadPool` workers → result channel → main loop. Bounded in-flight work (backpressure), atomic counters, alarms raised from worker threads, clean shutdown |
 | [`examples/radio-controller`](examples/radio-controller/README.md) | **AD936x radio daemon (libiio + forge.v1):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.v1.IqBlock` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.v1.TxBlock`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe |
 | [`examples/spectrum-analyzer`](examples/spectrum-analyzer/README.md) | **AD936x spectrum analyzer with a web UI** (on its own RX path, or on RX2 next to the radio controller): realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, `sa.v1.Spectrum` stream. Shares the AD936x backend with the radio controller |
+| [`examples/qam-modem`](examples/qam-modem/README.md) | **16QAM packet modem over an AD936x:** UDP packets from Ethernet go on the air through radio-controller and come back out over UDP: 750 ksym/s, about 1 MHz wide at 2.1 GHz, 2.9 Mbit/s net. Schmidl & Cox detection and frequency offset, fractional timing, phase loop, CRC-checked packets; TX paced by the RX sample clock; constellation page, test mode, `echo.py` traffic checker. DSP tested through an impaired channel; end-to-end test at 2.3 Mbit/s with the simulator |
 | `forgecpp-new` | Scaffolds an application with all of the above: its own proto + stream, commands, schema, `[forge]` endpoints, telnet, an `AppRunner` test and a Python client |
 | `examples/thermostat` | **Web-first application:** its own multi-page site (overview, live SVG chart, settings form), custom REST API with per-field validation, live data via `publish_web`, radio/segmented controls, alarms, settings persisted with `save_json` |
 
@@ -887,6 +888,7 @@ cd build/forgecpp/examples
 ./radio-controller/radio-controller --backend iio --uri ip:192.168.2.1         # real AD936x via iiod
 ./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml  # http://localhost:8081/
 ./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml --backend radio  # RX2 of the radio controller
+./qam-modem/qam-modem -c qam-modem/qam-modem.toml   # 16QAM modem through the radio controller: http://localhost:8082/
 ```
 
 The radio controller and the spectrum analyzer are also standalone CMake
@@ -898,10 +900,10 @@ FFT/windows).
 
 Every example has a generated systemd unit next to its binary
 (`build/forgecpp/examples/<name>.service`, `.../examples/<name>/<name>.service`
-for radio-controller and spectrum-analyzer) with a restart policy that suits it:
+for radio-controller, spectrum-analyzer and qam-modem) with a restart policy that suits it:
 hello on-failure without a watchdog, sensor-service and pipeline on-failure
-with a watchdog, thermostat `always`, radio-controller and spectrum-analyzer
-on-failure (3 in 10 minutes) with a 30 s watchdog.
+with a watchdog, thermostat `always`, radio-controller, spectrum-analyzer and
+qam-modem on-failure (3 in 10 minutes) with a 30 s watchdog.
 
 ## Build times
 
@@ -946,9 +948,10 @@ tools/             forgecpp-new (project scaffolder), forgectl (forge.v1 client)
 hub/               forge-hub: device dashboard and registry (a product, not an example)
 examples/          hello, sensor-service, pipeline (multi-threaded), thermostat (web site),
                    radio-controller (AD9364 over libiio + ZeroMQ),
-                   spectrum-analyzer (AD936x spectrum analyzer), common/ad936x
+                   spectrum-analyzer (AD936x spectrum analyzer), qam-modem (16QAM over
+                   radio-controller), common/ad936x
 tests/             doctest unit tests
-yocto/             bitbake recipes (forgecpp, radio-controller, spectrum-analyzer)
+yocto/             bitbake recipes (forgecpp, radio-controller, spectrum-analyzer, qam-modem)
 install.sh, get.sh installation
 ```
 

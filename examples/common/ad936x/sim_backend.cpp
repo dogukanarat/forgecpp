@@ -42,7 +42,6 @@ const std::vector<Carrier>& carriers() {
 }
 
 constexpr double kNoiseDbfsAt0dB = -100.0;
-constexpr double kLoopbackCouplingDb = -20.0;  ///< TX output -> RX input in the simulated setup
 
 double db_to_amp(double db) { return std::pow(10.0, db / 20.0); }
 
@@ -137,14 +136,13 @@ public:
             std::this_thread::sleep_for(std::min<Clock::duration>(deadline_ - Clock::now(), std::chrono::milliseconds(20)));
         }
 
-        // Only what is streamed and read is produced (the loopback channel
-        // always, so the TX queue drains like the hardware's).
-        scratch_.resize(2 * n);
+        // The TX queue drains like the hardware's, whether or not a channel is read;
+        // what leaves TX is taken once and reaches every RX it is cabled to.
+        take_tx(s, n);
         for (unsigned ch = 0; ch < 2; ++ch) {
             if (!(rx_mask_ & (1u << ch))) continue;
             std::int16_t* out = ch == 0 ? rx1 : rx2;
-            if (!out && !(options_.loopback && ch == options_.loopback_rx)) continue;
-            generate(s, ch, out ? out : scratch_.data(), n);
+            if (out) generate(s, ch, out, n);
         }
         return n;
     }
@@ -228,7 +226,8 @@ private:
     }
 
     std::string fmt_loopback() const {
-        return "TX" + std::to_string(options_.loopback_tx + 1) + " -> RX" + std::to_string(options_.loopback_rx + 1);
+        const std::string tx = "TX" + std::to_string(options_.loopback_tx + 1);
+        return options_.loopback_split ? tx + " -> splitter -> every RX" : tx + " -> RX" + std::to_string(options_.loopback_rx + 1);
     }
 
     void set(double State::*field, double value) {
@@ -284,7 +283,8 @@ private:
             rotators_.push_back(r);
             which.push_back(c);
         }
-        const bool loopback = options_.loopback && ch == options_.loopback_rx;
+        const bool loopback = tx_now_active_ && options_.loopback &&
+                              (options_.loopback_split ? ch < options_.channels : ch == options_.loopback_rx);
 
         float peak = 0;
         for (std::size_t done = 0; done < n; done += kBlock) {
@@ -299,7 +299,7 @@ private:
                 idx = (idx + run) & (noise_.size() - 1);
             }
             for (auto& r : rotators_) add_carrier(r, v, m);
-            if (loopback) mix_tx(s, gain_amp, v, m);
+            if (loopback) add_tx(s, gain_amp, v, done, m);
             // peak (for the AGC) and int16 conversion in the same pass
             std::int16_t* out = iq + 2 * done;
             for (std::size_t i = 0; i < m; ++i) {
@@ -365,35 +365,47 @@ private:
     }
 
     // TX -> RX cable of the simulated setup, shifted by TX LO - RX LO.
-    void mix_tx(const State& s, double gain_amp, cfloat* v, std::size_t m) {
+    // What TX sends during the next `n` samples, shifted by TX LO - RX LO (+ the
+    // simulated oscillator offset). Empty when TX is off or outside the RX band.
+    void take_tx(const State& s, std::size_t n) {
         std::lock_guard lock(tx_mutex_);
-        if (!tx_active_ || tx_channel_ != options_.loopback_tx) return;
-        const double offset = s.tx_lo - s.rx_lo;
-        if (std::abs(offset) >= std::min(s.rate, s.rx_bw) / 2.0) return;
-        const float amp = static_cast<float>(db_to_amp(kLoopbackCouplingDb - s.tx_atten[tx_channel_]) * gain_amp);
+        tx_now_active_ = false;
+        if (!options_.loopback || !tx_active_ || tx_channel_ != options_.loopback_tx) return;
+        const double offset = s.tx_lo - s.rx_lo + options_.loopback_cfo_hz;
+        if (std::abs(offset) >= std::min(s.rate, s.rx_bw) / 2.0) {
+            if (!tx_cyclic_) tx_head_ = std::min(tx_ring_.size(), tx_head_ + n);  // drains anyway
+            return;
+        }
+        tx_now_.assign(n, {});
+        tx_now_atten_db_ = s.tx_atten[tx_channel_];
         const double w = 2 * M_PI * offset / s.rate;
         const float step_re = static_cast<float>(std::cos(w)), step_im = static_cast<float>(std::sin(w));
         float pre = static_cast<float>(tx_phase_.real()), pim = static_cast<float>(tx_phase_.imag());
-        for (std::size_t i = 0; i < m; ++i) {
+        for (std::size_t i = 0; i < n; ++i) {
             cfloat x;
             if (tx_cyclic_) {
                 if (tx_pattern_.empty()) break;
                 x = tx_pattern_[tx_pos_];
                 if (++tx_pos_ == tx_pattern_.size()) tx_pos_ = 0;
             } else {
-                if (tx_head_ >= tx_ring_.size()) break;
+                if (tx_head_ >= tx_ring_.size()) break;  // nothing queued: silence (an underflow)
                 x = tx_ring_[tx_head_++];
             }
-            // x * phase * amp
-            const float re = (x.real() * pre - x.imag() * pim) * amp;
-            const float im = (x.real() * pim + x.imag() * pre) * amp;
-            v[i] = cfloat(v[i].real() + re, v[i].imag() + im);
+            tx_now_[i] = cfloat(x.real() * pre - x.imag() * pim, x.real() * pim + x.imag() * pre);
             const float nre = pre * step_re - pim * step_im;
             pim = pre * step_im + pim * step_re;
             pre = nre;
         }
         const float mag = std::sqrt(pre * pre + pim * pim);
         tx_phase_ = mag > 0 ? std::complex<double>(pre / mag, pim / mag) : std::complex<double>(1.0, 0.0);
+        tx_now_active_ = true;
+    }
+
+    // TX -> RX cable(s) of the simulated setup: samples [from, from + m) of take_tx().
+    void add_tx(const State&, double gain_amp, cfloat* v, std::size_t from, std::size_t m) {
+        const float amp = static_cast<float>(db_to_amp(options_.loopback_db - tx_now_atten_db_) * gain_amp);
+        const cfloat* x = tx_now_.data() + from;
+        for (std::size_t i = 0; i < m; ++i) v[i] = cfloat(v[i].real() + x[i].real() * amp, v[i].imag() + x[i].imag() * amp);
     }
 
     SimOptions options_;
@@ -419,6 +431,9 @@ private:
     unsigned tx_channel_ = 0;
     std::size_t tx_samples_ = 0;
     std::vector<cfloat> tx_ring_;   // queued TX samples from tx_head_ on
+    std::vector<cfloat> tx_now_;    // what TX sends during the current RX buffer (RX thread)
+    bool tx_now_active_ = false;
+    double tx_now_atten_db_ = 0;
     std::size_t tx_head_ = 0;
     std::vector<cfloat> tx_pattern_;
     std::size_t tx_pos_ = 0;

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QAM modem</title>
+  <link rel="stylesheet" href="forge/forge.css">
+  <link rel="stylesheet" href="assets/modem.css">
+  <script src="forge/forge.js"></script>
+  <script src="assets/modem.js" defer></script>
+</head>
+<body class="forge">
+  <header class="forge-header">
+    <div class="forge-brand">
+      <span class="forge-dot" data-forge-connection></span>
+      <h1>QAM modem</h1>
+    </div>
+    <nav>
+      <a href="./" aria-current="page">Link</a>
+      <a href="forge/">Control panel</a>
+    </nav>
+    <div class="forge-meta"><span data-forge-value="radio"></span></div>
+    <div class="forge-alarms-host" data-forge-alarms></div>
+  </header>
+
+  <main class="forge-main modem">
+    <section class="forge-card">
+      <h2>Constellation</h2>
+      <canvas id="constellation" width="360" height="360" aria-label="Received 16QAM symbols"></canvas>
+      <p class="legend">EVM <b data-forge-value="evm_db" data-forge-precision="1"></b> dB ·
+        CFO <b data-forge-value="cfo_hz"></b> Hz · Level <b data-forge-value="level_dbfs" data-forge-precision="1"></b> dBFS</p>
+    </section>
+
+    <section class="forge-card">
+      <h2>Throughput</h2>
+      <dl class="kv">
+        <dt>Ethernet in</dt><dd><b data-forge-value="udp_in_kbps"></b> kbit/s</dd>
+        <dt>On the air</dt><dd><b data-forge-value="tx_kbps"></b> kbit/s</dd>
+        <dt>Received</dt><dd><b data-forge-value="rx_kbps"></b> kbit/s</dd>
+        <dt>Test packets</dt><dd><b data-forge-value="test_kbps"></b> kbit/s</dd>
+        <dt>16QAM raw</dt><dd><b data-forge-value="raw_rate"></b> kbit/s</dd>
+      </dl>
+    </section>
+
+    <section class="forge-card">
+      <h2>Packets</h2>
+      <dl class="kv">
+        <dt>Sent</dt><dd data-forge-value="tx_packets"></dd>
+        <dt>Received</dt><dd data-forge-value="rx_packets"></dd>
+        <dt>Preambles</dt><dd data-forge-value="detected"></dd>
+        <dt>Header errors</dt><dd data-forge-value="header_errors"></dd>
+        <dt>CRC errors</dt><dd data-forge-value="crc_errors"></dd>
+        <dt>Test lost</dt><dd data-forge-value="test_lost"></dd>
+        <dt>Queue / dropped</dt><dd><span data-forge-value="tx_queue"></span> / <span data-forge-value="tx_dropped"></span></dd>
+        <dt>Lost RX buffers</dt><dd data-forge-value="rx_gaps"></dd>
+      </dl>
+    </section>
+
+    <section class="forge-card">
+      <h2>Control</h2>
+      <label class="row"><input type="checkbox" data-forge-bind="tx_enabled"> Transmit</label>
+      <label class="row"><input type="checkbox" data-forge-bind="test_mode"> Test packets (when idle)</label>
+      <label class="row">TX level <input type="range" min="-40" max="-6" step="0.5" data-forge-bind="tx_level_dbfs">
+        <b data-forge-value="tx_level_dbfs"></b> dBFS</label>
+      <div class="row">
+        <button data-forge-press="configure_radio">Configure radio</button>
+        <button data-forge-press="reset_stats">Reset statistics</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

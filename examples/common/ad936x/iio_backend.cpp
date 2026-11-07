@@ -10,6 +10,7 @@
 //     voltage1 (out)           TX2: hardwaregain (AD9361/AD9363 only)
 //     temp0 (in)               input (milli-degree C)
 //   cf-ad9361-lpc            RX DMA (voltage0/1 = RX1 I/Q, voltage2/3 = RX2 I/Q on 2R parts)
+//                            (FMCOMMS5: cf-ad9361-A, chip A on voltage0-3)
 //   cf-ad9361-dds-core-lpc   TX DMA (voltage0/1 = TX1 I/Q, voltage2/3 = TX2 I/Q on 2T parts)
 //
 // Over/underflows are read from the AXI AD9361 core status register 0x80000088
@@ -55,6 +56,10 @@ public:
 
         phy_ = iio_context_find_device(ctx_, "ad9361-phy");
         rx_dev_ = iio_context_find_device(ctx_, "cf-ad9361-lpc");
+        // FMCOMMS5 (two AD9361 chips, 4R4T): the synchronized RX DMA of both chips is
+        // "cf-ad9361-A" (voltage0-3 = chip A RX1/RX2, voltage4-7 = chip B); TX stays
+        // "cf-ad9361-dds-core-lpc". This backend drives chip A (ad9361-phy).
+        if (!rx_dev_) rx_dev_ = iio_context_find_device(ctx_, "cf-ad9361-A");
         tx_dev_ = iio_context_find_device(ctx_, "cf-ad9361-dds-core-lpc");
         if (!phy_ || !rx_dev_ || !tx_dev_) {
             std::string found;

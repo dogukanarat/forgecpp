@@ -4,6 +4,7 @@
 # thermostat:     web-first application with its own multi-page site
 # radio-controller: AD9364 daemon: libiio + IQ streaming over forge.v1 (ZeroMQ)
 # spectrum-analyzer: AD9364 spectrum analyzer with a web UI
+# qam-modem:      16QAM packet modem (UDP <-> radio-controller), 2+ Mbit/s
 # Each one gets a generated systemd unit (<build>/examples/<name>.service) with
 # the restart policy that suits it; the examples are not installed.
 forge_add_app(hello SOURCES hello/main.cpp
@@ -39,6 +40,7 @@ endif()
 
 add_subdirectory(radio-controller)
 add_subdirectory(spectrum-analyzer)
+add_subdirectory(qam-modem)
 
 # Run the examples from the build dir with their config next to them.
 foreach(cfg sensor-service/sensor-service.toml pipeline/pipeline.toml thermostat/thermostat.toml pump/pump.toml)

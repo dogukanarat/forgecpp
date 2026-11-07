@@ -136,6 +136,9 @@ struct SimOptions {
     bool loopback = true;      ///< couple a TX channel into an RX channel (a cable) when the LOs are close
     unsigned loopback_tx = 0;  ///< 0 = TX1, 1 = TX2
     unsigned loopback_rx = 0;  ///< 0 = RX1, 1 = RX2   (e.g. 0 -> 1: a TX1 -> RX2 cable)
+    bool loopback_split = false;  ///< TX into every RX channel (a power splitter), not only loopback_rx
+    double loopback_db = -20;     ///< TX output -> RX input (cable, splitter, attenuators)
+    double loopback_cfo_hz = 0;   ///< frequency offset of the received copy (an oscillator error)
     unsigned channels = 1;     ///< 1: AD9364, 2: AD9361 (RX1/RX2 see the same air, independent noise)
     unsigned seed = 1;
 };

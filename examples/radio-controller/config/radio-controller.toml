@@ -42,6 +42,10 @@ channels = 2                  # 1 = AD9364 (1R1T), 2 = AD9361 (2R2T)
 loopback = true               # a simulated cable: TX samples appear in RX (shifted by TX LO - RX LO)
 loopback_tx = 1               # cable from TX1 ...
 loopback_rx = 2               # ... to RX2
+splitter = false              # true: the cable goes through a splitter into every RX (qam-modem on RX1,
+                              # spectrum-analyzer on RX2)
+loopback_db = -20             # TX output -> RX input (cable, splitter, attenuators), at TX attenuation 0
+loopback_cfo_hz = 0           # frequency error of the received copy (e.g. 1200 for two oscillators)
 
 # forge.v1 standard endpoints (same keys in every forgecpp application)
 [forge]

@@ -9,6 +9,7 @@ control panel, `forgectl`, the console and telnet.
 ```
             forge.v1 / ZeroMQ                                   libiio
 clients  <-- PUB  [forge].data    5555  "iq" IqBlock     <--  RX thread  <--  cf-ad9361-lpc (RX DMA)   rx_channels
+                                                                             (FMCOMMS5: cf-ad9361-A, chip A)
 analyzer <--                            "rx1"/"rx2"      <--  RX thread      (shared channels)         tap_rx
 clients  --> PULL [zmq].tx        5556  "tx" TxBlock     -->  TX thread  -->  cf-ad9361-dds-core-lpc   tx_channel
 clients  <-> ROUTER [forge].control 5557 Request/Reply   -->  main loop  -->  ad9361-phy (LO, rate, gain, ...)
@@ -186,7 +187,10 @@ development and tests: a few
 carriers at fixed frequencies (433.92, 868.3, 915, 1575.42, 2412, 2418.5,
 2437, 5800 MHz), a noise floor and signal levels that follow the RX gain,
 bandwidth filtering, AGC, real-time pacing (a slow reader gets overflows) and
-a TX→RX cable (`[radio.sim].loopback`, from `loopback_tx` to `loopback_rx`). Generating samples costs CPU: on a PC it keeps up
+a TX→RX cable (`[radio.sim].loopback`, from `loopback_tx` to `loopback_rx`;
+with `splitter = true` into every RX, as a cable with a power splitter; its
+loss is `loopback_db` plus the TX attenuation, `loopback_cfo_hz` adds a
+frequency error). Generating samples costs CPU: on a PC it keeps up
 with about 10 – 20 MSPS in a release build; use lower rates in debug builds.
 
 ## Building

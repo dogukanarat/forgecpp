@@ -37,7 +37,7 @@ local_conf_header:
   systemd: |
     INIT_MANAGER = "systemd"
   forgecpp: |
-    IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub radio-controller spectrum-analyzer \
+    IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub radio-controller spectrum-analyzer qam-modem \
                              python3-forge-v1 curl"
     # No transceiver in QEMU: the radio's simulator.
     RADIO_BACKEND:pn-radio-controller = "sim"
@@ -47,10 +47,12 @@ local_conf_header:
     EXTERNALSRC:pn-forgecpp-protoc-native = "${FORGECPP_SRC}/third_party/protobuf"
     EXTERNALSRC:pn-radio-controller = "${FORGECPP_SRC}/examples/radio-controller"
     EXTERNALSRC:pn-spectrum-analyzer = "${FORGECPP_SRC}/examples/spectrum-analyzer"
+    EXTERNALSRC:pn-qam-modem = "${FORGECPP_SRC}/examples/qam-modem"
     PV:pn-forgecpp = "0.3.0+ci"
     PV:pn-forgecpp-protoc-native = "21.12+ci"
     PV:pn-radio-controller = "1.0.0+ci"
     PV:pn-spectrum-analyzer = "1.0.0+ci"
+    PV:pn-qam-modem = "1.0.0+ci"
   testimage: |
     IMAGE_CLASSES += "testimage"
     IMAGE_FEATURES += "ssh-server-dropbear"

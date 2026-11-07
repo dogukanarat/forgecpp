@@ -10,7 +10,7 @@ your layers as below.
 ## Try it in QEMU (kas)
 
 `kas/qemuarm64.yml` builds a qemuarm64 image (systemd) with forgecpp, forge-hub,
-radio-controller on its simulator and spectrum-analyzer, from this checkout:
+radio-controller on its simulator, spectrum-analyzer and qam-modem, from this checkout:
 
 ```sh
 pip install kas
@@ -115,6 +115,21 @@ For a 2R2T transceiver the device tree must not force 1R1T mode
 On an AD9364 board set `RADIO_TAP_RX = "[]"`, `SA_BACKEND = "iio"` and
 `SA_CHANNEL = "1"`: the analyzer then owns the RX path (and can sweep) and
 radio-controller must not run.
+
+## qam-modem
+
+`recipes-connectivity/qam-modem/qam-modem_git.bb` builds the 16QAM packet
+modem from `examples/qam-modem` (UDP port 6000, web page on port 8082). It
+retunes radio-controller (2.1 GHz, 3 MSPS) and transmits, so its unit is
+installed but not enabled (`SYSTEMD_AUTO_ENABLE:pn-qam-modem = "enable"` to
+start it at boot). `QAM_LO_HZ` and `QAM_UDP_LISTEN` set the carrier and the
+UDP address; `qam-modem-clients` has `echo.py`. On an FMCOMMS5 it uses chip A:
+TX1 and RX1 (radio-controller's `RADIO_RX_CHANNELS = "[1]"`), RX2 stays with
+the spectrum analyzer.
+
+```
+IMAGE_INSTALL:append = " radio-controller spectrum-analyzer qam-modem"
+```
 
 ## Application recipes
 
