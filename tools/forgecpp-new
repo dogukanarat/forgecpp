@@ -309,6 +309,15 @@ telnet = "0.0.0.0:2323"   # remote console (empty = off)
 [state]
 file = ""                 # e.g. "/var/lib/${NAME}/state.json": persist() controls survive restarts
 
+# forge-hub (optional): if the device runs one, ${NAME} is on its dashboard
+# (http://<device>/) and the hub restarts it by this policy.
+[hub]
+restart = "on-failure"    # never | on-failure | always
+max_restarts = 3          # within restart_window_s, then the hub gives up and raises an alarm
+restart_window_s = 600
+critical = false
+# hang_timeout_s = 30     # unresponsive this long: killed and restarted
+
 # Users and roles (viewer < operator < admin) for web, forgectl and telnet.
 # Without [auth] everyone is admin: enable it outside the lab.
 # [auth]

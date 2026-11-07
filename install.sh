@@ -30,6 +30,7 @@ LIBDIR=""
 WITH_SSL="auto"
 WITH_ZLIB="auto"
 WITH_IIO="ON"
+WITH_HUB="ON"
 SYSTEM_PROTOBUF="OFF"
 HOST_PROTOC=""
 PROFILE=""
@@ -80,6 +81,7 @@ Build
   --sanitize LIST       Build everything with sanitizers: address,undefined or thread (debugging;
                         use a separate --prefix, the libraries are instrumented too)
   --without-iio         Skip libiio (the AD9364 examples then only have their simulator)
+  --without-hub         Do not build forge-hub (the device dashboard and supervisor)
   --iio-usb             Build libiio's USB backend (needs libusb-1.0)
   --no-rpath            Do not set \$ORIGIN rpaths on installed libraries
   --cmake-arg ARG       Extra argument passed to every CMake configure (repeatable)
@@ -165,6 +167,7 @@ while [[ $# -gt 0 ]]; do
         --sanitize)     need_arg "$@"; SANITIZE="$2"; shift 2 ;;
         --profile=*)    PROFILE="${1#*=}"; shift ;;
         --without-iio)  WITH_IIO="OFF"; shift ;;
+        --without-hub)  WITH_HUB="OFF"; shift ;;
         --iio-usb)      IIO_USB="ON"; shift ;;
         --with-zlib)    WITH_ZLIB="ON"; shift ;;
         --no-rpath)     RPATH="OFF"; shift ;;
@@ -514,6 +517,7 @@ if [[ "${DEPS_ONLY}" != "ON" ]]; then
         "-DBUILD_SHARED_LIBS=${SHARED}" \
         "-DFORGECPP_BUILD_TESTS=${BUILD_TESTS}" \
         "-DFORGECPP_BUILD_EXAMPLES=${BUILD_EXAMPLES}" \
+        "-DFORGECPP_BUILD_HUB=${WITH_HUB}" \
         "-DFORGECPP_WARNINGS=ON" \
         "-DFORGECPP_SANITIZE=${SANITIZE//,/;}"
 
@@ -578,6 +582,14 @@ cat <<EOF
       ${PREFIX}/bin/forgecpp-new mydaemon
 
 EOF
+if [[ "${WITH_HUB}" == "ON" ]]; then
+    cat <<EOF
+  Device dashboard (optional; applications register with it by themselves):
+      sudo ${PREFIX}/bin/forge-hub -c ${PREFIX}/etc/forge-hub/forge-hub.toml   # http://<device>/
+      sudo systemctl enable --now forge-hub                                      # systemd unit installed
+
+EOF
+fi
 if [[ "${PREFIX}" != "/usr" && "${PREFIX}" != "/usr/local" ]]; then
     cat <<EOF
   Non-standard prefix: tell CMake where to look:

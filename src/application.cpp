@@ -8,6 +8,7 @@
 #include "forge/rt.hpp"
 #include "forge/systemd.hpp"
 #include "forge/telnet.hpp"
+#include "forge/hub.hpp"
 #include "forge/trace.hpp"
 #include "forge/version.hpp"
 #include "forge/web.hpp"
@@ -417,10 +418,18 @@ int Application::run(int argc, char** argv) {
             logger_->debug("systemd watchdog enabled ({} ms)",
                            std::chrono::duration_cast<std::chrono::milliseconds>(*wd).count());
         }
-        every(std::chrono::seconds(1), [this] {
+        const auto steady_ms = [] {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        };
+        loop_tick_ms_ = steady_ms();
+        every(std::chrono::seconds(1), [this, steady_ms] {
+            loop_tick_ms_ = steady_ms();  // /health reports a stalled main loop
             save_state();
             if (state_event_pending_.exchange(false)) control_changed({}, false);
         });
+        start_hub_client(cfg);
         systemd::notify("READY=1\nSTATUS=running");
         logger_->info("{} started", info_.name);
 
@@ -517,6 +526,7 @@ void Application::start_signal_thread() {
                 reload();
             } else {
                 logger_->info("{} received, shutting down", ::strsignal(sig));
+                stop_signal_ = sig;
                 if (stopping()) {
                     // Second signal while shutting down: give up waiting.
                     logger_->warn("forced exit");
@@ -561,7 +571,15 @@ void Application::create_http(const Config& cfg) {
                                   {"critical", c.critical()}});
         }
         const auto overall = health_.overall();
-        json j{{"status", stopping() ? "stopping" : "ok"},
+        const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::steady_clock::now().time_since_epoch())
+                                .count();
+        const auto loop_age = loop_tick_ms_.load() > 0 ? now_ms - loop_tick_ms_.load() : 0;
+        // The 1 s heartbeat runs on the main loop: an old one means the loop is stuck.
+        const char* status = stopping() ? "stopping" : (loop_age > 5000 ? "stalled" : "ok");
+        json j{{"status", status},
+               {"pid", ::getpid()},
+               {"loop_age_ms", loop_age},
                {"health", to_string(overall)},
                {"components", std::move(components)},
                {"name", info_.name},
@@ -943,6 +961,11 @@ void Application::do_reload() {
 void Application::shutdown() {
     systemd::notify("STOPPING=1");
     if (logger_) logger_->info("{} stopping", info_.name);
+    // Tell the hub first, so it does not mistake the end for a crash.
+    if (hub_client_) {
+        const bool asked = stop_signal_.load() != 0;
+        hub_client_->stop(asked ? v1::Unregister::REASON_SIGNAL : v1::Unregister::REASON_EXIT, exit_code_.load());
+    }
 
     if (telnet_) telnet_->stop();
     if (console_) console_->stop();
@@ -978,6 +1001,7 @@ void Application::shutdown() {
     log::flush();
 
     telnet_.reset();
+    hub_client_.reset();
     control_server_.reset();
     console_.reset();
     http_.reset();
@@ -1155,6 +1179,22 @@ void Application::declare_framework_config(config::Schema& s) {
     s.section("threads", "Worker pool and real-time threads");
     s.integer("threads.workers", 0, "Worker threads (0 = CPU count)").range(0, 1024);
     s.open_section("threads", "[threads.<name>] policy, priority, nice, cpus (see rt.hpp)");
+
+    s.section("hub", "Registration with forge-hub (optional; nothing happens without a hub)");
+    s.boolean("hub.register", true, "Try to register with the hub at start-up");
+    s.string("hub.endpoint", hub::default_endpoint, "The hub's registration endpoint");
+    s.integer("hub.retry_s", 30, "Register again every N s in the background (0 = try once)").range(0, 86400).unit("s");
+    s.string("hub.restart", "never", "Restart policy the hub applies").choices({"never", "on-failure", "always"});
+    s.integer("hub.max_restarts", 3, "Restarts allowed within restart_window_s, then the hub gives up (0 = unlimited)")
+        .range(0, 1000);
+    s.integer("hub.restart_window_s", 600, "Window for max_restarts").range(1, 86400 * 7).unit("s");
+    s.integer("hub.restart_delay_s", 2, "Wait before restarting").range(0, 3600).unit("s");
+    s.boolean("hub.critical", false, "Giving up raises a critical alarm on the hub");
+    s.integer("hub.hang_timeout_s", 0, "Unresponsive (health checks failing) this long: killed and restarted (0 = off)")
+        .range(0, 86400)
+        .unit("s");
+    s.string("hub.group", "", "Group on the hub's dashboard");
+    s.string("hub.title", "", "Name on the hub's dashboard (default: the application name)");
 
     s.section("process", "Process settings");
     s.boolean("process.mlockall", false, "Lock all memory (no page faults; needs CAP_IPC_LOCK)");
@@ -1443,6 +1483,33 @@ void Component::setup_config(config::Schema&) {}
 void Component::setup_web(web::Dashboard&) {}
 void Component::setup_console(Console&) {}
 void Component::setup_http(http::Server&) {}
+void Application::start_hub_client(const Config& cfg) {
+    if (!hub_registration_ || !cfg.get_or<bool>("hub.register", true)) return;
+    const auto endpoint = cfg.get_or<std::string>("hub.endpoint", hub::default_endpoint);
+    if (endpoint.empty()) return;
+    const auto policy = hub::policy_from_config(cfg);  // validated by the schema
+    const auto retry = std::chrono::seconds(std::max(cfg.get_or<int>("hub.retry_s", 30), 0));
+    hub_client_ = std::make_unique<hub::Client>(endpoint, retry, [this, policy] {
+        const auto c = config();
+        v1::AppRegistration r;
+        r.set_name(info_.name);
+        r.set_version(info_.version);
+        r.set_description(info_.description);
+        r.set_pid(static_cast<std::uint32_t>(::getpid()));
+        r.set_http_port(http_ ? static_cast<std::uint32_t>(std::max(http_->port(), 0)) : 0);
+        for (const auto& [k, v] : endpoints()) {
+            if (k != "http") (*r.mutable_endpoints())[k] = v;
+        }
+        *r.mutable_policy() = policy;
+        r.set_group(c.get_or<std::string>("hub.group", ""));
+        r.set_title(c.get_or<std::string>("hub.title", ""));
+        r.set_unit(hub::unit_of(::getpid()));
+        r.set_forgecpp(version_string);
+        return r;
+    });
+    hub_client_->start();
+}
+
 void Component::on_start() {}
 void Component::on_stop() {}
 void Component::on_reload(const Config&) {}

@@ -17,6 +17,7 @@
 #include "forge/events.hpp"
 #include "forge/health.hpp"
 #include "forge/http.hpp"
+#include "forge/hub.hpp"
 #include "forge/json.hpp"
 #include "forge/log.hpp"
 #include "forge/metrics.hpp"

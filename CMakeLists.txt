@@ -20,6 +20,7 @@ option(FORGECPP_BUILD_EXAMPLES  "Build the example applications"       ${FORGECP
 option(FORGECPP_BUILD_TESTS     "Build the unit tests (needs doctest)"  ${FORGECPP_TOP_LEVEL})
 option(FORGECPP_INSTALL_TOOLS   "Install the forgecpp-new scaffolder"   ON)
 option(FORGECPP_WARNINGS        "Enable extra compiler warnings"        ${FORGECPP_TOP_LEVEL})
+option(FORGECPP_BUILD_HUB       "Build forge-hub (device dashboard and supervisor)" ${FORGECPP_TOP_LEVEL})
 # ZeroMQ and protobuf are core dependencies: every application speaks forge.v1.
 set(FORGECPP_WITH_ZMQ ON CACHE STRING "Deprecated: ZeroMQ is always used")
 set(FORGECPP_SANITIZE "" CACHE STRING
@@ -118,6 +119,7 @@ add_library(forgecpp
     src/crash.cpp
     src/events.cpp
     src/health.cpp
+    src/hub.cpp
     src/http.cpp
     src/json.cpp
     src/log.cpp
@@ -134,7 +136,7 @@ add_library(forgecpp::forgecpp ALIAS forgecpp)
 
 # forge.v1 messages, generated into the library (forge/v1/*.pb.h).
 forge_add_proto(forgecpp ROOT proto PROTOS
-    forge/v1/common.proto forge/v1/observability.proto forge/v1/control.proto
+    forge/v1/common.proto forge/v1/observability.proto forge/v1/control.proto forge/v1/hub.proto
     PYTHON "${PROJECT_BINARY_DIR}/python")
 
 # Built-in dashboard (src/web/*) compiled into the library, served at /forge/.
@@ -210,6 +212,10 @@ if(FORGECPP_BUILD_TESTS AND NOT doctest_FOUND)
 endif()
 if(FORGECPP_BUILD_TESTS)
     enable_testing()
+endif()
+
+if(FORGECPP_BUILD_HUB)
+    add_subdirectory(hub)
 endif()
 
 if(FORGECPP_BUILD_EXAMPLES)

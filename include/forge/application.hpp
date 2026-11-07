@@ -111,6 +111,9 @@ struct StreamOptions;
 class Console;
 class ControlService;
 class Telnet;
+namespace hub {
+class Client;
+}
 
 struct AppInfo {
     AppInfo(std::string name_ = "app", std::string version_ = "0.1.0", std::string description_ = {},
@@ -337,6 +340,8 @@ protected:
     virtual void setup_cli(CLI::App& cli);
     /// Declare configuration keys (types, ranges, docs); see config_schema.hpp.
     virtual void setup_config(config::Schema& schema);
+    /// Applications that must not register with forge-hub (the hub itself).
+    void disable_hub_registration() { hub_registration_ = false; }
     /// Register HTTP routes (called before the server starts listening).
     virtual void setup_http(http::Server& server);
     /// Register console commands.
@@ -366,6 +371,7 @@ private:
     void start_observability(const Config& config);
     void start_messaging(const Config& config);
     void start_telnet(const Config& config);
+    void start_hub_client(const Config& config);
     void restore_state();
     void save_state();
     void publish_event(const std::string& topic, const google::protobuf::Message& body);
@@ -432,6 +438,10 @@ private:
     std::unique_ptr<zmq::Publisher> data_pub_;
     std::unique_ptr<zmq::Server> control_server_;
     std::unique_ptr<Telnet> telnet_;
+    std::unique_ptr<hub::Client> hub_client_;
+    bool hub_registration_ = true;
+    std::atomic<int> stop_signal_{0};                 ///< signal that asked us to stop (0 = none)
+    std::atomic<std::int64_t> loop_tick_ms_{0};       ///< last main loop heartbeat (steady clock)
     int log_listener_ = -1;
     std::string state_file_;
     std::atomic<bool> state_dirty_{false};

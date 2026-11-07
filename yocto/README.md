@@ -31,6 +31,26 @@ with its own `.proto` files use it (`-DFORGE_PROTOC=...`, see below). The libiio
 (`iio_info`, `iio_attr`, ...) are packaged separately in `forgecpp-iio-tools`
 because they are GPL-2.0-or-later.
 
+## forge-hub (optional)
+
+The `forgecpp` recipe also builds forge-hub (`PACKAGECONFIG` "hub", on by
+default) into its own package. Add it to an image to get the device dashboard
+on port 80; every forgecpp application on the device registers with it by
+itself and gets restarted by the policy in its own `[hub]` section:
+
+```
+IMAGE_INSTALL:append = " forgecpp-hub"
+FORGECPP_HUB_PORT = "80"                          # optional, default 80
+PACKAGECONFIG:remove:pn-forgecpp = "hub"          # leave it out of the build entirely
+```
+
+`forge-hub.service` runs as root (port 80, systemctl, starting applications as
+their users) with `KillMode=process`, so applications it started itself keep
+running when the hub is restarted. The applications' own units keep their
+`Restart=` settings: with the hub, systemd still restarts them, the hub counts
+the restarts and stops the unit when the application's `max_restarts` is
+exceeded; without the hub, systemd's settings alone apply.
+
 ## radio-controller
 
 `recipes-connectivity/radio-controller/radio-controller_git.bb` builds the

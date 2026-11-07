@@ -1,0 +1,21 @@
+[Unit]
+Description=forge-hub: applications on this device (dashboard and supervisor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/forge-hub --config @CMAKE_INSTALL_FULL_SYSCONFDIR@/forge-hub/forge-hub.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+WatchdogSec=30
+StateDirectory=forge-hub
+LogsDirectory=forge-hub
+# Runs as root: it binds port 80, restarts units with systemctl and starts
+# other applications as their own users. Applications it starts itself keep
+# running when the hub stops or restarts.
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

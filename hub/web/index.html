@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Device</title>
+  <link rel="stylesheet" href="/forge/forge.css">
+  <link rel="stylesheet" href="hub.css">
+  <script src="/forge/forge.js"></script>
+  <script src="hub.js" defer></script>
+</head>
+<body class="forge">
+  <header class="forge-header">
+    <div class="forge-brand">
+      <span class="forge-dot" data-forge-connection></span>
+      <h1 id="hub-title">Device</h1>
+    </div>
+    <nav><a href="/forge/">Hub control panel</a></nav>
+    <div class="forge-meta"><span id="hub-host"></span><span id="hub-version"></span></div>
+    <div class="forge-alarms-host" data-forge-alarms></div>
+  </header>
+
+  <main class="forge-main">
+    <div class="hub-summary" id="hub-summary" aria-live="polite"></div>
+    <div id="hub-apps"><div class="forge-empty">Loading…</div></div>
+  </main>
+</body>
+</html>

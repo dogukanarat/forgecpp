@@ -60,6 +60,17 @@ policy = "other"              # fifo + priority 80 on the board (needs CAP_SYS_N
 # priority = 80
 # cpus = [1]                  # keep it on its own core (Zynq-7000: 0 and 1)
 
+# forge-hub (optional): if the device runs one, this application appears on
+# its dashboard (http://<device>/) and the hub applies this policy.
+[hub]
+restart = "on-failure"        # never | on-failure | always
+max_restarts = 3              # within restart_window_s; then the hub gives up and raises an alarm
+restart_window_s = 600
+restart_delay_s = 2
+critical = true               # giving up is a critical alarm on the hub
+hang_timeout_s = 0            # unresponsive this long: killed and restarted (0 = off)
+group = "Radio"
+
 [http]
 enabled = true
 host = "0.0.0.0"

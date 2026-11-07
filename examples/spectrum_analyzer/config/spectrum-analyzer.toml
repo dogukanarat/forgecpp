@@ -64,6 +64,14 @@ policy = "other"              # other | fifo | rr | batch | idle
 # password = "change-me"
 # role = "operator"
 
+# forge-hub (optional): dashboard entry and restart policy on the device's hub.
+[hub]
+restart = "on-failure"
+max_restarts = 3
+restart_window_s = 600
+critical = false
+group = "Radio"
+
 [http]
 enabled = true
 host = "0.0.0.0"

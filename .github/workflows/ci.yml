@@ -65,6 +65,12 @@ jobs:
           curl -fs http://127.0.0.1:18107/api/iq.cs16 -o /tmp/sa.cs16 && test -s /tmp/sa.cs16
           kill -TERM $pid
           wait $pid
+          # forge-hub first: the two daemons below register with it by themselves
+          mkdir -p /tmp/hub
+          ../hub/forge-hub -c ../../../hub/config/forge-hub.toml -D http.port=18110 -D log.console=false \
+            -D registry.state_file=/tmp/hub/registry.json -D registry.log_dir=/tmp/hub/logs &
+          hub=$!
+          for _ in $(seq 100); do curl -fs http://127.0.0.1:18110/health >/dev/null && break; sleep 0.1; done
           # both on one board: the analyzer on RX2 of radio-controller (simulated AD9361)
           ./radio_controller/radio-controller -c radio_controller/radio-controller.toml --backend sim \
             -D http.port=18108 -D log.console=false -D radio.sample_rate_hz=5e6 &
@@ -101,9 +107,35 @@ jobs:
           grep -q "blocks" /tmp/rx.txt
           python3 ../../../examples/spectrum_analyzer/clients/spectrum_watch.py tcp://127.0.0.1:5566 --count 2 > /tmp/sw.txt
           grep -q fixed /tmp/sw.txt
-          kill -TERM $pid $rc
+          # forge-hub: both registered, with their ports; a crash is restarted by the policy in [hub]
+          for _ in $(seq 100); do
+            curl -fs http://127.0.0.1:18110/api/apps -o /tmp/apps.json && grep -q spectrum-analyzer /tmp/apps.json \
+              && grep -q radio-controller /tmp/apps.json && break
+            sleep 0.1
+          done
+          has '"http_port":18108' cat /tmp/apps.json
+          has '<title>Device</title>' curl -fs http://127.0.0.1:18110/
+          kill -KILL $rc
+          wait $rc || true
+          python3 - "$rc" <<'EOF'
+          import json, sys, time, urllib.request
+          old = int(sys.argv[1])
+          for _ in range(150):
+              apps = json.load(urllib.request.urlopen("http://127.0.0.1:18110/api/apps"))["apps"]
+              rc = next(a for a in apps if a["app"]["name"] == "radio-controller")
+              if rc["state"] == "STATE_RUNNING" and int(rc["app"].get("pid", 0)) not in (0, old):
+                  assert rc.get("restarts") == 1, rc
+                  open("/tmp/rc2.pid", "w").write(str(rc["app"]["pid"]))
+                  break
+              time.sleep(0.1)
+          else:
+              sys.exit("radio-controller was not restarted: %s" % rc)
+          EOF
+          rc2=$(cat /tmp/rc2.pid)
+          kill -TERM $pid $rc2 $hub
           wait $pid
-          wait $rc
+          wait $hub
+          for _ in $(seq 100); do kill -0 $rc2 2>/dev/null || break; sleep 0.1; done
           run_app 18101 ./sensor_service -c sensor_service.toml
           run_app 18102 ./pipeline -c pipeline.toml --producers 2
           run_app 18103 ./thermostat -c thermostat.toml -D thermostat.settings_file=/tmp/thermostat.json

@@ -1,0 +1,108 @@
+// forge-hub: the registry and supervisor of the forgecpp applications on a
+// device (optional). Every application tries to register when it starts
+// ([hub] in its configuration) and keeps running whether or not a hub
+// answers.
+//
+//   application --HubRequest{register}-->   hub   [hub].endpoint, REQ/REP, localhost
+//   application <--HubReply--------------   hub
+//   application --HubRequest{unregister}--> hub   on shutdown, with the reason
+//
+// The hub reads everything it needs to restart an application (executable,
+// arguments, working directory, environment, user, systemd unit) from
+// /proc/<pid> itself; registrations carry no commands.
+syntax = "proto3";
+
+package forge.v1;
+
+option cc_enable_arenas = true;
+
+// What the hub does when the application ends without being asked to.
+message RestartPolicy {
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    MODE_NEVER = 1;       // only report it
+    MODE_ON_FAILURE = 2;  // crash, kill, hang or exit with a non-zero code
+    MODE_ALWAYS = 3;      // also after a clean exit (not after a stop request)
+  }
+  Mode mode = 1;
+  uint32 max_restarts = 2;    // restarts allowed within window_s (0 = unlimited)
+  uint32 window_s = 3;
+  uint32 delay_s = 4;         // wait before restarting
+  bool critical = 5;          // giving up raises a critical alarm
+  uint32 hang_timeout_s = 6;  // unresponsive this long = hung, killed and restarted (0 = off)
+}
+
+message AppRegistration {
+  string name = 1;
+  string version = 2;
+  string description = 3;
+  uint32 pid = 4;
+  uint32 http_port = 5;               // 0 = no web interface
+  map<string, string> endpoints = 6;  // control, events, data, telnet (as the application binds them)
+  RestartPolicy policy = 7;
+  string group = 8;                   // dashboard grouping (optional)
+  string title = 9;                   // display name (default: name)
+  string unit = 10;                   // systemd unit the application says it runs in (informational)
+  string forgecpp = 11;               // framework version
+}
+
+message Unregister {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    REASON_SIGNAL = 1;  // asked to stop (SIGTERM, SIGINT, systemctl stop): never restarted
+    REASON_EXIT = 2;    // the application ended on its own (exit_code)
+  }
+  string name = 1;
+  uint32 pid = 2;
+  Reason reason = 3;
+  int32 exit_code = 4;
+}
+
+message HubRequest {
+  oneof kind {
+    AppRegistration register = 1;
+    Unregister unregister = 2;
+  }
+}
+
+message HubReply {
+  bool ok = 1;
+  string error = 2;
+  string hub = 3;       // hub name and version
+  string instance = 4;  // changes when the hub restarts
+}
+
+// Status of one application as the hub sees it (stream "apps", /api/apps).
+message AppStatus {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    STATE_RUNNING = 1;
+    STATE_STARTING = 2;      // (re)started by the hub, waiting for it to register
+    STATE_STOPPED = 3;       // stopped on request or exited cleanly
+    STATE_CRASHED = 4;       // ended without unregistering (restart may follow)
+    STATE_FAILED = 5;        // gave up: too many restarts, or it could not be started
+    STATE_UNRESPONSIVE = 6;  // process alive, health checks failing
+    STATE_UNKNOWN = 7;       // known from an earlier boot, not running since
+  }
+  AppRegistration app = 1;
+  State state = 2;
+  string message = 3;           // why it is in this state
+  string health = 4;            // ok | degraded | failed (the application's own view)
+  uint32 alarms_active = 5;
+  string alarms_highest = 6;    // severity of the most important active alarm
+  uint64 uptime_s = 7;
+  double cpu_percent = 8;
+  uint64 rss_bytes = 9;
+  uint32 restarts = 10;         // restarts by the hub (or systemd) since it is known
+  uint32 restarts_in_window = 11;
+  string supervision = 12;      // "systemd <unit>", "exec" or "none"
+  int64 last_seen_unix_ms = 13; // last successful health check or registration
+  string url = 14;              // static entries: page URL ("{host}" = the address the browser used)
+  bool static_entry = 15;       // from the hub's configuration, not registered
+}
+
+message AppList {
+  repeated AppStatus apps = 1;
+  string hub = 2;
+  string boot_id = 3;
+}
