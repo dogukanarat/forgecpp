@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(forgecpp
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "Batteries-included C++17 framework for Linux daemons and services"
     HOMEPAGE_URL "https://github.com/dogukanarat/forgecpp"
     LANGUAGES CXX)
@@ -20,7 +20,11 @@ option(FORGECPP_BUILD_EXAMPLES  "Build the example applications"       ${FORGECP
 option(FORGECPP_BUILD_TESTS     "Build the unit tests (needs doctest)"  ${FORGECPP_TOP_LEVEL})
 option(FORGECPP_INSTALL_TOOLS   "Install the forgecpp-new scaffolder"   ON)
 option(FORGECPP_WARNINGS        "Enable extra compiler warnings"        ${FORGECPP_TOP_LEVEL})
-set(FORGECPP_WITH_ZMQ AUTO CACHE STRING "Build forgecpp::zmq (ON, OFF or AUTO = if ZeroMQ is found)")
+option(FORGECPP_BUILD_HUB       "Build forge-hub (dashboard of the device's applications)" ${FORGECPP_TOP_LEVEL})
+# ZeroMQ and protobuf are core dependencies: every application speaks forge.v1.
+set(FORGECPP_WITH_ZMQ ON CACHE STRING "Deprecated: ZeroMQ is always used")
+set(FORGECPP_SANITIZE "" CACHE STRING
+    "Build with sanitizers: address, undefined, thread or a list (address;undefined)")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -32,6 +36,25 @@ endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Sanitizers apply to everything built here (library, tools, tests, examples).
+# The dependencies in the prefix are not instrumented: for ThreadSanitizer
+# build them with it too (install.sh --sanitize thread) to avoid false reports.
+if(FORGECPP_SANITIZE)
+    if(MSVC)
+        message(FATAL_ERROR "FORGECPP_SANITIZE is for GCC and Clang")
+    endif()
+    if("thread" IN_LIST FORGECPP_SANITIZE AND "address" IN_LIST FORGECPP_SANITIZE)
+        message(FATAL_ERROR "FORGECPP_SANITIZE: thread and address cannot be combined")
+    endif()
+    string(REPLACE ";" "," _forge_san "${FORGECPP_SANITIZE}")
+    add_compile_options(-fsanitize=${_forge_san} -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=${_forge_san})
+    if("undefined" IN_LIST FORGECPP_SANITIZE)
+        add_compile_options(-fno-sanitize-recover=undefined)
+    endif()
+    message(STATUS "forgecpp: sanitizers ${_forge_san}")
+endif()
 
 # ---------------------------------------------------------------------------
 # Dependencies. They are built from the git submodules in third_party/ and
@@ -48,26 +71,23 @@ find_package(nlohmann_json   CONFIG REQUIRED)
 find_package(tomlplusplus    CONFIG REQUIRED)
 find_package(httplib         CONFIG REQUIRED)
 find_package(doctest         CONFIG)
-
-# Optional: ZeroMQ messaging (forgecpp::zmq).
-set(FORGECPP_HAS_ZMQ OFF)
-if(NOT FORGECPP_WITH_ZMQ STREQUAL "OFF")
-    if(FORGECPP_WITH_ZMQ STREQUAL "ON")
-        find_package(cppzmq CONFIG REQUIRED)
-    else()
-        find_package(cppzmq CONFIG QUIET)
-    endif()
-    if(cppzmq_FOUND)
-        set(FORGECPP_HAS_ZMQ ON)
-        # cppzmq-static is the variant for a static libzmq build.
-        if(TARGET libzmq)
-            set(FORGECPP_CPPZMQ_TARGET cppzmq)
-        else()
-            set(FORGECPP_CPPZMQ_TARGET cppzmq-static)
-        endif()
-    endif()
+find_package(cppzmq          CONFIG REQUIRED)
+# cppzmq-static is the variant for a static libzmq build.
+if(TARGET libzmq)
+    set(FORGECPP_CPPZMQ_TARGET cppzmq)
+else()
+    set(FORGECPP_CPPZMQ_TARGET cppzmq-static)
 endif()
-message(STATUS "forgecpp: ZeroMQ support ${FORGECPP_HAS_ZMQ}")
+set(FORGECPP_HAS_ZMQ ON)
+# protobuf: the bundled one installs a CMake package; distributions ship FindProtobuf.
+find_package(protobuf CONFIG QUIET)
+if(NOT protobuf_FOUND)
+    find_package(Protobuf REQUIRED)
+endif()
+if(NOT TARGET protobuf::libprotobuf)
+    message(FATAL_ERROR "protobuf found but protobuf::libprotobuf is missing")
+endif()
+set(FORGECPP_PROTO_DIR "${PROJECT_SOURCE_DIR}/proto")
 
 # BS::thread_pool is a single header without a CMake package; we ship it
 # ourselves next to the forgecpp headers.
@@ -89,17 +109,39 @@ include("${PROJECT_SOURCE_DIR}/cmake/ForgeHelpers.cmake")
 
 add_library(forgecpp
     src/application.cpp
+    src/app/http_frontend.cpp
+    src/app/messaging.cpp
+    src/app/remote_console.cpp
+    src/app/state.cpp
     src/alarms.cpp
+    src/audit.cpp
+    src/auth.cpp
     src/config.cpp
+    src/config_schema.cpp
     src/console.cpp
+    src/control.cpp
+    src/crash.cpp
     src/events.cpp
+    src/health.cpp
+    src/hub.cpp
     src/http.cpp
     src/json.cpp
     src/log.cpp
+    src/metrics.cpp
+    src/proto.cpp
+    src/rt.cpp
     src/scheduler.cpp
     src/systemd.cpp
-    src/web.cpp)
+    src/telnet.cpp
+    src/trace.cpp
+    src/web.cpp
+    src/zmq.cpp)
 add_library(forgecpp::forgecpp ALIAS forgecpp)
+
+# forge.v1 messages, generated into the library (forge/v1/*.pb.h).
+forge_add_proto(forgecpp ROOT proto PROTOS
+    forge/v1/common.proto forge/v1/observability.proto forge/v1/control.proto forge/v1/hub.proto
+    PYTHON "${PROJECT_BINARY_DIR}/python")
 
 # Built-in dashboard (src/web/*) compiled into the library, served at /forge/.
 forge_add_web(forgecpp DIR src/web PREFIX /forge/ SYMBOL forgecpp_builtin_assets)
@@ -121,8 +163,17 @@ target_link_libraries(forgecpp
         nlohmann_json::nlohmann_json
         tomlplusplus::tomlplusplus
         httplib::httplib
+        ${FORGECPP_CPPZMQ_TARGET}
+        protobuf::libprotobuf
     PRIVATE
         replxx::replxx)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # backtrace() lives in libc on glibc; musl needs libexecinfo (optional).
+    find_library(FORGE_EXECINFO execinfo)
+    if(FORGE_EXECINFO)
+        target_link_libraries(forgecpp PRIVATE ${FORGE_EXECINFO})
+    endif()
+endif()
 
 set_target_properties(forgecpp PROPERTIES
     VERSION   ${PROJECT_VERSION}
@@ -141,19 +192,17 @@ if(doctest_FOUND)
     target_link_libraries(forgecpp_testing PUBLIC forgecpp doctest::doctest)
 endif()
 
-# ZeroMQ messaging: a separate library so daemons that do not use it do not
-# link libzmq.
-if(FORGECPP_HAS_ZMQ)
-    add_library(forgecpp_zmq src/zmq.cpp)
-    add_library(forgecpp::zmq ALIAS forgecpp_zmq)
-    set_target_properties(forgecpp_zmq PROPERTIES
-        EXPORT_NAME zmq
-        VERSION   ${PROJECT_VERSION}
-        SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR})
-    target_link_libraries(forgecpp_zmq PUBLIC forgecpp ${FORGECPP_CPPZMQ_TARGET})
-    if(FORGECPP_WARNINGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(forgecpp_zmq PRIVATE -Wall -Wextra -Wpedantic)
-    endif()
+# forgecpp::zmq: kept for applications written when ZeroMQ was optional.
+add_library(forgecpp_zmq INTERFACE)
+add_library(forgecpp::zmq ALIAS forgecpp_zmq)
+set_target_properties(forgecpp_zmq PROPERTIES EXPORT_NAME zmq)
+target_link_libraries(forgecpp_zmq INTERFACE forgecpp)
+
+# forgectl: command line client for every forgecpp application.
+add_executable(forgectl tools/forgectl.cpp)
+target_link_libraries(forgectl PRIVATE forgecpp)
+if(FORGECPP_WARNINGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(forgectl PRIVATE -Wall -Wextra)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -167,6 +216,10 @@ if(FORGECPP_BUILD_TESTS AND NOT doctest_FOUND)
 endif()
 if(FORGECPP_BUILD_TESTS)
     enable_testing()
+endif()
+
+if(FORGECPP_BUILD_HUB)
+    add_subdirectory(hub)
 endif()
 
 if(FORGECPP_BUILD_EXAMPLES)
@@ -188,9 +241,7 @@ if(TARGET forgecpp_testing)
     list(APPEND _forge_targets forgecpp_testing)
     set(FORGECPP_HAS_TESTING ON)
 endif()
-if(TARGET forgecpp_zmq)
-    list(APPEND _forge_targets forgecpp_zmq)
-endif()
+list(APPEND _forge_targets forgecpp_zmq)
 
 install(TARGETS ${_forge_targets}
     EXPORT forgecppTargets
@@ -201,6 +252,14 @@ install(TARGETS ${_forge_targets}
 
 install(DIRECTORY include/forge DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         FILES_MATCHING PATTERN "*.hpp")
+install(DIRECTORY "${PROJECT_BINARY_DIR}/forge_proto/forgecpp/forge" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        FILES_MATCHING PATTERN "*.pb.h")
+install(DIRECTORY proto/forge DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp/proto)
+# forge-v1 Python package: the generated forge/v1/*_pb2.py and the framing
+# helpers, in site-packages (from a build directory: PYTHONPATH=<build>/python).
+configure_file(python/forge/v1/framing.py "${PROJECT_BINARY_DIR}/python/forge/v1/framing.py" COPYONLY)
+forge_install_python(DIRECTORY "${PROJECT_BINARY_DIR}/python")
+install(TARGETS forgectl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES "${PROJECT_BINARY_DIR}/include/forge/version.hpp"
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/forge)
 install(FILES "${FORGECPP_THREAD_POOL_DIR}/BS_thread_pool.hpp"
@@ -221,10 +280,11 @@ install(FILES
         "${PROJECT_BINARY_DIR}/forgecppConfigVersion.cmake"
         cmake/ForgeHelpers.cmake
         cmake/ForgeEmbed.cmake
+        cmake/forge-app.service.in
     DESTINATION ${FORGECPP_CMAKE_DIR})
 
 # pkg-config for non-CMake consumers (plain Makefiles, autotools, meson).
-set(FORGECPP_PC_REQUIRES "spdlog")
+set(FORGECPP_PC_REQUIRES "spdlog protobuf libzmq")
 if(TARGET OpenSSL::SSL)
     string(APPEND FORGECPP_PC_REQUIRES " openssl")
 endif()
@@ -247,3 +307,15 @@ endif()
 install(FILES LICENSE README.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(FILES third_party/thread-pool/LICENSE.txt
         DESTINATION ${CMAKE_INSTALL_DOCDIR}/licenses RENAME BS_thread_pool-LICENSE.txt)
+
+# API reference (Doxygen): cmake --build build --target forgecpp_docs -> build/docs/html
+find_package(Doxygen QUIET)
+if(DOXYGEN_FOUND)
+    set(FORGE_DOCS_OUT "${PROJECT_BINARY_DIR}/docs")
+    configure_file(docs/Doxyfile.in "${PROJECT_BINARY_DIR}/Doxyfile" @ONLY)
+    add_custom_target(forgecpp_docs
+        COMMAND ${DOXYGEN_EXECUTABLE} "${PROJECT_BINARY_DIR}/Doxyfile"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+        COMMENT "API reference -> ${FORGE_DOCS_OUT}/html/index.html"
+        VERBATIM)
+endif()

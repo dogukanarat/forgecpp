@@ -67,6 +67,23 @@ bool starts_with(std::string_view s, std::string_view prefix) {
 
 }  // namespace
 
+namespace {
+thread_local const Console::Session* tls_session = nullptr;
+
+struct SessionScope {
+    explicit SessionScope(const Console::Session* s) : previous(tls_session) { tls_session = s; }
+    ~SessionScope() { tls_session = previous; }
+    const Console::Session* previous;
+};
+
+Console::Session& local_session() {
+    static Console::Session s;
+    return s;
+}
+}  // namespace
+
+const Console::Session* Console::current_session() { return tls_session; }
+
 struct Console::Impl {
     struct Command {
         std::string help;
@@ -262,7 +279,11 @@ bool Console::remove(const std::string& name) {
 
 std::vector<std::string> Console::commands() const { return impl_->names_with_prefix(""); }
 
-bool Console::execute(std::string_view line) {
+bool Console::execute(std::string_view line) { return execute(line, local_session()); }
+
+bool Console::execute(std::string_view line, const Session& session) {
+    // Unknown-command errors also go to the session.
+    SessionScope outer(&session);
     auto args = split(line);
     if (args.empty()) return true;
     const std::string name = args.front();
@@ -273,7 +294,8 @@ bool Console::execute(std::string_view line) {
         error("unknown command '" + name + "' (type 'help')");
         return false;
     }
-    auto invoke = [this, handler = cmd->handler, args = std::move(args)] {
+    auto invoke = [this, handler = cmd->handler, args = std::move(args), session] {
+        SessionScope scope(&session);
         try {
             handler(args);
         } catch (const std::exception& e) {
@@ -307,7 +329,13 @@ void Console::on_exit(std::function<void()> callback) {
     impl_->exit_callback = std::move(callback);
 }
 
-void Console::write(std::string_view text) { impl_->write(text); }
+void Console::write(std::string_view text) {
+    if (tls_session && tls_session->output) {
+        tls_session->output(text);
+        return;
+    }
+    impl_->write(text);
+}
 
 void Console::error(std::string_view message) {
     if (impl_->options.color) {

@@ -1,10 +1,14 @@
+// forge.v1 over ZeroMQ: framing, streams, request/reply, the control service
+// and the events of an application.
+#include <forge/control.hpp>
 #include <forge/forge.hpp>
+#include <forge/proto.hpp>
 #include <forge/testing.hpp>
+#include <forge/trace.hpp>
 #include <forge/zmq.hpp>
 
 #include <atomic>
 #include <cstring>
-#include <future>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -12,156 +16,316 @@
 using forge::json;
 using namespace std::chrono_literals;
 namespace fz = forge::zmq;
+namespace v1 = forge::v1;
 
-TEST_CASE("zmq: pub/sub with header, payload and topic filtering") {
+namespace {
+v1::LogRecord record(const std::string& text) {
+    v1::LogRecord r;
+    r.set_message(text);
+    r.set_level("info");
+    return r;
+}
+}  // namespace
+
+TEST_CASE("zmq: forge.v1 framing - header, typed body, blob and topic filtering") {
+    forge::proto::set_source("zmq-test");
     fz::Sender pub(fz::Sender::Kind::pub, "tcp://127.0.0.1:*");
-    const auto endpoint = pub.endpoint();
-    REQUIRE(endpoint.rfind("tcp://127.0.0.1:", 0) == 0);
+    REQUIRE(pub.endpoint().rfind("tcp://127.0.0.1:", 0) == 0);
 
     std::mutex m;
     std::vector<fz::Message> got;
     fz::Receiver::Options opts;
     opts.topics = {"iq"};
-    fz::Receiver sub(fz::Receiver::Kind::sub, endpoint, [&](fz::Message&& msg) {
+    fz::Receiver sub(fz::Receiver::Kind::sub, pub.endpoint(), [&](fz::Message&& msg) {
         std::lock_guard lock(m);
         got.push_back(std::move(msg));
     }, opts);
-
     // Subscriptions propagate asynchronously ("slow joiner"): wait for them.
     REQUIRE(forge::testing::wait_until([&] { return pub.subscriptions() == 1; }));
 
     const std::vector<std::int16_t> samples{1, -1, 32767, -32768};
-    CHECK(pub.send("status", {{"ignored", true}}));
-    CHECK(pub.send("iq", {{"seq", 7}}, samples.data(), samples.size() * sizeof(std::int16_t)));
-    REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return got.size() == 1; }));
+    CHECK(pub.publish("status", record("ignored")));
+    CHECK(pub.publish("iq", record("first"), samples.data(), samples.size() * sizeof(std::int16_t)));
+    CHECK(pub.publish("iq", record("second")));
+    REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return got.size() == 2; }));
 
     std::lock_guard lock(m);
-    CHECK(got[0].topic == "iq");
-    CHECK(got[0].header["seq"] == 7);
-    REQUIRE(got[0].payload.size() == 8);
+    const auto& a = got[0];
+    CHECK(a.topic == "iq");
+    CHECK(a.header.source() == "zmq-test");
+    CHECK(a.header.type() == "forge.v1.LogRecord");
+    CHECK(a.header.seq() == 1);
+    CHECK(got[1].header.seq() == 2);
+    CHECK(a.header.time_unix_ns() > 0);
+    CHECK(a.as<v1::LogRecord>().message() == "first");
+    CHECK_THROWS_AS(a.as<v1::AlarmList>(), fz::Error);  // wrong type
+    REQUIRE(a.blob.size() == 8);
     std::int16_t back[4];
-    std::memcpy(back, got[0].payload.data(), sizeof(back));
+    std::memcpy(back, a.blob.data(), sizeof(back));
     CHECK(back[2] == 32767);
     CHECK(back[3] == -32768);
-    CHECK(pub.sent() == 2);
+    CHECK(got[1].blob.empty());
 }
 
-TEST_CASE("zmq: subscriptions drop when subscribers leave") {
-    fz::Sender pub(fz::Sender::Kind::pub, "tcp://127.0.0.1:*");
+TEST_CASE("zmq: publisher streams - subscribers per topic, rate limit, latest-only, zero copy, loss count") {
+    fz::Publisher pub("tcp://127.0.0.1:*");
+    auto& fast = pub.add("fast", "forge.v1.LogRecord");
+    auto& slow = pub.add("slow", "forge.v1.LogRecord", {"latest", 5});
+    CHECK_FALSE(fast.wanted());  // nobody listens yet
+
+    std::mutex m;
+    std::vector<fz::Message> got;
+    fz::Receiver::Options opts;
+    opts.topics = {"fast"};
+    fz::Receiver sub(fz::Receiver::Kind::sub, pub.endpoint(), [&](fz::Message&& msg) {
+        std::lock_guard lock(m);
+        got.push_back(std::move(msg));
+    }, opts);
+    REQUIRE(forge::testing::wait_until([&] { return fast.subscribers() == 1; }));
+    CHECK(slow.subscribers() == 0);
+    CHECK(fast.wanted());
+    CHECK_FALSE(slow.wanted());
+
+    // Zero copy: the blob owner lives until ZeroMQ has sent it.
+    auto blob = std::make_shared<std::vector<std::int16_t>>(1024, 7);
+    std::weak_ptr<std::vector<std::int16_t>> weak = blob;
+    CHECK(fast.publish(record("with blob"), blob, blob->data(), blob->size() * 2));
+    blob.reset();
+    for (int i = 0; i < 9; ++i) fast.publish(record("n" + std::to_string(i)));
+    REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return got.size() == 10; }));
+    CHECK(forge::testing::wait_until([&] { return weak.expired(); }));
     {
-        fz::Receiver a(fz::Receiver::Kind::sub, pub.endpoint(), [](fz::Message&&) {});
-        fz::Receiver b(fz::Receiver::Kind::sub, pub.endpoint(), [](fz::Message&&) {});
-        REQUIRE(forge::testing::wait_until([&] { return pub.subscriptions() == 2; }));
+        std::lock_guard lock(m);
+        CHECK(got[0].blob.size() == 2048);
+        CHECK(got[9].header.seq() == 10);
     }
-    CHECK(forge::testing::wait_until([&] { return pub.subscriptions() == 0; }));
+    CHECK(fast.info().sent() == 10);
+    CHECK(sub.lost() == 0);
+
+    // Rate limit: at most 5 per second -> wanted() is false right after a true.
+    fz::Receiver::Options o2;
+    o2.topics = {"slow"};
+    std::atomic<int> slow_got{0};
+    fz::Receiver sub2(fz::Receiver::Kind::sub, pub.endpoint(), [&](fz::Message&&) { ++slow_got; }, o2);
+    REQUIRE(forge::testing::wait_until([&] { return slow.subscribers() == 1; }));
+    CHECK(slow.wanted());
+    CHECK_FALSE(slow.wanted());
+    // latest-only: a burst collapses to the newest messages, never a backlog.
+    for (int i = 0; i < 100; ++i) slow.publish(record("s" + std::to_string(i)));
+    REQUIRE(forge::testing::wait_until([&] { return slow_got > 0; }));
+    std::this_thread::sleep_for(100ms);
+    CHECK(slow_got < 100);
+    CHECK(slow.info().dropped() > 0);
+
+    const auto list = pub.list();
+    REQUIRE(list.size() == 2);
+    CHECK(list[0].name() == "fast");
+    CHECK(list[0].type() == "forge.v1.LogRecord");
 }
 
-TEST_CASE("zmq: push/pull is lossless and reports drops without a peer") {
-    fz::Sender push(fz::Sender::Kind::push, "tcp://127.0.0.1:*");
-    CHECK_FALSE(push.send("job", {{"n", 0}}));  // nobody connected yet
-    CHECK(push.dropped() == 1);
-
-    std::atomic<int> sum{0}, count{0};
-    fz::Receiver pull(fz::Receiver::Kind::pull, push.endpoint(), [&](fz::Message&& m) {
-        sum += m.header["n"].get<int>();
-        ++count;
-    });
-    REQUIRE(forge::testing::wait_until([&] { return push.send("job", {{"n", 1}}); }));
-    for (int i = 2; i <= 100; ++i) {
-        while (!push.send("job", {{"n", i}})) std::this_thread::sleep_for(1ms);
-    }
-    REQUIRE(forge::testing::wait_until([&] { return count == 100; }));
-    CHECK(sum == 5050);
-}
-
-TEST_CASE("zmq: request/reply server, errors and client timeout") {
-    fz::Server server("tcp://127.0.0.1:*", [](const json& req) -> json {
-        const auto cmd = req.value("cmd", "");
-        if (cmd == "add") return {{"sum", req.at("a").get<int>() + req.at("b").get<int>()}};
-        if (cmd == "forbidden") throw forge::http::HttpError(403, "nope");
-        if (cmd == "crash") throw std::runtime_error("boom");
-        throw fz::Error("unknown command", 400);
-    });
-
+TEST_CASE("zmq: request/reply server and a client that recovers from timeouts") {
+    fz::Server server("tcp://127.0.0.1:*", [](std::string_view req) { return "echo:" + std::string(req); });
     fz::Client client(server.endpoint(), 2s);
-    CHECK(client.call("add", {{"a", 2}, {"b", 3}})["sum"] == 5);
-    auto raw = client.request({{"cmd", "crash"}});
-    CHECK(raw["ok"] == false);
-    CHECK(raw["status"] == 500);
-    try {
-        client.call("forbidden");
-        FAIL("expected Error");
-    } catch (const fz::Error& e) {
-        CHECK(e.status() == 403);
-    }
-    CHECK_THROWS_AS(client.call("add", {{"a", 1}}), fz::Error);  // missing "b" -> 400
-    CHECK(server.requests() == 4);
-
-    // Timeout against a server that is gone; the client recovers afterwards.
+    CHECK_THROWS_AS(client.request_json({{"a", 1}}), fz::Error);  // "echo:..." is not JSON
     const auto endpoint = server.endpoint();
     server.stop();
     client.timeout(200ms);
-    CHECK_THROWS_AS(client.call("add", {{"a", 1}, {"b", 1}}), fz::Error);
-    fz::Server again(endpoint, [](const json&) { return json{{"back", true}}; });
+    CHECK_THROWS_AS(client.request_json({{"cmd", "ping"}}), fz::Error);
+    fz::Server again(endpoint, [](std::string_view) { return std::string(R"({"back":true})"); });
     client.timeout(2s);
-    CHECK(client.call("anything")["back"] == true);
+    CHECK(client.request_json({{"cmd", "x"}})["back"] == true);
 }
 
-TEST_CASE("zmq: serve_application exposes controls and alarms") {
-    struct App : forge::Application {
-        App() : Application({"zmqapp", "3.0.0"}) {}
-        double freq = 100.0;
-        int presses = 0;
+namespace {
+// One raw REQ exchange; "" on timeout.
+std::string req_exchange(const std::string& endpoint, const std::string& body, std::chrono::milliseconds timeout = 3s) {
+    ::zmq::socket_t s(fz::context(), ::zmq::socket_type::req);
+    s.set(::zmq::sockopt::linger, 0);
+    s.connect(endpoint);
+    s.send(::zmq::buffer(body), ::zmq::send_flags::none);
+    ::zmq::pollitem_t item{s.handle(), 0, ZMQ_POLLIN, 0};
+    if (::zmq::poll(&item, 1, timeout) <= 0) return {};
+    ::zmq::message_t m;
+    (void)s.recv(m);
+    return m.to_string();
+}
+}  // namespace
 
-    protected:
-        void setup_web(forge::web::Dashboard& ui) override {
-            auto& g = ui.group("Radio");
-            g.number("freq", "Frequency", freq).range(70, 6000);
-            g.button("cal", "Calibrate", [this] { ++presses; });
+TEST_CASE("zmq: a slow request does not hold up the others; replies go to the client that asked") {
+    std::atomic<int> slow_running{0};
+    fz::ServerOptions options;
+    options.workers = 2;
+    fz::Server server("tcp://127.0.0.1:*", [&](std::string_view req) {
+        if (req == "slow") {
+            ++slow_running;
+            std::this_thread::sleep_for(800ms);
+            return std::string("slow done");
         }
-        void on_start() override { server_ = fz::serve_application(*this, "tcp://127.0.0.1:*"); }
-        void on_stop() override { server_.reset(); }
+        return "re:" + std::string(req);
+    }, options);
+    CHECK(server.workers() == 2);
 
-    public:
-        std::unique_ptr<fz::Server> server_;
-    };
+    std::string slow_reply;
+    std::thread slow([&] { slow_reply = req_exchange(server.endpoint(), "slow"); });
+    while (slow_running == 0) std::this_thread::sleep_for(1ms);
+    const auto t0 = std::chrono::steady_clock::now();
+    CHECK(req_exchange(server.endpoint(), "ping") == "re:ping");
+    CHECK(std::chrono::steady_clock::now() - t0 < 400ms);
 
-    // No HTTP at all: controls must still work over ZeroMQ.
-    std::vector<std::string> args{"zmqapp", "-D", "log.console=false"};
-    std::vector<char*> argv;
-    for (auto& a : args) argv.push_back(a.data());
+    // Many clients at once: each gets its own answer.
+    std::vector<std::thread> clients;
+    std::atomic<int> right{0};
+    for (int i = 0; i < 16; ++i) {
+        clients.emplace_back([&, i] {
+            if (req_exchange(server.endpoint(), std::to_string(i)) == "re:" + std::to_string(i)) ++right;
+        });
+    }
+    for (auto& c : clients) c.join();
+    CHECK(right == 16);
+    slow.join();
+    CHECK(slow_reply == "slow done");
+    CHECK(server.requests() == 18);
+}
 
-    App app;
-    std::promise<std::string> endpoint;
-    app.hook_start([&](forge::Application&) { app.post([&] { endpoint.set_value(app.server_->endpoint()); }); });
-    std::thread runner([&] { app.run(static_cast<int>(argv.size()), argv.data()); });
+TEST_CASE("zmq: requests that waited too long for a worker are refused with 503, not handled") {
+    std::atomic<int> handled{0};
+    fz::ServerOptions options;
+    options.workers = 1;
+    options.max_queue_wait = 100ms;
+    fz::Server server("tcp://127.0.0.1:*", [&](std::string_view req) {
+        ++handled;
+        if (req == "slow") std::this_thread::sleep_for(400ms);
+        return std::string("ok");
+    }, options);
+    std::thread slow([&] { CHECK(req_exchange(server.endpoint(), "slow") == "ok"); });
+    while (handled == 0) std::this_thread::sleep_for(1ms);
+    const auto reply = req_exchange(server.endpoint(), "late");
+    v1::Reply r;
+    REQUIRE(r.ParseFromString(reply));
+    CHECK(r.status() == 503);
+    slow.join();
+    CHECK(handled == 1);
+    CHECK(server.rejected() == 1);
+}
 
-    fz::Client c(endpoint.get_future().get());
-    CHECK(c.call("ping")["pong"] == true);
-    CHECK(c.call("info")["version"] == "3.0.0");
-    CHECK(c.call("ui")["ui"]["groups"][0]["controls"].size() == 2);
-    CHECK(c.call("set", {{"id", "freq"}, {"value", 2400}})["value"] == 2400.0);
-    CHECK(c.call("get", {{"id", "freq"}})["value"] == 2400.0);
-    CHECK(c.call("state")["state"]["freq"] == 2400.0);
-    c.call("press", {{"id", "cal"}});
+namespace {
+struct ControlledApp : forge::Application {
+    ControlledApp() : Application({"zmqapp", "3.0.0"}) {}
+    double freq = 100.0;
+    int presses = 0;
 
-    auto expect_status = [&](const json& req, int status) {
-        const auto reply = c.request(req);
-        CHECK(reply["ok"] == false);
-        CHECK(reply["status"] == status);
-    };
-    expect_status({{"cmd", "set"}, {"id", "freq"}, {"value", 9999}}, 400);  // out of range
-    expect_status({{"cmd", "set"}, {"id", "nope"}, {"value", 1}}, 404);
-    expect_status({{"cmd", "get"}}, 400);
-    expect_status({{"cmd", "bogus"}}, 400);
+protected:
+    void setup_web(forge::web::Dashboard& ui) override {
+        auto& g = ui.group("Radio");
+        g.number("freq", "Frequency", freq).range(70, 6000);
+        g.button("cal", "Calibrate", [this] { ++presses; });
+        g.command("scan", "Scan", {forge::web::number_param("from", 100), forge::web::number_param("to")},
+                  [](const json& a) { return json{{"width", a["to"].get<double>() - a["from"].get<double>()}}; });
+    }
+};
+}  // namespace
 
-    app.alarms().raise("rf.overflow", forge::Severity::warning, "RX overflow");
-    CHECK(c.call("alarms")["alarms"].size() == 1);
-    CHECK(c.call("ack", {{"id", "all"}})["acknowledged"] == 1);
-    CHECK(c.call("info")["alarms"]["pending"] == 0);
+TEST_CASE("zmq: an application's control endpoint (forge.v1 and the older JSON) and its events") {
+    forge::testing::AppRunner<ControlledApp> r(
+        {"-D", "forge.control=tcp://127.0.0.1:*", "-D", "forge.events=tcp://127.0.0.1:*"});
+    const auto ep = r->endpoints();
+    REQUIRE(ep.count("control"));
+    REQUIRE(ep.count("events"));
 
-    app.stop();
-    runner.join();
-    CHECK(app.freq == 2400.0);
-    CHECK(app.presses == 1);
+    // Events: state changes and the audit trail.
+    std::mutex m;
+    std::vector<fz::Message> events;
+    fz::Receiver sub(fz::Receiver::Kind::sub, ep.at("events"), [&](fz::Message&& msg) {
+        std::lock_guard lock(m);
+        events.push_back(std::move(msg));
+    });
+    REQUIRE(forge::testing::wait_until([&] {
+        // until the subscription is in place (the first published event arrives)
+        r->alarms().raise("probe", forge::Severity::info, "probe");
+        r->alarms().clear("probe");
+        std::lock_guard lock(m);
+        return !events.empty();
+    }));
+
+    fz::Client c(ep.at("control"));
+    c.set_client("test-suite");
+    const auto info = c.info();
+    CHECK(info.name() == "zmqapp");
+    CHECK(info.version() == "3.0.0");
+    CHECK(info.protocol() == "forge.v1");
+    CHECK(info.endpoints().at("control") == ep.at("control"));
+
+    CHECK(c.set("freq", 2400) == 2400);
+    CHECK(c.get("freq") == 2400);
+    c.press("cal");
+    CHECK(c.call_command("scan", {{"to", 600}})["width"] == 500);
+    try {
+        c.set("freq", 9999);
+        FAIL("expected an error");
+    } catch (const fz::Error& e) {
+        CHECK(e.status() == 400);
+    }
+    try {
+        c.call_command("scan", {});  // "to" is required
+        FAIL("expected an error");
+    } catch (const fz::Error& e) {
+        CHECK(e.status() == 400);
+    }
+
+    // The reply continues the request's trace.
+    forge::v1::Request req;
+    req.mutable_ping();
+    const auto trace = forge::trace::new_trace();
+    *req.mutable_trace() = forge::trace::to_proto(trace);
+    const auto reply = c.request(req);
+    CHECK(reply.ok());
+    CHECK(forge::trace::from_proto(reply.trace()).trace_hex() == trace.trace_hex());
+
+    // Older JSON commands on the same socket.
+    CHECK(c.request_json({{"cmd", "get"}, {"id", "freq"}})["value"] == 2400);
+    CHECK(c.request_json({{"cmd", "set"}, {"id", "freq"}, {"value", 9999}})["status"] == 400);
+    CHECK(c.request_json({{"cmd", "bogus"}})["status"] == 400);
+
+    r->alarms().raise("rf.overflow", forge::Severity::warning, "RX overflow");
+    forge::v1::Request alarms;
+    alarms.mutable_alarms();
+    CHECK(c.call(alarms).alarms().alarms_size() >= 1);
+    forge::v1::Request ack;
+    ack.mutable_ack()->set_id("all");
+    CHECK(c.call(ack).count() >= 1);
+
+    REQUIRE(forge::testing::wait_until([&] {
+        std::lock_guard lock(m);
+        bool state = false, audit = false;
+        for (const auto& e : events) {
+            if (e.topic == "state" && e.as<v1::Values>().values().count("freq")) state = true;
+            if (e.topic == "audit") {
+                const auto a = e.as<v1::AuditRecord>();
+                if (a.action() == "set" && a.target() == "freq" && a.client() == "test-suite") audit = true;
+            }
+        }
+        return state && audit;
+    }));
+    r.stop();
+    CHECK(r->freq == 2400.0);
+    CHECK(r->presses == 1);
+}
+
+TEST_CASE("zmq: the older JSON protocol is counted, and refused with [forge].legacy_json = false") {
+    auto& counter = forge::metrics::registry().counter("forge.control.legacy_json", "");
+    {
+        forge::testing::AppRunner<ControlledApp> r({"-D", "forge.control=tcp://127.0.0.1:*"});
+        fz::Client c(r->endpoints().at("control"), 3s);
+        const auto before = counter.value();
+        CHECK(c.request_json({{"cmd", "get"}, {"id", "freq"}})["value"] == 100.0);
+        CHECK(c.request_json({{"cmd", "ping"}})["ok"] == true);
+        CHECK(counter.value() == before + 2);
+    }
+    forge::testing::AppRunner<ControlledApp> r(
+        {"-D", "forge.control=tcp://127.0.0.1:*", "-D", "forge.legacy_json=false"});
+    fz::Client c(r->endpoints().at("control"), 3s);
+    const auto reply = c.request_json({{"cmd", "get"}, {"id", "freq"}});
+    CHECK(reply["ok"] == false);
+    CHECK(reply["status"] == 410);
+    CHECK(c.get("freq") == 100.0);  // forge.v1 is not affected
 }

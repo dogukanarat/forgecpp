@@ -1,0 +1,92 @@
+# radio-controller configuration
+# Reload with: systemctl reload radio-controller   (or kill -HUP <pid>)
+
+[radio]
+backend = "sim"               # sim | iio  (also: --backend)
+uri = ""                      # iio: "local:" (on the board), "ip:192.168.2.1", "usb:1.2.5"; "" = libiio default
+timeout_ms = 2000
+
+# Channel roles: set them to what the transceiver has (AD9364: RX1/TX1 only;
+# AD9361/AD9363 in 2R2T mode: RX1, RX2, TX1, TX2). A role the hardware cannot
+# do raises the radio.device alarm with the reason. Fixed until the next start.
+rx_channels = [1]             # RX channels it listens to: stream "iq" on [forge].data (IqBlock.channel)
+tx_channel = 1                # TX channel it drives from [zmq].tx
+tap_rx = [2]                  # RX channels it shares on [forge].data (topics "rx1", "rx2"): e.g. the spectrum analyzer
+tap_samples = 65536           # samples per shared block, at most buffer_size (= the analyzer's largest FFT)
+tap_hz = 20                   # shared blocks per second (0 = every buffer)
+
+buffer_size = 65536           # samples per RX/TX DMA buffer
+rx_enabled = true
+tx_enabled = false
+
+rx_lo_hz = 2412000000
+tx_lo_hz = 2412000000
+sample_rate_hz = 30720000     # 2.083334 .. 61.44 MSPS
+rx_bandwidth_hz = 18000000
+tx_bandwidth_hz = 18000000
+# LO, sample rate and bandwidth are shared by both RX (and both TX) channels;
+# gain is per channel.
+gain_mode = "slow_attack"     # RX1: manual | slow_attack | fast_attack | hybrid
+rx_gain_db = 30               # RX1, used in manual gain mode
+rx2_gain_mode = "slow_attack" # RX2 (AD9361/AD9363)
+rx2_gain_db = 30
+tx_attenuation_db = 10        # of tx_channel: 0 .. 89.75
+tx_max_age_ms = 0             # drop streaming TX blocks older than this (0 = off): bounds the TX latency
+                              # after a stall; the sender must share the clock (same board). qam-modem sets it.
+
+state_file = ""               # e.g. "/var/lib/radio-controller/state.json": keep runtime changes across restarts
+spectrum_size = 1024          # FFT size for the web spectrum
+spectrum_hz = 5
+temperature_alarm_c = 75
+
+[radio.sim]
+channels = 2                  # 1 = AD9364 (1R1T), 2 = AD9361 (2R2T)
+loopback = true               # a simulated cable: TX samples appear in RX (shifted by TX LO - RX LO)
+loopback_tx = 1               # cable from TX1 ...
+loopback_rx = 2               # ... to RX2
+splitter = false              # true: the cable goes through a splitter into every RX (qam-modem on RX1,
+                              # spectrum-analyzer on RX2)
+loopback_db = -20             # TX output -> RX input (cable, splitter, attenuators), at TX attenuation 0
+loopback_cfo_hz = 0           # frequency error of the received copy (e.g. 1200 for two oscillators)
+
+# forge.v1 standard endpoints (same keys in every forgecpp application)
+[forge]
+control = "tcp://*:5557"      # forgectl, remote panels: forge.v1 requests (older JSON commands too)
+events = "tcp://*:5559"       # state, alarms, log, audit, health, metrics
+data = "tcp://*:5555"         # streams: "iq" (every buffer of rx_channels), "rx1"/"rx2" (tap_rx)
+
+[zmq]
+tx = "tcp://*:5556"           # PULL: radio.v1.TxBlock + cs16 samples (cyclic = repeat the frame)
+
+[console]
+telnet = "0.0.0.0:2323"       # remote console: telnet <board> 2323 (empty = off)
+
+[threads.rx]                  # the receive thread (real-time on the target)
+policy = "other"              # fifo + priority 80 on the board (needs CAP_SYS_NICE / LimitRTPRIO)
+# priority = 80
+# cpus = [1]                  # keep it on its own core (Zynq-7000: 0 and 1)
+
+# forge-hub (optional): if the device runs one, this application appears on
+# its dashboard (http://<device>/). Restarts are systemd's: the unit generated
+# by forge_add_app (CMakeLists.txt) restarts it after a crash or a hang (watchdog),
+# at most 3 times in 10 minutes.
+[hub]
+critical = true               # its unit failing is a critical alarm on the hub
+group = "Radio"
+
+[http]
+enabled = true
+host = "0.0.0.0"
+port = 8080
+
+# Users and roles for every way in (web, forgectl, telnet):
+# [auth]
+# enabled = true
+# [auth.users.admin]
+# password = "change-me"
+# token = "change-me-too"
+# role = "admin"
+
+[web]
+title = "Radio controller"
+refresh_ms = 250

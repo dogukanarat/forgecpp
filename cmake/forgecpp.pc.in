@@ -9,5 +9,5 @@ URL: @PROJECT_HOMEPAGE_URL@
 Version: @PROJECT_VERSION@
 Requires: @FORGECPP_PC_REQUIRES@
 Cflags: -I${includedir} -I${includedir}/concurrentqueue -std=c++17 -pthread @FORGECPP_PC_DEFINES@
-Libs: -L${libdir} -lforgecpp -pthread
+Libs: -L${libdir} -lforgecpp -lcpp-httplib -pthread
 Libs.private: -lreplxx

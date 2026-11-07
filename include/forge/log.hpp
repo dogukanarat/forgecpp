@@ -8,9 +8,15 @@
 #include <spdlog/spdlog.h>
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
+
+namespace forge::v1 {
+class LogRecord;
+}
 
 namespace forge {
 
@@ -29,6 +35,10 @@ struct Options {
     bool syslog = false;         ///< also log to syslog (LOG_DAEMON)
     std::string flush_level = "warn";
     int flush_interval_s = 2;    ///< periodic flush, 0 = disabled
+    /// text: `pattern`; json: one JSON object per line (time, level, logger,
+    /// message, thread, trace) for log collectors (console and file sinks).
+    std::string format = "text";
+    std::size_t history = 500;   ///< records kept for the panel, RPC and telnet
 };
 
 /// (Re)initialise logging. Safe to call more than once.
@@ -47,6 +57,18 @@ spdlog::level::level_enum parse_level(std::string_view level);
 void set_level(spdlog::level::level_enum level);
 void set_level(std::string_view level);
 spdlog::level::level_enum level();
+/// Level of one named logger (e.g. "radio"); others keep theirs.
+void set_logger_level(const std::string& logger, std::string_view level);
+/// Every logger and its level.
+std::vector<std::pair<std::string, std::string>> logger_levels();
+
+// --- history and live listeners (independent of the web UI) ---------------------
+/// Newest last; limit 0 = everything kept.
+std::vector<v1::LogRecord> history(std::size_t limit = 0);
+using Listener = std::function<void(const v1::LogRecord&)>;
+/// Called for every record at or above the logger level (from the logging thread).
+int add_listener(Listener listener);
+void remove_listener(int id);
 
 /// Add / remove an extra sink (shared by all loggers).
 void add_sink(const spdlog::sink_ptr& sink);

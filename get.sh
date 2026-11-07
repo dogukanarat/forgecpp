@@ -2,7 +2,7 @@
 # One-line installer for forgecpp.
 #
 #   curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh | bash -s -- --prefix /opt/forgecpp --ref v0.2.0
+#   curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh | bash -s -- --prefix /opt/forgecpp --ref v0.3.0
 #
 # Options handled here (everything else is passed to install.sh):
 #   --ref REF          branch or tag to install (default: the repository default branch)

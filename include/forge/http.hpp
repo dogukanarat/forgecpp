@@ -17,6 +17,8 @@
 
 #include "forge/assets.hpp"
 
+#include "forge/error.hpp"
+
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
@@ -43,18 +45,14 @@ using Response = httplib::Response;
 using Headers = httplib::Headers;
 using Params = httplib::Params;
 
-/// Throw from a handler to answer with `status` and {"error": message}.
-/// Thrown by Client for transport errors (status 0) and HTTP status >= 400.
-class HttpError : public std::runtime_error {
+/// Throw from a handler to answer with `status` and {"error": message} (or
+/// `body`). Thrown by Client for transport errors (status 0) and HTTP status
+/// >= 400. Handlers may throw any forge::Error the same way.
+class HttpError : public forge::Error {
 public:
     HttpError(int status, const std::string& message, json body = nullptr)
-        : std::runtime_error(message), status_(status), body_(std::move(body)) {}
-    int status() const { return status_; }
-    const json& body() const { return body_; }
-
-private:
-    int status_;
-    json body_;
+        : forge::Error(status, message, std::move(body)) {}
+    const json& body() const { return details(); }
 };
 
 using Handler = httplib::Server::Handler;
@@ -116,8 +114,11 @@ struct Auth {
     std::string realm = "forgecpp";
     /// Paths reachable without credentials (exact match, or prefix ending in '/').
     std::vector<std::string> public_paths{"/health"};
+    /// Custom check of the Authorization header (e.g. forge::Auth users);
+    /// replaces user/password/token when set.
+    std::function<bool(const std::string& authorization)> check;
 
-    bool enabled() const { return !user.empty() || !token.empty(); }
+    bool enabled() const { return !user.empty() || !token.empty() || static_cast<bool>(check); }
 };
 
 class Server {

@@ -42,7 +42,6 @@ const std::vector<Carrier>& carriers() {
 }
 
 constexpr double kNoiseDbfsAt0dB = -100.0;
-constexpr double kLoopbackCouplingDb = -20.0;  ///< TX output -> RX input in the simulated setup
 
 double db_to_amp(double db) { return std::pow(10.0, db / 20.0); }
 
@@ -130,6 +129,14 @@ public:
         const auto now = Clock::now();
         if (now > deadline_ + period) {
             rx_overflow_ = true;
+            // Nobody read for a while, but the DAC kept playing: drain TX by as much.
+            const double lost = std::chrono::duration<double>(now - deadline_).count();
+            {
+                std::lock_guard lock(tx_mutex_);
+                if (tx_active_ && !tx_cyclic_) {
+                    tx_head_ = std::min(tx_ring_.size(), tx_head_ + static_cast<std::size_t>(lost * s.rate));
+                }
+            }
             deadline_ = now;
         }
         while (Clock::now() < deadline_) {
@@ -137,14 +144,13 @@ public:
             std::this_thread::sleep_for(std::min<Clock::duration>(deadline_ - Clock::now(), std::chrono::milliseconds(20)));
         }
 
-        // Only what is streamed and read is produced (the loopback channel
-        // always, so the TX queue drains like the hardware's).
-        scratch_.resize(2 * n);
+        // The TX queue drains like the hardware's, whether or not a channel is read;
+        // what leaves TX is taken once and reaches every RX it is cabled to.
+        take_tx(s, n);
         for (unsigned ch = 0; ch < 2; ++ch) {
             if (!(rx_mask_ & (1u << ch))) continue;
             std::int16_t* out = ch == 0 ? rx1 : rx2;
-            if (!out && !(options_.loopback && ch == options_.loopback_rx)) continue;
-            generate(s, ch, out ? out : scratch_.data(), n);
+            if (out) generate(s, ch, out, n);
         }
         return n;
     }
@@ -228,7 +234,8 @@ private:
     }
 
     std::string fmt_loopback() const {
-        return "TX" + std::to_string(options_.loopback_tx + 1) + " -> RX" + std::to_string(options_.loopback_rx + 1);
+        const std::string tx = "TX" + std::to_string(options_.loopback_tx + 1);
+        return options_.loopback_split ? tx + " -> splitter -> every RX" : tx + " -> RX" + std::to_string(options_.loopback_rx + 1);
     }
 
     void set(double State::*field, double value) {
@@ -241,75 +248,172 @@ private:
         return state_;
     }
 
+    // A carrier inside the band: a complex rotator advanced one sample at a time.
+    // Plain float arithmetic: std::complex's operator* goes through __mulsc3
+    // (NaN/inf handling) and costs several times as much.
+    struct Rotator {
+        float re = 1, im = 0;          // current phase
+        float step_re = 1, step_im = 0;
+        float amp = 0;
+        void renormalize() {
+            const float m = std::sqrt(re * re + im * im);
+            if (m > 0) {
+                re /= m;
+                im /= m;
+            }
+        }
+    };
+
+    // The receive signal of one channel: noise floor + carriers + TX loopback,
+    // with the AGC. Done in blocks that stay in L1: one pass per block instead
+    // of a pass over the whole buffer per step.
     void generate(const State& s, unsigned ch, std::int16_t* iq, std::size_t n) {
-        buffer_.assign(n, {});
+        constexpr std::size_t kBlock = 1024;
+        buffer_.resize(kBlock);
         const double half_band = std::min(s.rate, s.rx_bw) / 2.0;
         const double gain_amp = db_to_amp(s.gain[ch]);
-
-        // noise (random start in a precomputed table)
         const float noise_amp = static_cast<float>(db_to_amp(kNoiseDbfsAt0dB) * gain_amp);
         std::size_t idx = std::uniform_int_distribution<std::size_t>(0, noise_.size() - 1)(rng_);
-        for (auto& v : buffer_) {
-            v = noise_[idx] * noise_amp;
-            idx = (idx + 1) & (noise_.size() - 1);
-        }
 
-        // carriers inside the band, as complex rotators (no sin/cos per sample)
+        rotators_.clear();
+        std::vector<std::size_t> which;
         for (std::size_t c = 0; c < carriers().size(); ++c) {
             const double offset = carriers()[c].hz - s.rx_lo;
             if (std::abs(offset) >= half_band) continue;
-            const double amp = db_to_amp(carriers()[c].dbfs_at_0db) * gain_amp;
             const double w = 2 * M_PI * offset / s.rate;
-            const std::complex<double> step(std::cos(w), std::sin(w));
-            auto& ph = phases_[ch][c];
-            for (auto& v : buffer_) {
-                v += cfloat(static_cast<float>(ph.real() * amp), static_cast<float>(ph.imag() * amp));
-                ph *= step;
-            }
-            ph /= std::abs(ph);  // keep the rotator on the unit circle
+            const auto& ph = phases_[ch][c];
+            Rotator r;
+            r.re = static_cast<float>(ph.real());
+            r.im = static_cast<float>(ph.imag());
+            r.step_re = static_cast<float>(std::cos(w));
+            r.step_im = static_cast<float>(std::sin(w));
+            r.amp = static_cast<float>(db_to_amp(carriers()[c].dbfs_at_0db) * gain_amp);
+            rotators_.push_back(r);
+            which.push_back(c);
         }
+        const bool loopback = tx_now_active_ && options_.loopback &&
+                              (options_.loopback_split ? ch < options_.channels : ch == options_.loopback_rx);
 
-        if (options_.loopback && ch == options_.loopback_rx) mix_tx(s, gain_amp);
+        float peak = 0;
+        for (std::size_t done = 0; done < n; done += kBlock) {
+            const std::size_t m = std::min(kBlock, n - done);
+            cfloat* v = buffer_.data();
+            // noise (from a precomputed table, random start per buffer), in contiguous runs
+            for (std::size_t i = 0; i < m;) {
+                const std::size_t run = std::min(m - i, noise_.size() - idx);
+                const cfloat* src = noise_.data() + idx;
+                for (std::size_t k = 0; k < run; ++k) v[i + k] = src[k] * noise_amp;
+                i += run;
+                idx = (idx + run) & (noise_.size() - 1);
+            }
+            for (auto& r : rotators_) add_carrier(r, v, m);
+            if (loopback) add_tx(s, gain_amp, v, done, m);
+            // peak (for the AGC) and int16 conversion in the same pass
+            std::int16_t* out = iq + 2 * done;
+            for (std::size_t i = 0; i < m; ++i) {
+                const float re = v[i].real(), im = v[i].imag();
+                peak = std::max(peak, std::max(std::fabs(re), std::fabs(im)));
+                out[2 * i] = static_cast<std::int16_t>(std::clamp(re * 32767.0f, -32768.0f, 32767.0f));
+                out[2 * i + 1] = static_cast<std::int16_t>(std::clamp(im * 32767.0f, -32768.0f, 32767.0f));
+            }
+        }
+        for (std::size_t k = 0; k < which.size(); ++k) phases_[ch][which[k]] = {rotators_[k].re, rotators_[k].im};
 
         // AGC: steer the peak towards -12 dBFS (fast_attack reacts quicker)
-        float peak = 0;
-        for (const auto& v : buffer_) peak = std::max(peak, std::max(std::abs(v.real()), std::abs(v.imag())));
         if (s.gain_mode[ch] != "manual" && peak > 0) {
             const double err = -12.0 - 20 * std::log10(peak);
             const double step = s.gain_mode[ch] == "fast_attack" ? 0.5 : 0.1;
             std::lock_guard lock(mutex_);
             state_.gain[ch] = std::clamp(state_.gain[ch] + err * step, Limits::rx_gain_min_db, Limits::rx_gain_max_db);
         }
-
-        for (std::size_t i = 0; i < n; ++i) {
-            iq[2 * i] = static_cast<std::int16_t>(std::clamp(buffer_[i].real() * 32767.0f, -32768.0f, 32767.0f));
-            iq[2 * i + 1] = static_cast<std::int16_t>(std::clamp(buffer_[i].imag() * 32767.0f, -32768.0f, 32767.0f));
-        }
     }
 
-    void mix_tx(const State& s, double gain_amp) {
+    // v[i] += amp * phase * step^i. Eight independent lanes (each advanced by
+    // step^8) instead of one chain: no sample waits for the previous one, so the
+    // compiler can vectorize it.
+    static void add_carrier(Rotator& r, cfloat* v, std::size_t m) {
+        constexpr std::size_t L = 8;
+        float re[L], im[L];
+        re[0] = r.re;
+        im[0] = r.im;
+        for (std::size_t j = 1; j < L; ++j) {
+            re[j] = re[j - 1] * r.step_re - im[j - 1] * r.step_im;
+            im[j] = re[j - 1] * r.step_im + im[j - 1] * r.step_re;
+        }
+        // step^8
+        float s8re = r.step_re, s8im = r.step_im;
+        for (int k = 0; k < 3; ++k) {
+            const float t = s8re * s8re - s8im * s8im;
+            s8im = 2 * s8re * s8im;
+            s8re = t;
+        }
+        float* f = reinterpret_cast<float*>(v);  // std::complex<float> is {re, im}
+        std::size_t i = 0;
+        for (; i + L <= m; i += L) {
+            for (std::size_t j = 0; j < L; ++j) {
+                f[2 * (i + j)] += re[j] * r.amp;
+                f[2 * (i + j) + 1] += im[j] * r.amp;
+                const float nre = re[j] * s8re - im[j] * s8im;
+                im[j] = re[j] * s8im + im[j] * s8re;
+                re[j] = nre;
+            }
+        }
+        // the rest one by one; lane 0 is the phase of sample i
+        float pre = re[0], pim = im[0];
+        for (; i < m; ++i) {
+            f[2 * i] += pre * r.amp;
+            f[2 * i + 1] += pim * r.amp;
+            const float nre = pre * r.step_re - pim * r.step_im;
+            pim = pre * r.step_im + pim * r.step_re;
+            pre = nre;
+        }
+        r.re = pre;
+        r.im = pim;
+        r.renormalize();  // keep it on the unit circle (float rounding)
+    }
+
+    // TX -> RX cable of the simulated setup, shifted by TX LO - RX LO.
+    // What TX sends during the next `n` samples, shifted by TX LO - RX LO (+ the
+    // simulated oscillator offset). Empty when TX is off or outside the RX band.
+    void take_tx(const State& s, std::size_t n) {
         std::lock_guard lock(tx_mutex_);
-        if (!tx_active_ || tx_channel_ != options_.loopback_tx) return;
-        const double offset = s.tx_lo - s.rx_lo;
-        if (std::abs(offset) >= std::min(s.rate, s.rx_bw) / 2.0) return;
-        const double amp = db_to_amp(kLoopbackCouplingDb - s.tx_atten[tx_channel_]) * gain_amp;
+        tx_now_active_ = false;
+        if (!options_.loopback || !tx_active_ || tx_channel_ != options_.loopback_tx) return;
+        const double offset = s.tx_lo - s.rx_lo + options_.loopback_cfo_hz;
+        if (std::abs(offset) >= std::min(s.rate, s.rx_bw) / 2.0) {
+            if (!tx_cyclic_) tx_head_ = std::min(tx_ring_.size(), tx_head_ + n);  // drains anyway
+            return;
+        }
+        tx_now_.assign(n, {});
+        tx_now_atten_db_ = s.tx_atten[tx_channel_];
         const double w = 2 * M_PI * offset / s.rate;
-        const std::complex<double> step(std::cos(w), std::sin(w));
-        for (auto& v : buffer_) {
+        const float step_re = static_cast<float>(std::cos(w)), step_im = static_cast<float>(std::sin(w));
+        float pre = static_cast<float>(tx_phase_.real()), pim = static_cast<float>(tx_phase_.imag());
+        for (std::size_t i = 0; i < n; ++i) {
             cfloat x;
             if (tx_cyclic_) {
-                if (tx_pattern_.empty()) return;
+                if (tx_pattern_.empty()) break;
                 x = tx_pattern_[tx_pos_];
-                tx_pos_ = (tx_pos_ + 1) % tx_pattern_.size();
+                if (++tx_pos_ == tx_pattern_.size()) tx_pos_ = 0;
             } else {
-                if (tx_head_ >= tx_ring_.size()) break;
+                if (tx_head_ >= tx_ring_.size()) break;  // nothing queued: silence (an underflow)
                 x = tx_ring_[tx_head_++];
             }
-            const auto shifted = std::complex<double>(x.real(), x.imag()) * tx_phase_ * amp;
-            v += cfloat(static_cast<float>(shifted.real()), static_cast<float>(shifted.imag()));
-            tx_phase_ *= step;
+            tx_now_[i] = cfloat(x.real() * pre - x.imag() * pim, x.real() * pim + x.imag() * pre);
+            const float nre = pre * step_re - pim * step_im;
+            pim = pre * step_im + pim * step_re;
+            pre = nre;
         }
-        tx_phase_ /= std::abs(tx_phase_);
+        const float mag = std::sqrt(pre * pre + pim * pim);
+        tx_phase_ = mag > 0 ? std::complex<double>(pre / mag, pim / mag) : std::complex<double>(1.0, 0.0);
+        tx_now_active_ = true;
+    }
+
+    // TX -> RX cable(s) of the simulated setup: samples [from, from + m) of take_tx().
+    void add_tx(const State&, double gain_amp, cfloat* v, std::size_t from, std::size_t m) {
+        const float amp = static_cast<float>(db_to_amp(options_.loopback_db - tx_now_atten_db_) * gain_amp);
+        const cfloat* x = tx_now_.data() + from;
+        for (std::size_t i = 0; i < m; ++i) v[i] = cfloat(v[i].real() + x[i].real() * amp, v[i].imag() + x[i].imag() * amp);
     }
 
     SimOptions options_;
@@ -317,6 +421,7 @@ private:
     std::vector<cfloat> noise_;
     std::vector<std::complex<double>> phases_[2];
     std::vector<cfloat> buffer_;
+    std::vector<Rotator> rotators_;
     std::vector<std::int16_t> scratch_;
     unsigned rx_mask_ = kRx1;
 
@@ -334,6 +439,9 @@ private:
     unsigned tx_channel_ = 0;
     std::size_t tx_samples_ = 0;
     std::vector<cfloat> tx_ring_;   // queued TX samples from tx_head_ on
+    std::vector<cfloat> tx_now_;    // what TX sends during the current RX buffer (RX thread)
+    bool tx_now_active_ = false;
+    double tx_now_atten_db_ = 0;
     std::size_t tx_head_ = 0;
     std::vector<cfloat> tx_pattern_;
     std::size_t tx_pos_ = 0;

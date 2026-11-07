@@ -21,15 +21,40 @@ jobs:
         with:
           submodules: recursive
       - name: Dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev zlib1g-dev libxml2-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev python3-zmq python3-protobuf python3-numpy
+      # The bundled libraries (protobuf, libzmq, ...) take most of the build time: ccache keeps
+      # them between runs (install.sh still builds and installs everything, so nothing else changes).
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ matrix.cxx }}-${{ matrix.flags }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.cxx }}-${{ matrix.flags }}-
       - name: Install
         env:
           CXX: ${{ matrix.cxx }}
-        run: ./install.sh --prefix "$HOME/forgecpp" --tests --examples ${{ matrix.flags }}
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 400M
+        run: |
+          ./install.sh --prefix "$HOME/forgecpp" --tests --examples ${{ matrix.flags }} \
+            --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          ccache --show-stats
+      - name: forge.v1 stays compatible with the released API
+        run: python3 tools/proto-compat.py --protoc "$HOME/forgecpp/bin/protoc"
+      - name: C++ API (exported symbols) and configuration keys stay compatible within the series
+        if: ${{ !contains(matrix.flags, '--static') }}
+        run: python3 tools/api-check.py --lib "$HOME/forgecpp/lib/libforgecpp.so" --app build/forgecpp/examples/hello
       - name: Smoke-test the example applications
         working-directory: build/forgecpp/examples
         run: |
           set -euo pipefail
+          has() {  # has <pattern> <command...>: the command succeeds and prints the pattern
+            local pattern=$1; shift
+            local out
+            out=$("$@")
+            grep -q -- "$pattern" <<<"$out"
+          }
           run_app() {  # run_app <port> <command...>: start, probe over HTTP, stop with SIGTERM
             local port=$1; shift
             "$@" -D http.port=$port -D log.console=false &
@@ -37,47 +62,104 @@ jobs:
             for _ in $(seq 100); do curl -fs "http://127.0.0.1:$port/health" >/dev/null && break; sleep 0.1; done
             curl -fs "http://127.0.0.1:$port/health"; echo
             curl -fs "http://127.0.0.1:$port/forge/api/state" >/dev/null
-            curl -fs "http://127.0.0.1:$port/forge/" | grep -q "forge.js"
+            has "forge.js" curl -fs "http://127.0.0.1:$port/forge/"
             kill -TERM $pid
             wait $pid
           }
           ./hello --version
-          run_app 18105 ./radio_controller/radio-controller --backend sim -D http.enabled=true -D radio.sample_rate_hz=5e6
-          run_app 18106 ./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml --backend sim
-          ./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml --backend sim \
+          run_app 18105 ./radio-controller/radio-controller --backend sim -D http.enabled=true -D radio.sample_rate_hz=5e6
+          run_app 18106 ./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml --backend sim
+          ./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml --backend sim \
             -D http.port=18107 -D log.console=false -D analyzer.span_hz=20e6 &
           pid=$!
           for _ in $(seq 100); do curl -fs http://127.0.0.1:18107/health >/dev/null && break; sleep 0.1; done
           curl -fs http://127.0.0.1:18107/ -o /tmp/sa.html && grep -q "<title>Spectrum analyzer</title>" /tmp/sa.html
           for _ in $(seq 100); do curl -fs http://127.0.0.1:18107/api/frame -o /tmp/sa.json && grep -q '"live"' /tmp/sa.json && break; sleep 0.1; done
           curl -fs -X POST http://127.0.0.1:18107/forge/api/controls/peak_search -d '{}' >/dev/null
-          curl -fs http://127.0.0.1:18107/forge/api/controls/m1_on | grep -q true
+          has true curl -fs http://127.0.0.1:18107/forge/api/controls/m1_on
           curl -fs http://127.0.0.1:18107/api/trace.csv -o /tmp/sa.csv && head -1 /tmp/sa.csv | grep -q frequency_hz
           test "$(wc -l < /tmp/sa.csv)" -eq 1002
           curl -fs http://127.0.0.1:18107/api/iq.cs16 -o /tmp/sa.cs16 && test -s /tmp/sa.cs16
           kill -TERM $pid
           wait $pid
+          # forge-hub first: the two daemons below register with it by themselves
+          mkdir -p /tmp/hub
+          ../hub/forge-hub -c ../../../hub/config/forge-hub.toml -D http.port=18110 -D log.console=false \
+            -D registry.state_file=/tmp/hub/registry.json -D registry.log_dir=/tmp/hub/logs &
+          hub=$!
+          for _ in $(seq 100); do curl -fs http://127.0.0.1:18110/health >/dev/null && break; sleep 0.1; done
           # both on one board: the analyzer on RX2 of radio-controller (simulated AD9361)
-          ./radio_controller/radio-controller -c radio_controller/radio-controller.toml --backend sim \
+          ./radio-controller/radio-controller -c radio-controller/radio-controller.toml --backend sim \
             -D http.port=18108 -D log.console=false -D radio.sample_rate_hz=5e6 &
           rc=$!
-          ./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml --backend radio \
+          ./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml --backend radio \
             -D http.port=18109 -D log.console=false &
           pid=$!
           for _ in $(seq 150); do curl -fs http://127.0.0.1:18109/api/frame -o /tmp/sa.json && grep -q '"fixed":true' /tmp/sa.json && break; sleep 0.1; done
           grep -q '"fixed":true' /tmp/sa.json
-          curl -fs http://127.0.0.1:18108/forge/api/controls/tap_channels | grep -q '"value":\[2\]'
-          kill -TERM $pid $rc
+          has '"value":\[2\]' curl -fs http://127.0.0.1:18108/forge/api/controls/tap_channels
+          # forge.v1: forgectl over ZeroMQ and HTTP, the audit trail, streams, telnet, Python clients
+          ctl="$HOME/forgecpp/bin/forgectl"
+          has radio-controller "$ctl" -e tcp://127.0.0.1:5557 info
+          has 2412 "$ctl" -e tcp://127.0.0.1:5557 set rx_lo_mhz 2412
+          has rx_lo_mhz "$ctl" -e tcp://127.0.0.1:5557 audit
+          has 2412 "$ctl" -e http://127.0.0.1:18108 get rx_lo_mhz
+          has STATE_OK "$ctl" -e tcp://127.0.0.1:5567 health
+          has sa.v1.Spectrum "$ctl" -e tcp://127.0.0.1:5567 streams
+          has '^sa_sweeps' curl -fs http://127.0.0.1:18109/metrics
+          python3 - <<'EOF'
+          import socket, time
+          s = socket.create_connection(("127.0.0.1", 2323), timeout=5)
+          time.sleep(0.5); s.sendall(b"status\r\n"); time.sleep(0.5); s.sendall(b"exit\r\n")
+          out = b""
+          try:
+              while chunk := s.recv(4096): out += chunk
+          except socket.timeout:
+              pass
+          assert b"uptime" in out, out
+          EOF
+          # forge-v1 from the install (site-packages), the examples' messages from the build
+          site=$(dirname "$(dirname "$(dirname "$(find "$HOME/forgecpp" -path '*/forge/v1/framing.py')")")")
+          export PYTHONPATH="$site:$PWD/radio-controller/ad936x/python:$PWD/spectrum-analyzer/python"
+          export PYTHONDONTWRITEBYTECODE=1
+          python3 ../../../examples/radio-controller/clients/rx_capture.py tcp://127.0.0.1:5555 --seconds 0.5 > /tmp/rx.txt
+          grep -q "blocks" /tmp/rx.txt
+          python3 ../../../examples/spectrum-analyzer/clients/spectrum_watch.py tcp://127.0.0.1:5566 --count 2 > /tmp/sw.txt
+          grep -q fixed /tmp/sw.txt
+          # forge-hub: both registered with their ports; a crash is reported (no systemd unit
+          # here, so nothing restarts it), a stop request is not a crash
+          for _ in $(seq 100); do
+            curl -fs http://127.0.0.1:18110/api/apps -o /tmp/apps.json && grep -q spectrum-analyzer /tmp/apps.json \
+              && grep -q radio-controller /tmp/apps.json && break
+            sleep 0.1
+          done
+          has '"http_port":18108' cat /tmp/apps.json
+          has '<title>Device</title>' curl -fs http://127.0.0.1:18110/
+          kill -KILL $rc
+          wait $rc || true
+          kill -TERM $pid
           wait $pid
-          wait $rc
-          run_app 18101 ./sensor_service -c sensor_service.toml
+          python3 - <<'EOF'
+          import json, sys, time, urllib.request
+          want = {"radio-controller": "STATE_CRASHED", "spectrum-analyzer": "STATE_STOPPED"}
+          for _ in range(100):
+              apps = {a["app"]["name"]: a for a in json.load(urllib.request.urlopen("http://127.0.0.1:18110/api/apps"))["apps"]}
+              if all(apps[n]["state"] == s for n, s in want.items()):
+                  break
+              time.sleep(0.1)
+          else:
+              sys.exit("unexpected states: %s" % {n: (a["state"], a.get("message")) for n, a in apps.items()})
+          EOF
+          kill -TERM $hub
+          wait $hub
+          run_app 18101 ./sensor-service -c sensor-service.toml
           run_app 18102 ./pipeline -c pipeline.toml --producers 2
           run_app 18103 ./thermostat -c thermostat.toml -D thermostat.settings_file=/tmp/thermostat.json
           ./thermostat -c thermostat.toml -D http.port=18104 -D log.console=false &
           pid=$!
           for _ in $(seq 100); do curl -fs http://127.0.0.1:18104/health >/dev/null && break; sleep 0.1; done
-          curl -fs http://127.0.0.1:18104/ | grep -q "<title>Thermostat</title>"
-          curl -fs -X PUT http://127.0.0.1:18104/api/settings -d '{"hysteresis": 0.5}' | grep -q '"hysteresis":0.5'
+          has "<title>Thermostat</title>" curl -fs http://127.0.0.1:18104/
+          has '"hysteresis":0.5' curl -fs -X PUT http://127.0.0.1:18104/api/settings -d '{"hysteresis": 0.5}'
           test "$(curl -s -o /dev/null -w '%{http_code}' -X PUT http://127.0.0.1:18104/api/settings -d '{"hysteresis": 9}')" = 422
           kill -TERM $pid
           wait $pid
@@ -90,3 +172,143 @@ jobs:
           /tmp/demo/build/demo -c /tmp/demo/config/demo.toml --print-config
       - name: Uninstall
         run: ./install.sh --uninstall --prefix "$HOME/forgecpp" && test -z "$(find "$HOME/forgecpp" -type f)"
+
+  # Everything (the bundled libraries too) built with sanitizers, all tests run.
+  # API reference (Doxygen) of include/forge, the tutorials and the threading guide.
+  docs:
+    name: API reference
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y doxygen
+      - run: docs/build-api.sh "$PWD/build/docs"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forgecpp-api-reference
+          path: build/docs/html
+          retention-days: 14
+
+  # Zynq-7000 (Z7020: Cortex-A9, armhf): cross build of everything with a host protoc, then
+  # the ARM binaries run under QEMU user emulation.
+  cross-armhf:
+    name: cross (armhf, Zynq-7000)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache g++-arm-linux-gnueabihf qemu-user
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-armhf-${{ github.sha }}
+          restore-keys: ccache-armhf-
+      - name: Cross build and package
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 400M
+        run: |
+          ./install.sh --toolchain cmake/toolchains/zynq7000-armhf.cmake --package --arch armhf \
+            --without-ssl --without-zlib --without-iio --examples \
+            --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          [[ "$(file build/forgecpp/examples/radio-controller/radio-controller)" == *"ARM, EABI5"* ]]
+      - name: Run the ARM binaries under QEMU
+        run: |
+          root=$PWD/armhf-root
+          mkdir -p "$root" && tar -xzf build/forgecpp-*-armhf.tar.gz -C "$root"
+          export QEMU_LD_PREFIX=/usr/arm-linux-gnueabihf LD_LIBRARY_PATH=$root/usr/local/lib
+          cd build/forgecpp/examples
+          qemu-arm ./radio-controller/radio-controller -c radio-controller/radio-controller.toml --backend sim \
+            -D hub.register=false -D http.enabled=true -D http.port=18300 -D radio.sample_rate_hz=2.5e6 \
+            -D 'forge.control="tcp://127.0.0.1:15757"' -D 'forge.data="tcp://127.0.0.1:15755"' -D 'forge.events=""' \
+            -D 'zmq.tx="tcp://127.0.0.1:15756"' -D 'console.telnet=""' > /tmp/rc.log 2>&1 &
+          pid=$!
+          for _ in $(seq 120); do curl -fs http://127.0.0.1:18300/health -o /tmp/health.json && break; sleep 0.5; done
+          cat /tmp/health.json
+          [[ "$(cat /tmp/health.json)" == *'"status":"ok"'* ]]
+          out=$(qemu-arm "$root/usr/local/bin/forgectl" -e tcp://127.0.0.1:15757 get rx_lo_mhz)
+          echo "forgectl (armhf): rx_lo_mhz = $out"
+          [ "$out" = 2412 ]
+          kill -TERM $pid
+          wait $pid
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forgecpp-armhf
+          path: build/forgecpp-*-armhf.tar.gz
+          retention-days: 7
+
+  # The applications as real systemd units: restarts, start-limit-hit, forge-hub's view and buttons.
+  systemd:
+    name: systemd units and forge-hub
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-systemd-${{ github.sha }}
+          restore-keys: ccache-systemd-
+      - name: Install forgecpp and forge-hub, then radio-controller with its generated unit
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 400M
+        run: |
+          ./install.sh --prefix /usr/local --without-iio \
+            --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake -S examples/radio-controller -B build/radio-controller -G Ninja -DCMAKE_PREFIX_PATH=/usr/local \
+            -DBUILD_TESTING=OFF -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          ninja -C build/radio-controller
+          sudo cmake --install build/radio-controller
+          sudo ldconfig
+      - name: Crash, restart, start-limit-hit, the hub's restart and stop
+        run: sudo .github/scripts/systemd-units.sh
+
+  sanitizers:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: asan, sanitize: "address,undefined" }   # id: cache keys may not contain commas
+          - { id: tsan, sanitize: "thread" }
+    name: sanitize (${{ matrix.sanitize }})
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev
+      # Newer runner kernels randomize mmap more than ThreadSanitizer/AddressSanitizer accept.
+      - name: Sanitizer-compatible address space layout
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-sanitize-${{ matrix.id }}-${{ github.sha }}
+          restore-keys: ccache-sanitize-${{ matrix.id }}-
+      - name: Build and test with ${{ matrix.sanitize }}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 400M
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+          FORGE_TEST_TIMEOUT_SCALE: 4   # the instrumented code is several times slower
+        run: |
+          ./install.sh --prefix "$HOME/forgecpp-san" --build-type Debug --sanitize ${{ matrix.sanitize }} \
+            --tests --examples --without-iio \
+            --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Test log
+        if: failure()
+        run: cat build/logs/forgecpp-test.log || true

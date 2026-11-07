@@ -13,6 +13,10 @@ forge_add_test(forgecpp_tests
         test_thread_pool.cpp
         test_web.cpp)
 
-if(TARGET forgecpp_zmq)
-    forge_add_test(forgecpp_zmq_tests SOURCES test_zmq.cpp LIBS forgecpp_zmq)
-endif()
+# The source tree, for the check that defaults are written only in the schema.
+target_compile_definitions(forgecpp_tests PRIVATE FORGE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+forge_add_test(forgecpp_zmq_tests SOURCES test_zmq.cpp)
+forge_add_test(forgecpp_framework_tests SOURCES test_framework.cpp test_services.cpp)
+# The services are internal (src/app/services.hpp).
+target_include_directories(forgecpp_framework_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")

@@ -1,7 +1,11 @@
 #include <forge/config.hpp>
+#include <forge/config_schema.hpp>
 #include <forge/testing.hpp>
 
+#include <filesystem>
 #include <fstream>
+#include <regex>
+#include <set>
 
 using forge::Config;
 using forge::ConfigError;
@@ -80,4 +84,64 @@ TEST_CASE("config: section, json and files") {
     CHECK(j["db"]["port"] == 5432);
     CHECK(cfg.get<nlohmann::json>("db.port").value() == 5432);
     CHECK(cfg.to_toml().find("localhost") != std::string::npos);
+}
+
+TEST_CASE("config schema: defaults are filled in from the declaration") {
+    forge::config::Schema s;
+    s.integer("http.port", 8080, "Port");
+    s.string("http.host", "0.0.0.0", "Host");
+    s.array("radio.channels", forge::json::array({1, 2}), "Channels");
+    s.number("radio.gain", 10.5, "Gain");
+    s.boolean("console.color", true, "Colors").computed();
+    s.table("auth.users", "Users");
+    auto cfg = Config::parse(R"(
+        [http]
+        port = 9000
+        [radio]
+        gain = 3
+    )");
+    s.apply_defaults(cfg);
+    CHECK(cfg.value<int>("http.port") == 9000);           // the file wins
+    CHECK(cfg.value<std::string>("http.host") == "0.0.0.0");
+    CHECK(cfg.value<std::vector<int>>("radio.channels") == std::vector<int>{1, 2});
+    CHECK(cfg.value<double>("radio.gain") == 3.0);
+    CHECK_FALSE(cfg.contains("console.color"));            // computed at run time
+    CHECK_FALSE(cfg.contains("auth.users"));
+    CHECK_THROWS_AS(cfg.value<int>("undeclared"), ConfigError);
+    CHECK(s.validate(cfg).ok());
+
+    // A parent that is not a table is not replaced.
+    auto odd = Config::parse("http = 5");
+    s.apply_defaults(odd);
+    CHECK(odd.value<int>("http") == 5);
+}
+
+// Defaults are written once, in the schema: reading a declared key with
+// get_or(key, <default again>) would let the two drift apart.
+TEST_CASE("config schema: sources do not repeat the default of a declared key") {
+    namespace fs = std::filesystem;
+    const fs::path root = FORGE_SOURCE_DIR;
+    const std::set<std::string> computed{"console.color"};  // default depends on the environment
+    const std::regex declared(R"re(\.(?:boolean|integer|number|string|array)\(\s*"([A-Za-z0-9_.${}]+)")re");
+    const std::regex read(R"re(get_or<[^;]*?>\(\s*"([A-Za-z0-9_.${}]+)")re");
+    std::set<std::string> keys;
+    std::vector<std::pair<std::string, std::string>> reads;  // key, file
+    for (const auto* dir : {"src", "hub/src", "examples", "include", "tools"}) {
+        for (const auto& e : fs::recursive_directory_iterator(root / dir)) {
+            const auto ext = e.path().extension();
+            const bool scaffolder = e.path().filename() == "forgecpp-new";  // generates C++
+            if (!e.is_regular_file() || (ext != ".cpp" && ext != ".hpp" && !scaffolder)) continue;
+            std::ifstream in(e.path());
+            const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            for (std::sregex_iterator it(text.begin(), text.end(), declared), end; it != end; ++it) keys.insert((*it)[1]);
+            for (std::sregex_iterator it(text.begin(), text.end(), read), end; it != end; ++it) {
+                reads.emplace_back((*it)[1], fs::relative(e.path(), root).string());
+            }
+        }
+    }
+    CHECK(keys.size() > 100);
+    for (const auto& [key, file] : reads) {
+        INFO(file << ": get_or(\"" << key << "\", ...) of a declared key: use value<T>(\"" << key << "\")");
+        CHECK((!keys.count(key) || computed.count(key)));
+    }
 }

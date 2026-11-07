@@ -2,6 +2,9 @@
 #include <forge/testing.hpp>
 
 #include <atomic>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 using namespace std::chrono_literals;
 
@@ -52,4 +55,32 @@ TEST_CASE("scheduler: periodic task keeps mutable state between ticks") {
     std::atomic<int> last{0};
     s.every(1ms, [&last, i = 0]() mutable { last = ++i; });
     CHECK(forge::testing::wait_until([&] { return last >= 3; }));
+}
+
+TEST_CASE("scheduler: manual clock runs timers without waiting") {
+    using namespace std::chrono_literals;
+    forge::Scheduler s(forge::Scheduler::manual_clock);
+    CHECK(s.manual());
+    std::vector<std::string> order;
+    int ticks = 0;
+    s.every(1s, [&] { ++ticks; });
+    s.after(2500ms, [&] {
+        order.push_back("once");
+        s.after(1s, [&] { order.push_back("chained"); });  // scheduled from a task, at its due time
+    });
+    const auto t0 = s.now();
+    CHECK(s.advance(999ms) == 0);
+    CHECK(ticks == 0);
+    CHECK(s.advance(1ms) == 1);
+    CHECK(ticks == 1);
+    s.advance(10s);  // every tick runs, in order; the chained task too
+    CHECK(ticks == 11);
+    REQUIRE(order.size() == 2);
+    CHECK(order[0] == "once");
+    CHECK(order[1] == "chained");
+    CHECK(s.now() - t0 == 11s);
+    CHECK(s.pending() == 1);  // the periodic one
+
+    forge::Scheduler real;
+    CHECK_THROWS_AS(real.advance(1s), std::logic_error);
 }

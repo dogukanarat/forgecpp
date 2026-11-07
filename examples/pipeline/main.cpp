@@ -88,6 +88,13 @@ public:
     Pipeline() : Application({"pipeline", "1.0.0", "Multi-threaded processing pipeline example"}) {}
 
 protected:
+    void setup_config(forge::config::Schema& s) override {
+        s.section("pipeline", "Processing pipeline");
+        s.integer("pipeline.producers", 2, "Producer threads (--producers wins)").range(1, 64);
+        s.integer("pipeline.rate", 200, "Jobs per second per producer").range(1, 1000000).unit("jobs/s");
+        s.integer("pipeline.job_size", 20000, "Work per job").range(1, 100000000);
+    }
+
     void setup_cli(CLI::App& cli) override {
         cli.add_option("--producers", producer_count_, "Number of producer threads")->check(CLI::Range(1, 64));
     }
@@ -144,9 +151,9 @@ protected:
 
     void on_start() override {
         const auto cfg = config();
-        if (producer_count_ == 0) producer_count_ = cfg.get_or<int>("pipeline.producers", 2);
-        rate_per_producer_ = cfg.get_or<int>("pipeline.rate", 200);
-        job_size_ = cfg.get_or<std::uint32_t>("pipeline.job_size", 20000);
+        if (producer_count_ == 0) producer_count_ = cfg.value<int>("pipeline.producers");
+        rate_per_producer_ = cfg.value<int>("pipeline.rate");
+        job_size_ = cfg.value<std::uint32_t>("pipeline.job_size");
 
         for (int i = 0; i < producer_count_; ++i) {
             producers_.emplace_back([this, i] { produce(i); });

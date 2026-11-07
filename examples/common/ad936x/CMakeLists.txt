@@ -2,8 +2,9 @@
 #   - Backend interface with a libiio implementation (ADI ad9361 driver)
 #     and a simulator for development without hardware
 #   - DSP helpers (FFT, windows, power spectra)
+#   - radio.v1 messages (proto/radio/v1/radio.proto)
 #
-# Used with add_subdirectory() from radio_controller and spectrum_analyzer.
+# Used with add_subdirectory() from radio-controller and spectrum-analyzer.
 cmake_minimum_required(VERSION 3.16)
 
 if(TARGET ad936x)
@@ -59,3 +60,8 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(ad936x PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+# radio.v1 messages (IqBlock, TxBlock): C++ for the applications, Python for the clients.
+set(AD936X_PYTHON_DIR "${CMAKE_CURRENT_BINARY_DIR}/python" CACHE INTERNAL "radio.v1 Python modules")
+forge_add_proto(ad936x ROOT ${CMAKE_CURRENT_SOURCE_DIR}/proto PROTOS radio/v1/radio.proto
+                PYTHON ${AD936X_PYTHON_DIR})

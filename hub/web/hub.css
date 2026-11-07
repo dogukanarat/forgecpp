@@ -1,0 +1,42 @@
+/* forge-hub dashboard: on top of /forge/forge.css (colors, dark mode, buttons). */
+.hub-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.hub-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+  background: var(--forge-surface); border: 1px solid var(--forge-border); font-size: 13px; }
+.hub-chip b { font-variant-numeric: tabular-nums; }
+.hub-group-chip { flex: none; margin-left: auto; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--forge-muted); border: 1px solid var(--forge-border); border-radius: 999px; padding: 1px 7px; margin-top: 3px; }
+.hub-card > header { cursor: move; }
+.hub-group-chip + .hub-state { margin-left: 6px; }
+.hub-card { background: var(--forge-surface); border: 1px solid var(--forge-border); border-radius: var(--forge-radius);
+  box-shadow: var(--forge-shadow); padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.hub-card header { display: flex; align-items: flex-start; gap: 10px; }
+.hub-card h2, .hub-card.forge-card > header h2 { margin: 0; font-size: 17px; font-weight: 650; min-width: 0;
+  overflow-wrap: anywhere; text-transform: none; letter-spacing: 0; color: var(--forge-text); }
+.hub-card h2 a { color: inherit; text-decoration: none; }
+.hub-card h2 a:hover { text-decoration: underline; }
+.hub-card .hub-version { color: var(--forge-muted); font-size: 12px; font-weight: 500; margin-left: 4px; }
+.hub-card .hub-desc { color: var(--forge-muted); font-size: 13px; margin: 0; }
+.hub-led { width: 10px; height: 10px; border-radius: 50%; flex: none; margin-top: 6px; background: var(--forge-muted); }
+.hub-state { margin-left: auto; flex: none; font-size: 12px; font-weight: 650; padding: 2px 8px; border-radius: 999px;
+  background: var(--forge-surface-2); color: var(--forge-muted); white-space: nowrap; }
+.hub-ok .hub-led { background: var(--forge-ok); }
+.hub-ok .hub-state { color: var(--forge-ok); }
+.hub-warn .hub-led { background: var(--forge-warn); }
+.hub-warn .hub-state { color: var(--forge-warn); }
+.hub-bad .hub-led { background: var(--forge-danger); }
+.hub-bad .hub-state { color: var(--forge-danger); }
+.hub-bad { border-color: var(--forge-danger); }
+.hub-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 12px; margin: 0; }
+.hub-stats div { min-width: 0; }
+.hub-stats dt { font-size: 11px; color: var(--forge-muted); text-transform: uppercase; letter-spacing: .04em; }
+.hub-stats dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; font-size: 14px; overflow-wrap: anywhere; }
+.hub-msg { font-size: 13px; margin: 0; padding: 6px 8px; border-radius: 6px; background: var(--forge-surface-2); overflow-wrap: anywhere; }
+.hub-bad .hub-msg { color: var(--forge-danger); }
+.hub-ports { font-family: var(--forge-mono); font-size: 12px; color: var(--forge-muted); overflow-wrap: anywhere; }
+.hub-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 4px; }
+.hub-actions .hub-right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.hub-actions .forge-btn { font-size: 13px; padding: 5px 12px; }
+a.forge-btn { display: inline-block; text-decoration: none; }
+@media (max-width: 600px) {
+    .hub-stats { grid-template-columns: repeat(2, 1fr); }
+}

@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="forge.css">
   <script src="forge.js"></script>
   <script src="dashboard.js" defer></script>
+  <script src="system.js" defer></script>
 </head>
 <body class="forge">
   <header class="forge-header">
@@ -23,10 +24,75 @@
     <div class="forge-alarms-host" data-forge-alarms></div>
   </header>
 
+  <nav class="forge-tabs" id="forge-tabs" role="tablist">
+    <button type="button" role="tab" data-tab="controls" aria-selected="true">Controls</button>
+    <button type="button" role="tab" data-tab="health">Health</button>
+    <button type="button" role="tab" data-tab="metrics">Metrics</button>
+    <button type="button" role="tab" data-tab="streams">Streams</button>
+    <button type="button" role="tab" data-tab="audit">Audit</button>
+    <button type="button" role="tab" data-tab="leases">Leases</button>
+    <button type="button" role="tab" data-tab="trace">Trace</button>
+    <span class="forge-muted forge-whoami" id="forge-whoami"></span>
+    <button type="button" class="forge-layout-reset" data-forge-layout-reset
+            title="Cards can be moved by their title and resized from their corner">Reset layout</button>
+  </nav>
+
   <main class="forge-main">
-    <div id="forge-groups" class="forge-grid">
+    <div id="forge-groups" class="forge-grid" data-pane="controls">
       <div class="forge-empty forge-wide">Loading…</div>
     </div>
+
+    <section class="forge-card forge-pane" data-pane="health" hidden>
+      <header><h2>Health</h2><span id="forge-health-overall"></span></header>
+      <table class="forge-table"><thead><tr><th>Component</th><th>State</th><th>Message</th><th>Since</th></tr></thead>
+        <tbody id="forge-health-rows"></tbody></table>
+    </section>
+
+    <section class="forge-card forge-pane" data-pane="metrics" hidden>
+      <header><h2>Metrics</h2>
+        <span><input type="text" id="forge-metrics-filter" placeholder="filter" aria-label="filter metrics">
+          <a class="forge-btn" href="../metrics" target="_blank" rel="noopener">Prometheus</a></span></header>
+      <table class="forge-table"><thead><tr><th>Name</th><th>Value</th><th>Trend</th><th>Help</th></tr></thead>
+        <tbody id="forge-metrics-rows"></tbody></table>
+    </section>
+
+    <section class="forge-card forge-pane" data-pane="streams" hidden>
+      <header><h2>Endpoints and streams</h2></header>
+      <div id="forge-endpoints"></div>
+      <table class="forge-table"><thead><tr><th>Stream</th><th>Type</th><th>Endpoint</th><th>Policy</th>
+        <th>Subscribers</th><th>Sent</th><th>Dropped</th></tr></thead>
+        <tbody id="forge-streams-rows"></tbody></table>
+    </section>
+
+    <section class="forge-card forge-pane" data-pane="audit" hidden>
+      <header><h2>Audit trail</h2><span class="forge-muted">who changed what, from where</span></header>
+      <table class="forge-table"><thead><tr><th>Time</th><th>Channel</th><th>Client</th><th>User</th><th>Action</th>
+        <th>Target</th><th>Old → new</th><th>Result</th><th>Trace</th></tr></thead>
+        <tbody id="forge-audit-rows"></tbody></table>
+    </section>
+
+    <section class="forge-card forge-pane" data-pane="leases" hidden>
+      <header><h2>Leases</h2><span class="forge-muted">a lease keeps others from changing a control (or a group)</span></header>
+      <div class="forge-row">
+        <span class="forge-label"><span>Take a lease</span><small>control id or group:&lt;title&gt;</small></span>
+        <span class="forge-control"><input type="text" id="forge-lease-id" placeholder="id">
+          <input type="number" id="forge-lease-s" value="60" min="1" aria-label="seconds"> s
+          <button class="forge-btn primary" type="button" id="forge-lease-take">Lease</button></span>
+      </div>
+      <table class="forge-table"><thead><tr><th>Id</th><th>Holder</th><th>Seconds left</th><th></th></tr></thead>
+        <tbody id="forge-leases-rows"></tbody></table>
+    </section>
+
+    <section class="forge-card forge-pane" data-pane="trace" hidden>
+      <header><h2>Flight recorder</h2></header>
+      <p class="forge-muted">The newest events of every thread (spans, instants, counters), in Chrome trace format:
+        open the file in <a href="https://ui.perfetto.dev" target="_blank" rel="noopener">ui.perfetto.dev</a> or chrome://tracing.</p>
+      <div class="forge-actions">
+        <a class="forge-btn primary" href="api/trace" download="trace.json">Download all</a>
+        <a class="forge-btn" href="api/trace?seconds=5" download="trace-5s.json">Last 5 s</a>
+        <a class="forge-btn" href="api/trace?seconds=30" download="trace-30s.json">Last 30 s</a>
+      </div>
+    </section>
 
     <section id="forge-logs" class="forge-card forge-logs forge-wide" hidden style="margin-top:16px">
       <header>

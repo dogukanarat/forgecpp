@@ -29,8 +29,12 @@ DESTDIR_ARG="${DESTDIR:-}"
 LIBDIR=""
 WITH_SSL="auto"
 WITH_ZLIB="auto"
-WITH_ZMQ="ON"
 WITH_IIO="ON"
+WITH_HUB="ON"
+SYSTEM_PROTOBUF="OFF"
+HOST_PROTOC=""
+PROFILE=""
+SANITIZE=""
 IIO_USB="OFF"
 BUILD_TESTS="OFF"
 RUN_TESTS="OFF"
@@ -47,7 +51,7 @@ USE_SUDO="auto"
 QUIET="OFF"
 
 # name | source dir | extra cmake args
-DEPS=(spdlog CLI11 replxx concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq libiio)
+DEPS=(spdlog CLI11 replxx concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq protobuf libiio)
 
 usage() {
     cat <<EOF
@@ -70,8 +74,14 @@ Build
   --without-ssl         Build cpp-httplib without OpenSSL (no HTTPS)
   --with-ssl            Require OpenSSL (fail if missing)
   --without-zlib        Build cpp-httplib without zlib compression
-  --without-zmq         Skip ZeroMQ (libzmq, cppzmq) and the forgecpp::zmq library
+  --system-protobuf     Use the system's protobuf (libprotobuf-dev + protoc) instead of the bundled one
+  --protoc PATH         protoc for the build machine (cross builds; default: built from the bundled
+                        protobuf with HOST_CC / HOST_CXX, or cc / c++)
+  --profile embedded    Size/speed settings for small targets: MinSizeRel, LTO, static, no tests
+  --sanitize LIST       Build everything with sanitizers: address,undefined or thread (debugging;
+                        use a separate --prefix, the libraries are instrumented too)
   --without-iio         Skip libiio (the AD9364 examples then only have their simulator)
+  --without-hub         Do not build forge-hub (the dashboard of the device's applications)
   --iio-usb             Build libiio's USB backend (needs libusb-1.0)
   --no-rpath            Do not set \$ORIGIN rpaths on installed libraries
   --cmake-arg ARG       Extra argument passed to every CMake configure (repeatable)
@@ -149,8 +159,15 @@ while [[ $# -gt 0 ]]; do
         --without-ssl)  WITH_SSL="OFF"; shift ;;
         --with-ssl)     WITH_SSL="ON"; shift ;;
         --without-zlib) WITH_ZLIB="OFF"; shift ;;
-        --without-zmq)  WITH_ZMQ="OFF"; shift ;;
+        --without-zmq)  die "--without-zmq: ZeroMQ is part of forgecpp now (the forge.v1 control and streams use it)" ;;
+        --system-protobuf) SYSTEM_PROTOBUF="ON"; shift ;;
+        --protoc)       need_arg "$@"; HOST_PROTOC="$2"; shift 2 ;;
+        --protoc=*)     HOST_PROTOC="${1#*=}"; shift ;;
+        --profile)      need_arg "$@"; PROFILE="$2"; shift 2 ;;
+        --sanitize)     need_arg "$@"; SANITIZE="$2"; shift 2 ;;
+        --profile=*)    PROFILE="${1#*=}"; shift ;;
         --without-iio)  WITH_IIO="OFF"; shift ;;
+        --without-hub)  WITH_HUB="OFF"; shift ;;
         --iio-usb)      IIO_USB="ON"; shift ;;
         --with-zlib)    WITH_ZLIB="ON"; shift ;;
         --no-rpath)     RPATH="OFF"; shift ;;
@@ -173,6 +190,17 @@ while [[ $# -gt 0 ]]; do
         *)              die "unknown option '$1' (see --help)" ;;
     esac
 done
+
+case "${PROFILE}" in
+    "") ;;
+    embedded)
+        # Small targets (e.g. Zynq-7000): compact, link-time optimized, self-contained binaries.
+        BUILD_TYPE="MinSizeRel"
+        SHARED="OFF"
+        EXTRA_CMAKE_ARGS+=("-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON")
+        ;;
+    *) die "unknown profile '${PROFILE}' (embedded)" ;;
+esac
 
 BUILD_DIR="$(abspath "${BUILD_DIR}")"
 [[ "${PREFIX}" == /* ]] || PREFIX="$(abspath "${PREFIX}")"
@@ -323,7 +351,15 @@ else
     COMMON_ARGS+=("-DCMAKE_PREFIX_PATH=${STAGE}")
 fi
 if [[ "${RPATH}" == "ON" ]]; then
-    COMMON_ARGS+=('-DCMAKE_INSTALL_RPATH=$ORIGIN')
+    # Libraries find each other next to themselves, programs in bin/ one level up.
+    COMMON_ARGS+=("-DCMAKE_INSTALL_RPATH=\$ORIGIN;\$ORIGIN/../${LIBDIR:-lib}")
+fi
+if [[ -n "${SANITIZE}" ]]; then
+    # Instrument the dependencies as well (ThreadSanitizer needs it to see their locks).
+    SAN_FLAGS="-fsanitize=${SANITIZE} -fno-omit-frame-pointer -g"
+    COMMON_ARGS+=("-DCMAKE_C_FLAGS=${SAN_FLAGS}" "-DCMAKE_CXX_FLAGS=${SAN_FLAGS}"
+                  "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=${SANITIZE}"
+                  "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=${SANITIZE}")
 fi
 COMMON_ARGS+=("${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}")
 
@@ -341,7 +377,10 @@ dep_args() {
         tomlplusplus)
             echo "-DBUILD_EXAMPLES=OFF" ;;
         cpp-httplib)
-            echo "-DHTTPLIB_COMPILE=OFF -DHTTPLIB_TEST=OFF -DHTTPLIB_INSTALL=ON"
+            # Compiled, not header-only: its function bodies are built once into
+            # libcpp-httplib instead of in every file that includes forge/http.hpp
+            # (a file including forge/forge.hpp: 17.6 -> 8.1 s at -O2).
+            echo "-DHTTPLIB_COMPILE=ON -DHTTPLIB_SHARED=${SHARED} -DHTTPLIB_TEST=OFF -DHTTPLIB_INSTALL=ON"
             echo "-DHTTPLIB_USE_BROTLI_IF_AVAILABLE=OFF -DHTTPLIB_USE_ZSTD_IF_AVAILABLE=OFF"
             case "${WITH_SSL}" in
                 ON)  echo "-DHTTPLIB_REQUIRE_OPENSSL=ON" ;;
@@ -360,6 +399,12 @@ dep_args() {
             else echo "-DBUILD_SHARED=OFF -DBUILD_STATIC=ON"; fi ;;
         cppzmq)
             echo "-DCPPZMQ_BUILD_TESTS=OFF" ;;
+        protobuf)
+            # Cross builds use a protoc built for the build machine (see build_host_protoc).
+            echo "-Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_EXAMPLES=OFF -Dprotobuf_WITH_ZLIB=OFF"
+            echo "-Dprotobuf_BUILD_SHARED_LIBS=${SHARED} -Dprotobuf_INSTALL=ON -Dprotobuf_BUILD_LIBPROTOC=ON"
+            if [[ -n "${TOOLCHAIN}" ]]; then echo "-Dprotobuf_BUILD_PROTOC_BINARIES=OFF"
+            else echo "-Dprotobuf_BUILD_PROTOC_BINARIES=ON"; fi ;;
         libiio)
             # Local (in-kernel IIO) + network (iiod, e.g. ip:192.168.2.1) + XML backends.
             echo "-DBUILD_SHARED_LIBS=${SHARED} -DWITH_IIOD=OFF -DWITH_TESTS=ON -DWITH_EXAMPLES=OFF"
@@ -425,9 +470,45 @@ echo "    libraries   : $([[ ${SHARED} == ON ]] && echo shared || echo static)"
 [[ -n "${SUDO}" ]] && echo "    install via : sudo"
 echo
 
+# protoc must run on the build machine. Native builds use the protoc they build;
+# cross builds get one built from the same protobuf sources for the host (the
+# generated code has to match the target's libprotobuf version exactly).
+build_host_protoc() {
+    local bdir="${BUILD_DIR}/host-protobuf"
+    local prefix="${BUILD_DIR}/host-tools"
+    if [[ -x "${prefix}/bin/protoc" ]]; then HOST_PROTOC="${prefix}/bin/protoc"; return; fi
+    info "[protobuf] host protoc"
+    # Build with the host compiler, without the target's flags (Yocto exports them).
+    run_logged "${LOG_DIR}/host-protobuf-configure.log" \
+        env -u CFLAGS -u CXXFLAGS -u LDFLAGS -u CPPFLAGS -u PKG_CONFIG_SYSROOT_DIR -u PKG_CONFIG_PATH \
+        CC="${HOST_CC:-cc}" CXX="${HOST_CXX:-c++}" \
+        cmake -S "${TP_DIR}/protobuf" -B "${bdir}" -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="${prefix}" -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_EXAMPLES=OFF \
+        -Dprotobuf_WITH_ZLIB=OFF -Dprotobuf_BUILD_SHARED_LIBS=OFF ${GENERATOR:+-G "${GENERATOR}"}
+    run_logged "${LOG_DIR}/host-protobuf-build.log" \
+        env -u CFLAGS -u CXXFLAGS -u LDFLAGS -u CPPFLAGS cmake --build "${bdir}" --parallel "${JOBS}" --target protoc
+    mkdir -p "${prefix}/bin"
+    cp "$(find "${bdir}" -maxdepth 2 -type f -name 'protoc*' -perm -u+x | head -n1)" "${prefix}/bin/protoc"
+    HOST_PROTOC="${prefix}/bin/protoc"
+}
+
+if [[ -n "${TOOLCHAIN}" && -z "${HOST_PROTOC}" ]]; then
+    if [[ "${SYSTEM_PROTOBUF}" == "ON" ]]; then
+        HOST_PROTOC="$(command -v protoc || true)"
+        [[ -n "${HOST_PROTOC}" ]] || die "--system-protobuf with --toolchain needs --protoc (the host protoc)"
+    elif [[ "${SKIP_DEPS}" != "ON" || ! -x "${BUILD_DIR}/host-tools/bin/protoc" ]]; then
+        build_host_protoc
+    else
+        HOST_PROTOC="${BUILD_DIR}/host-tools/bin/protoc"
+    fi
+fi
+if [[ -n "${HOST_PROTOC}" ]]; then
+    COMMON_ARGS+=("-DFORGE_PROTOC=${HOST_PROTOC}")
+fi
+
 if [[ "${SKIP_DEPS}" != "ON" ]]; then
     for dep in "${DEPS[@]}"; do
-        if [[ "${WITH_ZMQ}" == "OFF" && ( "${dep}" == "libzmq" || "${dep}" == "cppzmq" ) ]]; then continue; fi
+        if [[ "${SYSTEM_PROTOBUF}" == "ON" && "${dep}" == "protobuf" ]]; then continue; fi
         if [[ "${WITH_IIO}" == "OFF" && "${dep}" == "libiio" ]]; then continue; fi
         # shellcheck disable=SC2046
         build_project "${dep}" "${TP_DIR}/${dep}" $(dep_args "${dep}")
@@ -439,8 +520,9 @@ if [[ "${DEPS_ONLY}" != "ON" ]]; then
         "-DBUILD_SHARED_LIBS=${SHARED}" \
         "-DFORGECPP_BUILD_TESTS=${BUILD_TESTS}" \
         "-DFORGECPP_BUILD_EXAMPLES=${BUILD_EXAMPLES}" \
-        "-DFORGECPP_WITH_ZMQ=${WITH_ZMQ}" \
-        "-DFORGECPP_WARNINGS=ON"
+        "-DFORGECPP_BUILD_HUB=${WITH_HUB}" \
+        "-DFORGECPP_WARNINGS=ON" \
+        "-DFORGECPP_SANITIZE=${SANITIZE//,/;}"
 
     if [[ "${RUN_TESTS}" == "ON" ]]; then
         if [[ -n "${TOOLCHAIN}" ]]; then
@@ -503,6 +585,14 @@ cat <<EOF
       ${PREFIX}/bin/forgecpp-new mydaemon
 
 EOF
+if [[ "${WITH_HUB}" == "ON" ]]; then
+    cat <<EOF
+  Device dashboard (optional; applications register with it by themselves):
+      sudo ${PREFIX}/bin/forge-hub -c ${PREFIX}/etc/forge-hub/forge-hub.toml   # http://<device>/
+      sudo systemctl enable --now forge-hub                                      # systemd unit installed
+
+EOF
+fi
 if [[ "${PREFIX}" != "/usr" && "${PREFIX}" != "/usr/local" ]]; then
     cat <<EOF
   Non-standard prefix: tell CMake where to look:

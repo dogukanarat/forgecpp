@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Radio controller</title>
+  <link rel="stylesheet" href="forge/forge.css">
+  <link rel="stylesheet" href="assets/radio.css">
+  <script src="forge/forge.js"></script>
+  <script src="assets/radio.js" defer></script>
+</head>
+<body class="forge">
+  <header class="forge-header">
+    <div class="forge-brand">
+      <span class="forge-dot" data-forge-connection></span>
+      <h1>Radio controller</h1>
+    </div>
+    <nav>
+      <a href="./">Spectrum</a>
+      <a href="forge/">Control panel</a>
+      <button type="button" class="forge-layout-reset" data-forge-layout-reset
+              title="The cards below the spectrum can be moved by their title and resized from their corner">Reset layout</button>
+    </nav>
+    <div class="forge-meta">
+      <span data-forge-value="backend"></span>
+      <span><span data-forge-value="temperature_c" data-forge-precision="1"></span> °C</span>
+    </div>
+    <div class="forge-alarms-host" data-forge-alarms></div>
+  </header>
+
+  <main class="forge-main">
+    <section class="forge-card spectrum-card">
+      <header>
+        <h2>Spectrum</h2>
+        <div class="readout">
+          <span>Center <b id="center">–</b></span>
+          <span>Span <b id="span">–</b></span>
+          <span>Power <b data-forge-value="rx_power_dbfs" data-forge-precision="1"></b> dBFS</span>
+          <span>Peak <b data-forge-value="peak"></b></span>
+        </div>
+      </header>
+      <canvas id="spectrum" height="260" aria-label="Spectrum"></canvas>
+      <canvas id="waterfall" height="200" aria-label="Waterfall"></canvas>
+      <div class="axis" id="axis"></div>
+    </section>
+
+    <div class="forge-grid controls" data-forge-layout="radio">
+      <section class="forge-card">
+        <h2>Receiver</h2>
+        <div class="forge-row">
+          <span class="forge-label">Streaming</span>
+          <label class="forge-switch"><input type="checkbox" data-forge-bind="rx_enabled"><span></span></label>
+        </div>
+        <div class="forge-row">
+          <span class="forge-label">RX LO</span>
+          <span class="tune">
+            <button class="forge-btn small" data-step="-1">−1</button>
+            <button class="forge-btn small" data-step="-0.1">−0.1</button>
+            <input type="number" step="0.001" min="70" max="6000" data-forge-bind="rx_lo_mhz">
+            <button class="forge-btn small" data-step="0.1">+0.1</button>
+            <button class="forge-btn small" data-step="1">+1</button>
+            <span class="forge-unit">MHz</span>
+          </span>
+        </div>
+        <div class="forge-row">
+          <span class="forge-label">Sample rate</span>
+          <select data-forge-bind="sample_rate_msps" id="rates"></select>
+        </div>
+        <div class="forge-row">
+          <span class="forge-label">Bandwidth</span>
+          <span><input type="number" step="0.1" min="0.2" max="56" data-forge-bind="rx_bw_mhz"> <span class="forge-unit">MHz</span></span>
+        </div>
+        <div class="forge-row">
+          <span class="forge-label">Gain control</span>
+          <div class="segmented" role="radiogroup" aria-label="Gain control">
+            <label><input type="radio" name="gm" value="manual" data-forge-bind="gain_mode"><span>Manual</span></label>
+            <label><input type="radio" name="gm" value="slow_attack" data-forge-bind="gain_mode"><span>Slow</span></label>
+            <label><input type="radio" name="gm" value="fast_attack" data-forge-bind="gain_mode"><span>Fast</span></label>
+            <label><input type="radio" name="gm" value="hybrid" data-forge-bind="gain_mode"><span>Hybrid</span></label>
+          </div>
+        </div>
+        <div class="forge-row">
+          <span class="forge-label">RX gain <small>manual mode only</small></span>
+          <span><input type="range" min="-3" max="71" step="1" data-forge-bind="rx_gain_db">
+            <b data-forge-value="rx_gain_db" data-forge-precision="0"></b> <span class="forge-unit">dB</span></span>
+        </div>
+      </section>
+
+      <section class="forge-card">
+        <h2>Transmitter</h2>
+        <div class="forge-row">
+          <span class="forge-label">Enabled</span>
+          <label class="forge-switch"><input type="checkbox" data-forge-bind="tx_enabled"><span></span></label>
+        </div>
+        <div class="forge-row">
+          <span class="forge-label">TX LO</span>
+          <span><input type="number" step="0.001" min="70" max="6000" data-forge-bind="tx_lo_mhz"> <span class="forge-unit">MHz</span></span>
+        </div>
+        <div class="forge-row">
+          <span class="forge-label">Attenuation</span>
+          <span><input type="range" min="0" max="89.75" step="0.25" data-forge-bind="tx_atten_db">
+            <b data-forge-value="tx_atten_db" data-forge-precision="2"></b> <span class="forge-unit">dB</span></span>
+        </div>
+        <div class="forge-row">
+          <span class="forge-label">Output</span>
+          <b data-forge-value="tx_mode"></b>
+        </div>
+        <div class="forge-actions">
+          <button class="forge-btn danger" data-forge-press="tx_stop">Stop output</button>
+        </div>
+      </section>
+
+      <section class="forge-card">
+        <h2>Streams</h2>
+        <div class="forge-row"><span class="forge-label">Measured rate</span><span><b data-forge-value="rx_rate_msps" data-forge-precision="3"></b> MSPS</span></div>
+        <div class="forge-row"><span class="forge-label">IQ subscribers</span><b data-forge-value="subscriptions"></b></div>
+        <div class="forge-row"><span class="forge-label">RX overflows</span><b data-forge-value="rx_overflows"></b></div>
+        <div class="forge-row"><span class="forge-label">TX frames / underflows</span><span><b data-forge-value="tx_frames"></b> / <b data-forge-value="tx_underflows"></b></span></div>
+        <div class="forge-row"><span class="forge-label">Streams (PUB: iq, rx1, rx2)</span><code data-forge-value="zmq_data"></code></div>
+        <div class="forge-row"><span class="forge-label">TX input (PULL)</span><code data-forge-value="zmq_tx"></code></div>
+        <div class="forge-row"><span class="forge-label">Control (forge.v1)</span><code data-forge-value="zmq_control"></code></div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

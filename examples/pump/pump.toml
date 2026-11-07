@@ -1,0 +1,12 @@
+# pump configuration (pump --help-config lists every key)
+[pump]
+limit_bar = 8.0
+sample_ms = 100
+
+[http]
+enabled = true
+port = 8080
+
+[forge]
+control = "tcp://*:5577"     # forgectl -e tcp://localhost:5577 get pressure_bar
+data = "tcp://*:5578"        # stream "pressure"

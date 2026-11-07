@@ -87,6 +87,12 @@ public:
     Thermostat() : Application({"thermostat", "1.0.0", "Web-first thermostat example"}) {}
 
 protected:
+    void setup_config(forge::config::Schema& s) override {
+        s.section("thermostat", "Thermostat");
+        s.string("thermostat.settings_file", "thermostat-settings.json", "Settings saved from the settings page");
+        s.number("thermostat.setpoint", 21.0, "Initial setpoint").unit("°C");
+    }
+
     // Controls shared by the custom pages (data-forge-*), /forge/ and the console.
     void setup_web(forge::web::Dashboard& ui) override {
         ui.title("Thermostat");
@@ -137,9 +143,9 @@ protected:
 
     void on_start() override {
         const auto cfg = config();
-        settings_file_ = cfg.get_or<std::string>("thermostat.settings_file", "thermostat-settings.json");
+        settings_file_ = cfg.value<std::string>("thermostat.settings_file");
         load_settings();
-        setpoint_ = std::clamp(cfg.get_or<double>("thermostat.setpoint", 21.0), settings_.min_setpoint,
+        setpoint_ = std::clamp(cfg.value<double>("thermostat.setpoint"), settings_.min_setpoint,
                                settings_.max_setpoint);
         every(1s, [this] { step(); });
     }

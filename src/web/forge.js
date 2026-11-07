@@ -2,7 +2,8 @@
  *
  * Plain HTML pages can be wired to dashboard controls with attributes only:
  *
- *   <script src="/forge/forge.js"></script>
+ *   <script src="forge/forge.js"></script>   (relative: the page also works behind
+ *                                             forge-hub's proxy, /apps/<name>/)
  *   <span data-forge-value="temperature" data-forge-precision="1"></span> °C
  *   <input type="range" min="0" max="3000" data-forge-bind="speed">
  *   <input type="checkbox" data-forge-bind="enabled">
@@ -11,6 +12,10 @@
  *   <div data-forge-show="enabled">only visible while enabled</div>
  *   <span class="forge-dot" data-forge-connection></span>
  *   <div data-forge-alarms></div>        <!-- alarm bell + banner + panel -->
+ *   <div data-forge-layout="main">       <!-- its .forge-card children can be moved and
+ *     <section class="forge-card">...       resized on a grid; the layout is kept on the
+ *   </div>                                  device (see forge.layout below) -->
+ *   <button data-forge-layout-reset>Reset layout</button>
  *
  * Or from JavaScript:
  *
@@ -18,7 +23,8 @@
  *   forge.on('my-event', data => ...);                     // app.publish_web("my-event", ...)
  *   await forge.set('speed', 1200);
  *   await forge.press('start');
- *   const data = await forge.api('/api/my-route');         // your own routes
+ *   const data = await forge.api('/api/my-route');         // your own routes ("/" = the app's root)
+ *   link.href = forge.url('/api/export.csv');              // the same for links
  *
  * The page connects automatically; add data-manual to the script tag to call
  * forge.start() yourself.
@@ -27,7 +33,24 @@
   'use strict';
 
   const script = document.currentScript;
-  const API = (script && script.dataset.api) || '/forge/api';
+  // The application's root: "/" normally, "/apps/<name>/" behind forge-hub's
+  // proxy. Taken from where forge.js itself was loaded (<root>forge/forge.js),
+  // so pages that load it with a relative URL work under any prefix.
+  const ROOT = (function () {
+    try {
+      const p = new URL(script.src, location.href).pathname;
+      const i = p.lastIndexOf('forge/forge.js');
+      return i >= 0 ? p.slice(0, i) : '/';
+    } catch (e) {
+      return '/';
+    }
+  })();
+  const API = (script && script.dataset.api) || ROOT + 'forge/api';
+  /** URL of an application path ("/api/x" -> "<root>api/x"). */
+  function url(path) {
+    if (/^https?:/.test(path)) return path;
+    return path.charAt(0) === '/' ? ROOT + path.slice(1) : API + '/' + path;
+  }
   const listeners = {};
   const state = {};
   let source = null;
@@ -57,8 +80,7 @@
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(options.body);
     }
-    const url = path.charAt(0) === '/' || /^https?:/.test(path) ? path : API + '/' + path;
-    const res = await fetch(url, init);
+    const res = await fetch(url(path), init);
     const text = await res.text();
     let data = null;
     if (text) {
@@ -522,15 +544,234 @@
     });
   }
 
+  // --- card layouts (GridStack) ----------------------------------------------
+  //
+  //   const l = await forge.layout(container, 'main', {width: 4});
+  //
+  // The cards (children matching options.items, default .forge-card) sit on a
+  // 12-column grid: drag them by their title (h2 or header), resize them from
+  // the corner. Cards keep the height of their content until resized by hand.
+  // The layout is stored by the application (/forge/api/layout/<page>, a file
+  // on the device), so every browser shows the same; without that, in the
+  // browser's localStorage. Card ids: data-forge-card, id, or the title.
+  // On narrow screens (phones) the cards are a plain list in their original
+  // order and natural height; the stored layout is left as it is.
+
+  const BASE = API.replace(/\/api$/, '');
+  let gridstackLoaded = null;
+  const layouts = {};
+
+  function loadGridstack() {
+    if (global.GridStack) return Promise.resolve();
+    if (gridstackLoaded) return gridstackLoaded;
+    gridstackLoaded = new Promise(function (resolve, reject) {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = BASE + '/vendor/gridstack/gridstack.min.css';
+      document.head.appendChild(css);
+      const js = document.createElement('script');
+      js.src = BASE + '/vendor/gridstack/gridstack-all.js';
+      js.onload = function () { resolve(); };
+      js.onerror = function () { reject(new Error('cannot load ' + js.src)); };
+      document.head.appendChild(js);
+    });
+    return gridstackLoaded;
+  }
+
+  function storageKey(page) { return 'forge.layout.' + location.port + ROOT + page; }
+
+  async function readLayout(page) {
+    try {
+      const saved = await api('layout/' + encodeURIComponent(page));
+      if (saved && Array.isArray(saved.items)) return saved;
+      if (saved === null) return null;
+    } catch (e) { /* not stored on the device: the browser's copy */ }
+    try { return JSON.parse(localStorage.getItem(storageKey(page)) || 'null'); } catch (e) { return null; }
+  }
+
+  async function writeLayout(page, value) {
+    try {
+      if (value === null) await api('layout/' + encodeURIComponent(page), { method: 'DELETE' });
+      else await api('layout/' + encodeURIComponent(page), { method: 'PUT', body: value });
+      try { localStorage.removeItem(storageKey(page)); } catch (e) { /* private mode */ }
+      return;
+    } catch (e) { /* fall back to the browser */ }
+    try {
+      if (value === null) localStorage.removeItem(storageKey(page));
+      else localStorage.setItem(storageKey(page), JSON.stringify(value));
+    } catch (e) { /* private mode: not kept */ }
+  }
+
+  function cardId(card, used) {
+    let id = card.dataset.forgeCard || card.id;
+    if (!id) {
+      const title = card.querySelector('h2, header h2, h3');
+      id = (title ? title.textContent : 'card').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'card';
+    }
+    let unique = id, n = 2;
+    while (used[unique]) unique = id + '-' + (n++);
+    used[unique] = true;
+    return unique;
+  }
+
+  async function layout(container, page, options) {
+    options = options || {};
+    if (layouts[page]) layouts[page].destroy();
+    await loadGridstack();
+    const GridStack = global.GridStack;
+    const saved = await readLayout(page);
+    const byId = {};
+    ((saved && saved.items) || []).forEach(function (it) { byId[it.id] = it; });
+    const width = options.width || 4;
+    const used = {};
+
+    container.classList.remove('forge-grid');
+    container.classList.add('grid-stack', 'forge-layout');
+
+    // item > .grid-stack-item-content > card: GridStack measures the card for "fit" heights.
+    function wrap(card) {
+      const id = cardId(card, used);
+      const item = document.createElement('div');
+      item.className = 'grid-stack-item';
+      const content = document.createElement('div');
+      content.className = 'grid-stack-item-content';
+      card.parentNode.insertBefore(item, card);
+      content.appendChild(card);
+      item.appendChild(content);
+      const s = byId[id];
+      const w = card.classList.contains('forge-wide') ? 12 : width;
+      const opts = s ? { id: id, x: s.x, y: s.y, w: s.w, h: s.h, sizeToContent: s.fit !== false }
+                     : { id: id, w: w, h: 4, autoPosition: true, sizeToContent: true };
+      item.classList.toggle('forge-fit', opts.sizeToContent);
+      return { item: item, opts: opts };
+    }
+
+    const cards = Array.prototype.filter.call(container.children, function (c) {
+      return c.matches(options.items || '.forge-card');
+    });
+    // The grid first (empty: it would adopt existing items without their options), then the cards.
+    const grid = GridStack.init({
+      column: 12,
+      cellHeight: 10,
+      margin: 8,
+      float: false,
+      animate: true,
+      handle: '.forge-card > h2, .forge-card > header, .forge-card > .forge-handle',
+      resizable: { handles: 'se' }
+    }, container);
+    grid.batchUpdate();
+    const wrapped = cards.map(function (card) {
+      const w = wrap(card);
+      grid.makeWidget(w.item, w.opts);
+      return w;
+    });
+    grid.batchUpdate(false);
+
+    // Cards that fit their content follow it when it changes (values, messages).
+    const observer = global.ResizeObserver ? new ResizeObserver(function (entries) {
+      entries.forEach(function (e) {
+        const item = e.target.closest('.grid-stack-item');
+        if (item && item.classList.contains('forge-fit') && item.gridstackNode) grid.resizeToContent(item);
+      });
+    }) : null;
+    function observe(item) { if (observer) observer.observe(item.querySelector('.grid-stack-item-content > *')); }
+    wrapped.forEach(function (w) { observe(w.item); });
+
+    // Phones: a list (CSS .forge-layout-list), nothing to drag or resize, nothing saved.
+    const narrow = global.matchMedia ? global.matchMedia('(max-width: 720px)') : null;
+    function applyWidth() {
+      const list = !!(narrow && narrow.matches);
+      container.classList.toggle('forge-layout-list', list);
+      grid.setStatic(list);
+      // the list follows the layout: top to bottom, left to right
+      grid.engine.nodes.forEach(function (n) { if (n.el) n.el.style.order = list ? String(Math.round(n.y / 10) * 100 + n.x) : ''; });
+    }
+    applyWidth();
+    if (narrow) {
+      if (narrow.addEventListener) narrow.addEventListener('change', applyWidth);
+      else narrow.addListener(applyWidth);
+    }
+
+    let timer = null;
+    function save() {
+      if (narrow && narrow.matches) return;
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        const items = grid.engine.nodes.map(function (n) {
+          return { id: n.id, x: n.x, y: n.y, w: n.w, h: n.h, fit: !!n.sizeToContent };
+        });
+        writeLayout(page, { version: 1, items: items });
+      }, 400);
+    }
+    grid.on('resizestop', function (ev, el) {
+      // Resized by hand: that height is kept (the content scrolls if it is taller).
+      grid.update(el, { sizeToContent: false });
+      el.classList.remove('forge-fit');
+      save();
+    });
+    grid.on('dragstop', save);
+    grid.on('change', save);
+
+    const handle = {
+      page: page,
+      grid: grid,
+      /// Add a card created later (it gets its saved place, or a free one).
+      add: function (card) {
+        container.appendChild(card);
+        const w = wrap(card);
+        grid.makeWidget(w.item, w.opts);
+        observe(w.item);
+        applyWidth();
+        return w.item;
+      },
+      remove: function (card) {
+        const item = card.closest('.grid-stack-item');
+        if (item) grid.removeWidget(item);
+      },
+      /// Fit the cards that follow their content again (after the page was hidden).
+      refit: function () {
+        grid.engine.nodes.forEach(function (n) { if (n.sizeToContent && n.el) grid.resizeToContent(n.el); });
+      },
+      /// Forget the stored layout and arrange the cards again.
+      reset: async function () {
+        await writeLayout(page, null);
+        location.reload();
+      },
+      destroy: function () {
+        if (observer) observer.disconnect();
+        if (narrow && narrow.removeEventListener) narrow.removeEventListener('change', applyWidth);
+        grid.destroy(false);
+        delete layouts[page];
+      }
+    };
+    layouts[page] = handle;
+    return handle;
+  }
+
+  function resetLayouts() {
+    return Promise.all(Object.keys(layouts).map(function (p) { return writeLayout(p, null); }))
+      .then(function () { location.reload(); });
+  }
+
   function start() {
     if (started) return;
     started = true;
     bind(document);
+    document.querySelectorAll('[data-forge-layout]').forEach(function (el) {
+      layout(el, el.getAttribute('data-forge-layout') || 'main').catch(reportError);
+    });
+    document.querySelectorAll('[data-forge-layout-reset]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        if (window.confirm('Put every card back in its original place and size?')) resetLayouts();
+      });
+    });
     connect();
   }
 
   const forge = {
     api: api,
+    url: url,
+    base: ROOT,
     on: on,
     set: set,
     press: press,
@@ -545,6 +786,9 @@
     info: function () { return api('info'); },
     ui: function () { return api('ui'); },
     logs: function () { return api('logs'); },
+    layout: layout,
+    resetLayouts: resetLayouts,
+    getLayout: function (page) { return layouts[page] || null; },
     get connected() { return connected; }
   };
   global.forge = forge;

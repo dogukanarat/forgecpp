@@ -1,0 +1,79 @@
+# spectrum-analyzer configuration
+# Everything below [analyzer] except the device settings can also be changed
+# from the web UI; with state_file set, those changes survive restarts.
+
+[analyzer]
+# sim   simulated transceiver
+# iio   own the RX path through libiio (radio-controller must not run): can sweep 70 MHz - 6 GHz
+# radio a channel radio-controller shares ([radio].tap_rx): both daemons run
+#       together; LO and sample rate are radio-controller's
+backend = "sim"               # also: --backend
+uri = ""                      # iio: "local:" (on the board), "ip:192.168.2.1", "usb:1.2.5"; "" = libiio default
+
+# Channel roles: set them to what the transceiver has (RX2 needs an AD9361/AD9363).
+channel = 2                   # RX channel it listens to (radio: must be in radio-controller's tap_rx)
+control_gain = true           # set that channel's gain from here; false when radio-controller uses
+                              # the channel itself (it then keeps the gain, the analyzer only shows it)
+
+radio_data = "tcp://127.0.0.1:5555"     # radio: radio-controller [forge].data (streams rx1/rx2)
+radio_control = "tcp://127.0.0.1:5557"  # radio: radio-controller [forge].control
+# radio_timeout_ms = 3000     # radio: no block for this long = device error
+timeout_ms = 2000
+state_file = ""               # e.g. "/var/lib/spectrum-analyzer/state.json"
+sweep_rate_hz = 61440000      # sample rate of swept (wide) spans; lower it on slow links (USB/network)
+usable_fraction = 0.8         # part of each capture used in swept mode (the band edges roll off)
+# settle_buffers = 3          # buffers dropped after a retune (default: 3 for iio, 1 for sim)
+
+# Initial measurement setup
+center_hz = 2440000000
+span_hz = 100000000
+rbw_hz = 0                    # 0 = auto (span / 500)
+window = "blackman_harris"    # rectangular | hann | hamming | blackman_harris | flat_top
+vbw_averages = 1
+gain_mode = "manual"          # manual | slow_attack | fast_attack | hybrid
+rx_gain_db = 40
+unit = "dBFS"                 # dBFS | dBm  (dBm = dBFS - RX gain + cal_offset_db)
+cal_offset_db = 0
+trace_modes = ["clear_write", "max_hold", "blank"]   # clear_write | max_hold | min_hold | average | view | blank
+detector = "peak"             # peak | sample | average | negative_peak
+points = 1001
+ref_level = 0
+scale_db = 10
+update_hz = 15
+
+# forge.v1 endpoints (the same in every forgecpp application; forgectl, panels)
+[forge]
+control = "tcp://*:5567"      # requests: controls, commands, alarms, logs, metrics, trace
+events = "tcp://*:5569"       # PUB: state, alarms, log, audit, health, metrics
+data = "tcp://*:5566"         # PUB: stream "spectrum" (sa.v1.Spectrum, newest sweep only)
+
+[console]
+telnet = "0.0.0.0:2324"       # remote console: telnet board 2324 (radio-controller has 2323)
+
+# Acquisition thread (FFT, traces); e.g. pin it away from radio-controller's RX thread.
+[threads.engine]
+policy = "other"              # other | fifo | rr | batch | idle
+# priority = 10               # fifo/rr
+# nice = 0
+# cpus = [1]
+
+# Who may change what (see the forgecpp README); without users everyone is admin.
+# [auth]
+# default_role = "viewer"
+# [auth.users.operator]
+# password = "change-me"
+# role = "operator"
+
+# forge-hub (optional): dashboard entry on the device's hub (restarts: the
+# systemd unit, see CMakeLists.txt).
+[hub]
+critical = false
+group = "Radio"
+
+[http]
+enabled = true
+host = "0.0.0.0"
+port = 8081                   # radio-controller has 8080
+
+[log]
+level = "info"

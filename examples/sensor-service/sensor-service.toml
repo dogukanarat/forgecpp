@@ -1,0 +1,40 @@
+# Configuration for the sensor-service example.
+# Every key can be overridden from the command line: -D sensor.rate_hz=20
+
+[log]
+level = "info"            # trace|debug|info|warn|error|critical|off
+# file = "/var/log/sensor-service/sensor-service.log"
+# max_size_mb = 10
+# max_files = 3
+# syslog = true
+
+[threads]
+workers = 2               # 0 = number of CPUs
+
+[http]
+enabled = true
+host = "127.0.0.1"
+port = 8080
+# threads = 8             # each open browser tab keeps one thread for live updates
+
+# [http.auth]             # protect the web UI and API (recommended on a network)
+# user = "admin"
+# password = "change-me"
+# token = "secret-token"  # for scripts: Authorization: Bearer secret-token
+
+[web]
+enabled = true            # control panel at /forge/, the app's pages at /
+# title = "Sensor"
+# root = "./web"          # serve pages from disk while editing them (no rebuild)
+refresh_ms = 250          # how often controls are checked for changes
+logs = true               # show the live log on the dashboard
+log_level = "info"
+
+[console]
+# enabled = true          # same as -i
+# history = "~/.sensor-service_history"
+
+[sensor]
+rate_hz = 10
+window = 50               # samples per statistics window
+alarm_threshold = 80.0

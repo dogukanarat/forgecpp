@@ -9,6 +9,8 @@
 //   });
 //   console.run();   // blocks until `exit`, Ctrl-D or stop()
 
+#include "forge/auth.hpp"
+
 #include <spdlog/fmt/fmt.h>
 
 #include <functional>
@@ -37,6 +39,18 @@ public:
         std::string banner;            ///< printed when the console starts
     };
 
+    /// Who runs a command and where its output goes. The local console is
+    /// admin; telnet sessions carry the logged-in user (see forge::Telnet).
+    struct Session {
+        std::string channel = "console";
+        std::string client;
+        std::string user;
+        Role role = Role::admin;
+        std::function<void(std::string_view)> output;  ///< empty: the local terminal
+    };
+    /// Session of the command running on this thread (nullptr outside commands).
+    static const Session* current_session();
+
     Console();
     explicit Console(Options options);
     ~Console();
@@ -52,6 +66,8 @@ public:
 
     /// Execute a command line as if it was typed. Returns false for unknown commands.
     bool execute(std::string_view line);
+    /// Execute for a remote session: output goes to session.output.
+    bool execute(std::string_view line, const Session& session);
 
     /// Run commands through `executor` (e.g. on the application main loop).
     void set_executor(Executor executor);

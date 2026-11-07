@@ -1,0 +1,41 @@
+# channel-emulator configuration
+#
+# In the TX path, between the sender and radio-controller:
+#
+#   qam-modem  --radio_tx = tcp://127.0.0.1:5586-->  channel-emulator  --> radio-controller [zmq].tx (5556)
+#
+# so the impaired signal reaches every RX behind the splitter (the modem on
+# RX1, spectrum-analyzer on RX2). Everything else (the modem's radio_data and
+# radio_control, the analyzer) stays connected to radio-controller directly.
+# Web: http://<board>:8083/forge/ - presets and every impairment on/off.
+
+[emulator]
+input = "tcp://*:5586"                    # the sender's TX goes here
+output = "tcp://127.0.0.1:5556"           # radio-controller [zmq].tx
+radio_control = "tcp://127.0.0.1:5557"    # read for the sample rate ("" = sample_rate_hz)
+sample_rate_hz = 3000000                  # used until radio-controller answers
+# clean, awgn-30, awgn-25, awgn-20, awgn-15, offset-5k, doppler, oscillators,
+# indoor, urban, mobile, interference, bad-radio
+preset = "clean"
+noise_bandwidth_hz = 750000               # SNR in the modem's symbol rate = Es/N0 (0 = whole sample rate)
+seed = 1
+
+[forge]
+control = "tcp://*:5587"      # radio-controller 5557, spectrum-analyzer 5567, qam-modem 5577
+events = "tcp://*:5589"
+data = "tcp://*:5585"
+
+[console]
+telnet = "0.0.0.0:2326"
+
+[hub]
+group = "Radio"
+
+[http]
+enabled = true
+host = "0.0.0.0"
+port = 8083
+
+[web]
+title = "Channel emulator"
+refresh_ms = 500
