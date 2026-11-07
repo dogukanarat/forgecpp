@@ -35,6 +35,10 @@
 
 namespace forge {
 
+namespace detail {
+class HttpFrontend;
+class RemoteConsole;
+}  // namespace detail
 class Application;
 class Config;
 class Console;
@@ -76,6 +80,8 @@ protected:
 
 private:
     friend class Application;
+    friend class detail::HttpFrontend;
+    friend class detail::RemoteConsole;
     Application* app_ = nullptr;
     std::string name_;
     bool critical_;

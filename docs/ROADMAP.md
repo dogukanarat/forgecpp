@@ -16,24 +16,12 @@ pre-production security work: forgecpp is used in the lab for now.
 | `[forge].control` served one request at a time (REP) | `zmq::Server` is a ROUTER socket with an I/O thread and a worker pool (`[forge].control_workers`, 2); replies go back to the client that asked, requests that waited too long for a worker (or beyond 256 waiting) get 503 without being handled. Clients and messages unchanged. |
 | The control service threw an HTTP type (`http::HttpError`) on every channel | `forge::Error{status, message, details}` in `forge/error.hpp`, thrown by `ControlService`, `web::Dashboard`, forge-hub and `invoke_for`; HTTP, forge.v1 and the console map it. `http::HttpError` derives from it (throwing it still works; `catch (const http::HttpError&)` around control calls becomes `catch (const forge::Error&)`). |
 | Defaults written twice (schema and every `get_or`) | `Schema::apply_defaults()` fills in every declared key after loading and reloading; declared keys are read with `cfg.value<T>(key)` (framework, forge-hub, all examples migrated; the small examples declare their keys now). Environment-dependent defaults are `.computed()`. A test walks `src/`, `hub/src/`, `examples/` and fails on `get_or` of a declared key. |
+| `application.cpp` was 1600 lines doing everything | Internal services in `src/app/` own their state: `HttpFrontend` (server, framework routes, web events and logs), `LayoutStore`, `Messaging` (events, streams, control endpoint), `RemoteConsole` (commands, REPL, telnet), `StateStore`, `Watchdog`, `HubRegistration`. `Application` keeps the lifecycle and the public API (900 lines). `StateStore`, `LayoutStore` and `Watchdog` have their own tests. |
 
 ## Plan
 
 Ordered by risk to the running system. Each step lands on its own with tests,
 without changing behaviour that is not named.
-
-### 5. Split `forge::Application`
-
-*Problem.* `application.cpp` is 1500 lines: HTTP routes, messaging, telnet,
-hub registration, persistence, watchdog. Hard to test in parts, every change
-touches it.
-
-*Plan.* Move, without behaviour changes, into internal services owned by
-`Application`, one per step: `HttpFrontend` (framework routes), `Messaging`
-(publishers, control server), `RemoteConsole` (REPL + telnet), `StateStore`
-(persist()), `Watchdog` (systemd + health gating), `HubRegistration`.
-`Application` keeps the lifecycle and the public API. The existing tests are
-the safety net; each service gets its own tests.
 
 ### 6. Retire the older JSON control protocol
 

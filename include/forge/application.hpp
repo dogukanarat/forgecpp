@@ -100,6 +100,14 @@ namespace http {
 class Server;
 class EventStream;
 }  // namespace http
+namespace detail {
+class StateStore;
+class Watchdog;
+class HubRegistration;
+class Messaging;
+class RemoteConsole;
+class HttpFrontend;
+}  // namespace detail
 namespace web {
 class Dashboard;
 }
@@ -230,7 +238,7 @@ public:
     /// Valid from on_start() until run() returns.
     Scheduler& scheduler();
     /// nullptr unless the HTTP server is enabled.
-    http::Server* http() { return http_.get(); }
+    http::Server* http();
     /// Control registry declared in setup_web(); valid from on_start() until run()
     /// returns, with or without HTTP. Served at /forge/ when the web UI is enabled,
     /// and by the console and forge::zmq::serve_application().
@@ -244,7 +252,7 @@ public:
     /// For conditions that need operator attention use alarms() instead.
     void notify_web(const std::string& message, const std::string& level = "info");
     /// Console command registry (used by -i and telnet); valid from start-up.
-    Console* console() { return console_.get(); }
+    Console* console();
     /// The single path for control changes (roles, leases, audit); see control.hpp.
     ControlService& control();
     /// Who changed what (control changes, presses, commands, acks, leases).
@@ -404,37 +412,29 @@ private:
         std::vector<std::function<void(Application&, web::Dashboard&)>> web;
     };
 
+    // The internal services (src/app/services.hpp) reach the hooks, the
+    // components and the virtual setup functions.
+    friend class detail::Messaging;
+    friend class detail::RemoteConsole;
+    friend class detail::HttpFrontend;
+
     int parse_command_line(int argc, char** argv);
     Config load_config() const;
     void declare_framework_config(config::Schema& schema);
     bool validate_config(const Config& config, bool at_start);
     void attach(std::unique_ptr<Component> component);
     void start_observability(const Config& config);
-    void start_messaging(const Config& config);
-    void start_telnet(const Config& config);
-    void start_hub_client(const Config& config);
-    static std::string default_layout_file(const std::string& name);
-    void save_layouts();
-    void restore_state();
-    void save_state();
-    void publish_event(const std::string& topic, const google::protobuf::Message& body);
-    void register_framework_console(Console& console);
-    void watchdog_tick();
     void setup_logging(const Config& config);
     void start_signal_thread();
     void stop_signal_thread();
-    void create_http(const Config& config);
-    void create_web(const Config& config);
-    void register_web_console(Console& console);
-    void push_web_state();
     /// Run `blocking` on a helper thread while this (main) thread keeps
     /// executing posted tasks, so it cannot deadlock on invoke()/call().
     void drain_while(const std::function<void()>& blocking);
-    void create_console(const Config& config);
-    void register_console_builtins(Console& console);
     void main_loop();
     void do_reload();
     void shutdown();
+    /// Milliseconds since the main loop's last heartbeat (0 before it runs).
+    std::int64_t loop_age_ms() const;
 
     AppInfo info_;
     Hooks hooks_;
@@ -459,15 +459,10 @@ private:
     Logger logger_;
     EventBus events_;
     Alarms alarms_;
-    std::atomic<bool> alarms_dirty_{true};
     Channel<Task> tasks_{256};
     std::unique_ptr<ThreadPool> pool_;
     std::unique_ptr<Scheduler> scheduler_;
-    std::unique_ptr<http::Server> http_;
     std::unique_ptr<web::Dashboard> dashboard_;
-    std::shared_ptr<http::EventStream> web_events_;
-    spdlog::sink_ptr web_log_sink_;
-    std::unique_ptr<Console> console_;
     std::atomic<std::thread::id> main_thread_{};
 
     config::Schema schema_;
@@ -476,26 +471,18 @@ private:
     Auth auth_;
     std::unique_ptr<ControlService> control_;
     std::vector<std::unique_ptr<Component>> components_;
-    std::unique_ptr<zmq::Publisher> events_pub_;
-    mutable std::mutex data_mutex_;
-    std::unique_ptr<zmq::Publisher> data_pub_;
-    std::unique_ptr<zmq::Server> control_server_;
-    std::unique_ptr<Telnet> telnet_;
-    std::unique_ptr<hub::Client> hub_client_;
-    // Card layouts of the web pages (forge.layout), stored on the device.
-    std::mutex layout_mutex_;
-    json web_layouts_ = json::object();
-    std::string layout_file_;
+    // services (src/app/)
+    std::unique_ptr<detail::StateStore> state_;
+    std::unique_ptr<detail::Watchdog> watchdog_;
+    std::unique_ptr<detail::HubRegistration> hub_;
+    std::unique_ptr<detail::Messaging> messaging_;
+    std::unique_ptr<detail::RemoteConsole> console_;
+    std::unique_ptr<detail::HttpFrontend> http_;
     bool hub_registration_ = true;
     std::atomic<int> stop_signal_{0};                 ///< signal that asked us to stop (0 = none)
     std::atomic<int> request_timeout_ms_{2000};       ///< [forge].request_timeout_ms
     std::atomic<std::int64_t> loop_tick_ms_{0};       ///< last main loop heartbeat (steady clock)
-    int log_listener_ = -1;
-    std::string state_file_;
-    std::atomic<bool> state_dirty_{false};
     std::atomic<bool> state_event_pending_{false};
-    json last_event_state_ = json::object();
-    bool watchdog_paused_ = false;
 
     std::atomic<bool> stop_requested_{false};
     std::atomic<int> exit_code_{0};
