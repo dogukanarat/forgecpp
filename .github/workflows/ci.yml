@@ -287,6 +287,7 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+          FORGE_TEST_TIMEOUT_SCALE: 4   # the instrumented code is several times slower
         run: |
           ./install.sh --prefix "$HOME/forgecpp-san" --build-type Debug --sanitize ${{ matrix.sanitize }} \
             --tests --examples --without-iio \

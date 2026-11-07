@@ -472,7 +472,9 @@ void Hub::apply_units(const std::map<std::string, UnitState>& units) {
                 // run's Result (e.g. "signal"); a manual start refused says start-limit-hit.
                 const bool gave_up = u.result == "start-limit-hit" ||
                                      (policy.max_restarts() > 0 && u.n_restarts >= policy.max_restarts());
-                e.message = gave_up ? fmt::format("gave up after {} restarts in {} s (last: {})", u.n_restarts,
+                // (NRestarts also counts the restart the start limit refused)
+                const auto restarts = policy.max_restarts() > 0 ? policy.max_restarts() : u.n_restarts;
+                e.message = gave_up ? fmt::format("gave up after {} restarts in {} s (last: {})", restarts,
                                                   policy.window_s(), result_text(u.result))
                                     : "failed: " + result_text(u.result);
                 raise(e, "failed", e.app.critical() ? forge::Severity::critical : forge::Severity::error, e.message);

@@ -13,6 +13,7 @@
 #include <doctest/doctest.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -54,10 +55,22 @@ private:
     std::filesystem::path path_;
 };
 
-/// Poll `predicate` until it is true or `timeout` expires.
+/// $FORGE_TEST_TIMEOUT_SCALE (default 1): slow builds (sanitizers, emulation)
+/// multiply the timeouts of wait_until() with it instead of each test guessing.
+inline double timeout_scale() {
+    static const double scale = [] {
+        const char* s = std::getenv("FORGE_TEST_TIMEOUT_SCALE");
+        const double v = s ? std::atof(s) : 1.0;
+        return v >= 1.0 ? v : 1.0;
+    }();
+    return scale;
+}
+
+/// Poll `predicate` until it is true or `timeout` (times timeout_scale()) expires.
 inline bool wait_until(const std::function<bool()>& predicate,
                        std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::duration_cast<std::chrono::milliseconds>(timeout * timeout_scale());
     while (std::chrono::steady_clock::now() < deadline) {
         if (predicate()) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
