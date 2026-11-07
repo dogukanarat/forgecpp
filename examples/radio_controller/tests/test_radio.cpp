@@ -459,7 +459,8 @@ TEST_CASE("radio-controller: listens to both RX channels and drives TX2") {
     };
     // TX2 is cabled to RX1 in this setup: the tone is on RX1, RX2 sees the carrier
     CHECK(forge::testing::wait_until([&] { return std::abs(peak(1) - 1.25e6) < 5e3; }, 10s));
-    CHECK(std::abs(peak(2) - 2e6) < 5e3);
+    // RX2's block of the same buffer may still be on its way
+    CHECK(forge::testing::wait_until([&] { return std::abs(peak(2) - 2e6) < 5e3; }, 10s));
     fz::Client ctl(r.app.control_endpoint(), 5s);
     CHECK(ctl.get("rx_channels") == json::array({1, 2}));
     CHECK(ctl.get("tx_channel") == "TX2");
