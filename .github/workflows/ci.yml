@@ -42,6 +42,9 @@ jobs:
           ccache --show-stats
       - name: forge.v1 stays compatible with the released API
         run: python3 tools/proto-compat.py --protoc "$HOME/forgecpp/bin/protoc"
+      - name: C++ API (exported symbols) and configuration keys stay compatible within the series
+        if: ${{ !contains(matrix.flags, '--static') }}
+        run: python3 tools/api-check.py --lib "$HOME/forgecpp/lib/libforgecpp.so" --app build/forgecpp/examples/hello
       - name: Smoke-test the example applications
         working-directory: build/forgecpp/examples
         run: |

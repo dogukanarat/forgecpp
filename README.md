@@ -910,7 +910,10 @@ version may change the C++ API: `libforgecpp.so.<major>.<minor>` and
 `find_package(forgecpp 0.3)` accepts 0.3.x only. The forge.v1 protocol only
 changes compatibly (new fields and messages; removed numbers reserved): CI
 checks it against the last release's API (`proto/forge/v1/API.json`) with
-`tools/proto-compat.py`, which also records it at a release (`--update`).
+`tools/proto-compat.py`, which also records it at a release (`--update`). Within a minor
+series the C++ API and the configuration keys stay compatible too
+(`tools/api-check.py`, `api/forgecpp-<x.y>.json`); what counts as public and
+how it may change: [docs/API.md](docs/API.md).
 
 ## Updating dependencies
 
