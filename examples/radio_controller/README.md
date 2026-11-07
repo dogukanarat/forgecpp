@@ -2,17 +2,19 @@
 
 A daemon that controls an **AD936x** transceiver on ADI's `ad9361` driver
 (AD9364 1R1T, AD9361/AD9363 2R2T) through **libiio** and moves IQ samples
-over **ZeroMQ**.
+as **forge.v1** protobuf messages over ZeroMQ.
 Built on forgecpp: the same controls are available from the web UI, the
-console and a ZeroMQ control socket.
+control panel, `forgectl`, the console and telnet.
 
 ```
-            ZeroMQ                                   libiio
-clients  <-- PUB  tcp://*:5555  "iq" frames  <--  RX thread  <--  cf-ad9361-lpc (RX DMA)     rx_channels
-clients  --> PULL tcp://*:5556  TX frames    -->  TX thread  -->  cf-ad9361-dds-core-lpc     tx_channel
-clients  <-> REP  tcp://*:5557  JSON control -->  main loop  -->  ad9361-phy (LO, rate, gain, ...)
-analyzer <-- PUB  tcp://*:5558  "rx2" blocks <--  RX thread      (shared channels)           tap_rx
+            forge.v1 / ZeroMQ                                   libiio
+clients  <-- PUB  [forge].data    5555  "iq" IqBlock     <--  RX thread  <--  cf-ad9361-lpc (RX DMA)   rx_channels
+analyzer <--                            "rx1"/"rx2"      <--  RX thread      (shared channels)         tap_rx
+clients  --> PULL [zmq].tx        5556  "tx" TxBlock     -->  TX thread  -->  cf-ad9361-dds-core-lpc   tx_channel
+clients  <-> REP  [forge].control 5557  Request/Reply    -->  main loop  -->  ad9361-phy (LO, rate, gain, ...)
+clients  <-- PUB  [forge].events  5559  state, alarms, logs, audit, health, metrics
 browser  <-> HTTP :8080  /  spectrum + waterfall + controls,  /forge/  control panel
+telnet   <-> 2323  console
 ```
 
 ## Running
@@ -22,38 +24,44 @@ radio-controller --backend sim                          # simulated AD9364, no h
 radio-controller --backend iio --uri local:             # on the board (in-kernel IIO devices)
 radio-controller --backend iio --uri ip:192.168.2.1     # remote, via iiod on the board
 radio-controller -c /etc/radio-controller/radio-controller.toml -i   # + backup console
+forgectl -e tcp://board:5557 controls                   # from anywhere: controls, alarms, logs, ...
+telnet board 2323                                       # the console, remotely
 ```
 
 Open `http://<host>:8080/` for the spectrum view. The daemon keeps running when
 the radio is missing or the connection drops: it raises a `radio.device`
 alarm and reconnects every 5 seconds.
 
-## Data plane (ZeroMQ)
+## Data plane (forge.v1 streams)
 
-Every message is multipart: **topic**, **header** (JSON), **payload**.
-Samples are `cs16`: interleaved little-endian int16 I/Q pairs at full scale
-(±32767) in both directions. The daemon converts to and from the AD936x's
-12-bit format.
+Every message is multipart: **topic**, **`forge.v1.Header`** (source, host,
+seq per topic, time, type, trace context), **body** (`radio.v1.*`, see
+[`../common/ad936x/proto/radio/v1/radio.proto`](../common/ad936x/proto/radio/v1/radio.proto))
+and the **samples**. Samples are `cs16`: interleaved little-endian int16 I/Q
+pairs at full scale (±32767) in both directions. The daemon converts to and
+from the AD936x's 12-bit format.
 
-**RX** (`[zmq].rx`, PUB, topic `iq`):
+**RX** (`[forge].data`, PUB, stream `iq`, `radio.v1.IqBlock`): one block per
+DMA buffer and channel it listens to:
 
-```json
-{"seq": 1842, "timestamp_ns": 1762500000123456789, "samples": 65536,
- "format": "cs16", "sample_rate": 30720000.0, "center_freq": 2412000000.0}
+```
+IqBlock { channel: 1, sample_rate: 30720000, center_freq: 2412000000,
+          samples: 65536, format: "cs16", rx_gain_db: 40, buffer: 1842 }
 ```
 
-`seq` increases by one per buffer; a gap means the subscriber was too slow
-(PUB drops frames for slow subscribers instead of stalling everyone). Samples
-are only copied out while someone is subscribed.
+`Header.seq` increases by one per block; a gap means the subscriber was too
+slow (PUB drops for slow subscribers instead of stalling everyone; receivers
+count the gaps). Samples are sent from the pooled DMA copy without another copy
+(zero copy) and only while someone is subscribed.
 
-**TX** (`[zmq].tx`, PULL): a header and a payload of cs16 samples.
-TX must be enabled first (`tx_enabled`); frames received while disabled are
+**TX** (`[zmq].tx`, PULL, topic `tx`, `radio.v1.TxBlock` + cs16 samples).
+TX must be enabled first (`tx_enabled`); blocks received while disabled are
 counted as dropped.
 
-- `{"format": "cs16"}`: streamed; the daemon regroups samples into DMA
+- `TxBlock { format: "cs16" }`: streamed; the daemon regroups samples into DMA
   buffers of `buffer_size`. Send at least as fast as the sample rate, or the
   hardware underflows (`radio.tx_underflow` alarm).
-- `{"format": "cs16", "cyclic": true}`: the hardware repeats this frame
+- `TxBlock { format: "cs16", cyclic: true }`: the hardware repeats this block
   until `tx_stop` (test tones, beacons).
 
 ## Channel roles (`[radio]`)
@@ -63,9 +71,9 @@ and TX2. Which of them this daemon uses, and which it shares with other
 applications, is set in the configuration, according to the hardware:
 
 ```toml
-rx_channels = [1]   # listens to: IQ stream on [zmq].rx, topic "iq", "channel" in the header
+rx_channels = [1]   # listens to: stream "iq" on [forge].data (IqBlock.channel)
 tx_channel  = 1     # drives: samples from [zmq].tx
-tap_rx      = [2]   # shares: blocks on [zmq].tap, topics "rx1" / "rx2" (e.g. the spectrum analyzer)
+tap_rx      = [2]   # shares: streams "rx1" / "rx2" on [forge].data (e.g. the spectrum analyzer)
 ```
 
 A role the transceiver cannot do (RX2 or TX2 on an AD9364) keeps the radio
@@ -75,16 +83,13 @@ until the next start (a reload keeps them).
 In the AD936x, RX1 and RX2 share the RX LO, the sample rate and the RF
 bandwidth and arrive in one DMA buffer (TX1 and TX2 share the TX LO). So
 radio-controller stays the only owner of the transceiver; other applications
-get the shared channels from [zmq].tap:
-
-```json
-{"seq": 812, "samples": 65536, "format": "cs16", "channel": 2,
- "sample_rate": 30720000.0, "center_freq": 2412000000.0, "rx_gain_db": 40.0}
-```
+get the shared channels as streams `rx1` / `rx2` (`IqBlock` with `channel`,
+`center_freq`, `sample_rate` and `rx_gain_db` of that channel).
 
 - A block is the start of one DMA buffer (`min(tap_samples, buffer_size)`
   contiguous samples), sent at most `tap_hz` times per second and only while
-  someone subscribes. Shared channels are converted only when a block is due,
+  someone subscribes ("latest" policy: a slow reader gets the newest block,
+  never a backlog). Shared channels are converted only when a block is due,
   so the cost is a few MB/s of copying.
 - After a change of RX LO, rate or bandwidth, the next buffers are skipped
   (they were captured with the old LO).
@@ -95,22 +100,24 @@ Loopback test (e.g. TX1 → RX2): put an attenuator in the cable (30 dB or
 more): the TX output (up to about +8 dBm) must stay well below the RX input's
 maximum (about +2.5 dBm). The analyzer reports clipping as `ADC OVERLOAD`.
 
-## Control plane (ZeroMQ REP, web, console)
+## Control plane (forge.v1, web, console, telnet)
 
-JSON requests on `[zmq].control` (see `forge::zmq::serve_application`):
+Requests on `[forge].control` (`forge.v1.Request`, see the forgecpp README);
+from the shell with `forgectl`:
 
-```json
-{"cmd": "set", "id": "rx_lo_mhz", "value": 2437}
-{"cmd": "get", "id": "rx_power_dbfs"}
-{"cmd": "state"}
-{"cmd": "press", "id": "tx_stop"}
-{"cmd": "alarms"}
-{"cmd": "ack", "id": "all"}
+```sh
+forgectl -e tcp://board:5557 set rx_lo_mhz 2437
+forgectl -e tcp://board:5557 get rx_power_dbfs
+forgectl -e tcp://board:5557 state
+forgectl -e tcp://board:5557 press tx_stop
+forgectl -e tcp://board:5557 alarms / ack all / audit / health / streams / metrics
+forgectl -e tcp://board:5557 lease group:Receiver 300  # keep others away from the RX settings
 ```
 
-Replies have `"ok": true`, or `"ok": false` with `error` and `status`
-(400 invalid value, 409 conflict, 502 rejected by the device, 503 radio not
-connected).
+Errors carry a status: 400 invalid value, 403 role, 409 conflict (AGC owns
+the gain, leased by someone else), 502 rejected by the device, 503 radio not
+connected. The older JSON commands (`{"cmd": "set", "id": "rx_lo_mhz",
+"value": 2437}`) are still accepted on the same socket.
 
 | Control | Kind | Range / values |
 |---|---|---|
@@ -127,8 +134,14 @@ connected).
 | `tx_stop`, `reconnect` | buttons | stop TX output / reopen the radio |
 | `rx_power_dbfs`, `peak`, `rx_rate_msps`, `rx_overflows`, `subscriptions`, `hw_channels`, `rx_channels`, `tx_channel`, `tap_channels`, `tap_blocks`, `tap_subscriptions`, `tx_mode`, `tx_frames`, `tx_underflows`, `tx_dropped`, `temperature_c`, `connected`, ... | values | read-only telemetry |
 
-The same commands are available in the console (`-i`):
-`set rx_lo_mhz 2437`, `press tx_stop`, `controls`, `alarms`, `ack all`.
+The same commands are available in the console (`-i`, or `telnet board 2323`):
+`set rx_lo_mhz 2437`, `press tx_stop`, `controls`, `alarms`, `ack all`,
+`metrics`, `health`, `streams`.
+
+Metrics (`/metrics`, `forgectl metrics`): `radio.rx.buffers`,
+`radio.rx.samples`, `radio.rx.read_seconds` and the framework's own. Health
+component `radio` (critical). The RX thread takes its scheduling from
+`[threads.rx]` (e.g. `policy = "fifo"`, `priority = 50`, `cpus = [1]`).
 
 Alarms: `radio.device` (radio unavailable / connection lost / channel roles
 the transceiver cannot do),
@@ -137,21 +150,27 @@ register), `radio.temperature` (above `temperature_alarm_c`).
 
 ## Client tools
 
-`clients/` (installed to `share/radio-controller/clients`, need `pyzmq` and `numpy`):
+`clients/` (installed to `share/radio-controller/clients`, need `pyzmq`,
+`numpy` and `protobuf`; the generated modules come with forgecpp
+(`share/forgecpp/python`) and radio-controller (`share/radio-controller/python`),
+or set `FORGE_PYTHONPATH`):
 
 ```sh
-./radioctl.py tcp://radio:5557 set rx_lo_mhz 2437      # control
+forgectl -e tcp://radio:5557 set rx_lo_mhz 2437            # control
 ./rx_capture.py tcp://radio:5555 --seconds 2 --out capture.cs16
-./radioctl.py tcp://radio:5557 set tx_enabled true
+./rx_capture.py tcp://radio:5555 --topic rx2                # a shared channel
+forgectl -e tcp://radio:5557 set tx_enabled true
 ./tx_tone.py tcp://radio:5556 --offset 1e6 --rate 30.72e6   # cyclic test tone
 ```
 
-`radioctl.py` works with every forgecpp daemon that serves its controls over ZeroMQ.
+`forge_msg.py` builds and parses the forge.v1 framing for your own scripts.
 
 ## Configuration
 
 See `config/radio-controller.toml`. With `state_file` set, values changed at
-runtime (web, console, ZeroMQ) are restored on the next start.
+runtime (web, forgectl, console, telnet) are restored on the next start.
+`radio-controller --help-config` lists every key, `--check-config` validates
+a file.
 
 ## Simulator
 
@@ -166,7 +185,7 @@ with about 10 – 20 MSPS in a release build; use lower rates in debug builds.
 
 ## Building
 
-As a forgecpp example (built when forgecpp has ZeroMQ, not installed):
+As a forgecpp example (not installed):
 
 ```sh
 ./install.sh --examples

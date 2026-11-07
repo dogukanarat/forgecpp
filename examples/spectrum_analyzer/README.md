@@ -3,14 +3,16 @@
 A spectrum analyzer for the **AD936x** transceivers on ADI's `ad9361` driver
 (AD9364, AD9361, AD9363), operated from the browser. Built on forgecpp: every setting is a
 dashboard control, so the analyzer page, the generic control panel
-(`/forge/`), the console and the ZeroMQ control socket all drive the same
+(`/forge/`), `forgectl` (forge.v1), the console and telnet all drive the same
 instrument.
 
 ```
                       engine thread                                   main loop
-cf-ad9361-lpc  -->  capture -> window -> FFT -> average  -->  frame  -->  SSE "frame"   --> browser  /
-ad9361-phy     <--  LO / rate / bandwidth / gain per segment              ZeroMQ PUB     --> clients  tcp://*:5566
-                                                                          ZeroMQ REP     <-> control  tcp://*:5567
+cf-ad9361-lpc  -->  capture -> window -> FFT -> average  -->  frame  -->  SSE "frame"     --> browser  /
+ad9361-phy     <--  LO / rate / bandwidth / gain per segment              [forge].data    --> clients  5566 "spectrum" (sa.v1.Spectrum)
+                                                                          [forge].control <-> forgectl 5567 (forge.v1)
+                                                                          [forge].events  --> watch    5569
+                                                                          telnet          <-> console  2324
 ```
 
 ## Running
@@ -21,6 +23,7 @@ spectrum-analyzer --backend radio                       # RX2 of radio-controlle
 spectrum-analyzer --backend iio --uri local:            # on the board, owning the RX path
 spectrum-analyzer --backend iio --uri ip:192.168.2.1    # remote, via iiod on the board
 spectrum-analyzer -c spectrum-analyzer.toml -i          # + backup console (peaks, markers, set, press)
+telnet board 2324                                       # the same console, remotely
 ```
 
 Open `http://<host>:8081/` (radio-controller has 8080). The simulator has carriers at 433.92, 868.3, 915,
@@ -45,7 +48,7 @@ the channels its configuration gives it, for example:
 
 ```
 radio-controller  rx_channels = [1]  tx_channel = 1  tap_rx = [2]   (owns LO, rate, bandwidth)
-spectrum-analyzer channel = 2        control_gain = true             (RX2 from [zmq].tap)
+spectrum-analyzer channel = 2        control_gain = true             (stream "rx2" of radio-controller)
 ```
 
 - RX1 and RX2 of the AD9361 share the RX LO, the sample rate and the RF
@@ -123,32 +126,34 @@ peak left/right, <kbd>C</kbd> marker → center, <kbd>Space</kbd> run/hold,
 (headers `X-Sample-Rate`, `X-Center-Frequency`), `POST /api/tune`
 `{"center_hz": ..., "span_hz": ...}` (one retune for both).
 
-**ZeroMQ spectrum** (`[zmq].spectrum`, PUB, topic `spectrum`): a JSON header
-and the live trace as little-endian float32 values:
+**Spectrum stream** (`[forge].data`, topic `spectrum`, `sa.v1.Spectrum`, see
+[`proto/sa/v1/spectrum.proto`](proto/sa/v1/spectrum.proto)): the live trace
+of every sweep, newest only (a slow display skips sweeps instead of lagging):
 
-```json
-{"seq": 512, "start_hz": 2405000000.0, "stop_hz": 2445000000.0, "points": 1001,
- "unit": "dBFS", "rbw_hz": 48876.95, "format": "f32"}
 ```
+Spectrum { seq: 512, start_hz: 2405e6, stop_hz: 2445e6, points: 1001, unit: "dBFS",
+           rbw_hz: 48876.9, sweep_mode: "realtime", overload: false, channel: 2, levels: [...] }
+```
+
+`clients/spectrum_watch.py tcp://board:5566` prints the strongest signal per
+sweep, or every sweep as JSON (`--json`, the protobuf JSON mapping a remote
+panel can use as is):
 
 ```python
-import json, zmq, numpy as np
-s = zmq.Context().socket(zmq.SUB)
-s.connect("tcp://board:5566"); s.subscribe(b"spectrum")
-topic, header, payload = s.recv_multipart()
-h = json.loads(header); levels = np.frombuffer(payload, "<f4")
-freqs = np.linspace(h["start_hz"], h["stop_hz"], h["points"])
+topic, header, body = s.recv_multipart()           # s: SUB to tcp://board:5566, topic b"spectrum"
+sp = spectrum_pb2.Spectrum(); sp.ParseFromString(body)   # from sa.v1 import spectrum_pb2
+freqs = numpy.linspace(sp.start_hz, sp.stop_hz, sp.points); levels = numpy.array(sp.levels)
 ```
 
-**ZeroMQ control** (`[zmq].control`, REP): the dashboard controls, as for
-every forgecpp application:
+**Control** (`[forge].control`): the dashboard controls, as for every
+forgecpp application:
 
-```json
-{"cmd": "set", "id": "center_mhz", "value": 915}
-{"cmd": "set", "id": "trace2_mode", "value": "max_hold"}
-{"cmd": "press", "id": "peak_search"}
-{"cmd": "get", "id": "m1_mhz"}
-{"cmd": "alarms"}
+```sh
+forgectl -e tcp://board:5567 set center_mhz 915
+forgectl -e tcp://board:5567 set trace2_mode max_hold
+forgectl -e tcp://board:5567 press peak_search
+forgectl -e tcp://board:5567 get m1_mhz
+forgectl -e tcp://board:5567 alarms / health / metrics / audit
 ```
 
 Control ids: `center_mhz span_mhz start_mhz stop_mhz preset full_span
@@ -160,6 +165,9 @@ signal_track measurement channel_bw_mhz obw_percent limit_on limit_level
 peak_threshold run single update_hz reconnect`; read-only: `sweep_mode
 rbw_actual fft_size sample_rate overload result sweep_time connected backend
 temperature_c`.
+
+Health component `radio`; metrics `sa.sweeps`, `sa.sweep_seconds`; the
+acquisition thread takes `[threads.engine]` (policy, priority, cpus).
 
 Alarms: `analyzer.device` (radio not available, retried every 2 s),
 `analyzer.overload` (ADC clipping), `analyzer.limit` (live trace above the
@@ -180,8 +188,10 @@ second per segment.
 |---|---|
 | `src/spectrum.*` | planning (realtime / swept segments, FFT size for an RBW), bin stitching, detectors, traces, peak search, channel power, OBW: pure functions, unit tested |
 | `src/engine.*` | the acquisition thread: owns the radio, retunes per segment, builds `Frame`s; reconnects on errors |
-| `src/radio_tap.*` | `backend = "radio"`: blocks of a channel radio-controller shares, its gain over the control socket (fixed tuning) |
-| `src/analyzer.*` | the forgecpp application: controls, markers, alarms, HTTP routes, ZeroMQ, persistence |
+| `src/radio_tap.*` | `backend = "radio"`: `radio.v1.IqBlock` stream of a channel radio-controller shares, its gain through radio-controller's forge.v1 control endpoint (fixed tuning) |
+| `src/analyzer.*` | the forgecpp application: config schema, controls, markers, alarms, HTTP routes, spectrum stream, persistence |
+| `proto/sa/v1` | `sa.v1.Spectrum` |
+| `clients/` | `spectrum_watch.py` |
 | `web/` | the analyzer page (canvas spectrum and waterfall, no dependencies) |
 | `../common/ad936x` | AD936x access through libiio, the simulator, FFT and windows (shared with radio_controller) |
 
@@ -189,4 +199,4 @@ Tests (`tests/`) cover the DSP scaling, plans, detectors, traces, peaks and
 measurements, the engine on the simulator (realtime and swept spans, markers,
 peak track, single sweep, device errors, bounded DMA buffers), the RX2 mode
 against a stand-in and against the real radio-controller (TX1 → RX2 loopback
-on a simulated AD9361) and the whole application over ZeroMQ.
+on a simulated AD9361) and the whole application over forge.v1.
