@@ -327,7 +327,15 @@ json read_value(const detail::ControlDef& c) {
 }
 }  // namespace
 
+void Dashboard::check_thread(const char* method) const {
+    if (owner_ == std::thread::id{} || std::this_thread::get_id() == owner_) return;
+    throw std::logic_error(std::string("web::Dashboard::") + method +
+                           "() called outside the main loop: the controls belong to the application's main loop; "
+                           "use app.invoke([&] { ... }) or app.post(...) from other threads");
+}
+
 json Dashboard::schema() const {
+    check_thread("schema");
     json groups = json::array();
     for (const auto& g : groups_) {
         json controls = json::array();
@@ -378,6 +386,7 @@ json Dashboard::schema() const {
 }
 
 json Dashboard::state() const {
+    check_thread("state");
     json out = json::object();
     for (const auto& c : controls_) {
         if (c->kind != Kind::button) out[c->id] = read_value(*c);
@@ -386,17 +395,20 @@ json Dashboard::state() const {
 }
 
 json Dashboard::get(const std::string& id) const {
+    check_thread("get");
     const auto& c = control(id);
     return c.kind == Kind::button ? json(nullptr) : read_value(c);
 }
 
 void Dashboard::press(const std::string& id) {
+    check_thread("press");
     const auto& c = control(id);
     if (c.kind != Kind::button) throw forge::Error(400, "control '" + id + "' is not a button");
     if (c.action) c.action();
 }
 
 void Dashboard::set(const std::string& id, const json& value) {
+    check_thread("set");
     auto it = by_id_.find(id);
     if (it == by_id_.end()) throw forge::Error(404, "unknown control '" + id + "'");
     auto& c = *it->second;
@@ -451,6 +463,7 @@ const detail::CommandDef& Dashboard::command(const std::string& id) const {
 }
 
 json Dashboard::call(const std::string& id, const json& args) {
+    check_thread("call");
     const auto& c = command(id);
     if (!args.is_null() && !args.is_object()) throw forge::Error(400, "arguments must be an object");
     json in = args.is_object() ? args : json::object();
@@ -500,6 +513,7 @@ std::vector<std::string> Dashboard::persistent_ids() const {
 }
 
 json Dashboard::changes() {
+    check_thread("changes");
     json current = state();
     json diff = json::object();
     for (auto& [id, value] : current.items()) {

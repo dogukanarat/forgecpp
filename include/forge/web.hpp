@@ -32,6 +32,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -273,6 +274,13 @@ public:
     /// Values that changed since the previous call (for live updates).
     json changes();
 
+    /// From now on, values (schema, state, get, set, press, call, changes) may
+    /// only be used on `thread`: the controls read and write the application's
+    /// state, which belongs to its main loop. forge::Application binds it to
+    /// the main loop after setup_web(); other threads use app.invoke() / post().
+    /// A call from another thread throws std::logic_error naming the method.
+    void bind_to_thread(std::thread::id thread) { owner_ = thread; }
+
 private:
     friend class Group;
     detail::ControlDef& add(detail::ControlDef def);
@@ -285,6 +293,8 @@ private:
     std::map<std::string, detail::CommandDef*> commands_by_id_;
     std::vector<std::pair<std::string, std::string>> links_;
     json last_state_ = json::object();
+    std::thread::id owner_{};
+    void check_thread(const char* method) const;
 };
 
 }  // namespace forge::web

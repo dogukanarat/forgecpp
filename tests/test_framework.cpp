@@ -712,6 +712,39 @@ TEST_CASE("testing: manual time - timers run when the test advances the clock, w
     CHECK_THROWS_AS(real.advance(std::chrono::seconds(1)), std::logic_error);
 }
 
+TEST_CASE("threading: background(), call() on the loop, the dashboard's owner, slow tasks") {
+    forge::testing::AppRunner<RolesApp> r({"-D", "forge.slow_task_ms=20"});
+
+    // background(): the work on a worker, the result on the main loop
+    std::promise<std::pair<int, bool>> got;
+    r->post([&] {
+        r->background([&] { return std::make_pair(42, r->on_main_loop()); },
+                      [&](std::pair<int, bool> v) { got.set_value({v.first + (r->on_main_loop() ? 1 : 0), v.second}); });
+    });
+    const auto v = got.get_future().get();
+    CHECK(v.first == 43);   // then() ran on the main loop
+    CHECK_FALSE(v.second);  // work() did not
+    std::promise<void> after_failure;
+    r->post([&] {
+        r->background([]() -> int { throw std::runtime_error("disk gone"); }, [](int) { FAIL("not called"); });
+        r->background([] {}, [&] { after_failure.set_value(); });
+    });
+    after_failure.get_future().get();
+
+    // call() from the main loop runs at once instead of deadlocking on itself
+    CHECK(r->invoke([&] { return r->call([] { return 7; }).get(); }) == 7);
+
+    // The controls' values belong to the main loop.
+    CHECK_THROWS_WITH_AS(r->dashboard()->get("gain"), doctest::Contains("outside the main loop"), std::logic_error);
+    CHECK_THROWS_AS(r->dashboard()->set("gain", 5), std::logic_error);
+    CHECK(r->invoke([&] { return r->dashboard()->get("gain"); }) == 10.0);
+
+    // A slow task is counted (and logged).
+    const auto before = forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics(0).value();
+    r->invoke([] { std::this_thread::sleep_for(std::chrono::milliseconds(60)); });
+    CHECK(forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics(0).value() == before + 1);
+}
+
 TEST_CASE("instances: --instance names the application <name>@<instance>") {
     {
         forge::testing::AppRunner<InvokeApp> r({"--instance", "rx2"});

@@ -157,6 +157,10 @@ void Application::stop(int exit_code) {
     tasks_.push([] {});  // wake the main loop
 }
 
+void Application::background_failed(const char* what) {
+    if (logger_) logger_->error("background task failed: {}", what);
+}
+
 void Application::loop_busy() const {
     static auto& timeouts = metrics::registry().counter(
         "forge.control.timeouts", "Requests that gave up waiting for a busy main loop");
@@ -177,13 +181,27 @@ void Application::post(Task task) {
     static auto& lag = metrics::registry().histogram("forge.loop.lag_seconds", metrics::latency_buckets(),
                                                      "Delay between post() and execution on the main loop", "s");
     static auto& busy = metrics::registry().counter("forge.loop.busy_us", "Time spent running main loop tasks", "us");
-    tasks_.push([t = std::move(task), queued = std::chrono::steady_clock::now()] {
+    static auto& slow = metrics::registry().counter(
+        "forge.loop.slow_tasks", "Main loop tasks that took longer than [forge].slow_task_ms");
+    tasks_.push([this, t = std::move(task), queued = std::chrono::steady_clock::now()] {
         const auto start = std::chrono::steady_clock::now();
         lag.observe(std::chrono::duration<double>(start - queued).count());
         FORGE_TRACE_SCOPE("loop.task", "forge");
         t();
-        busy.inc(static_cast<std::uint64_t>(
-            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count()));
+        const auto took = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start);
+        busy.inc(static_cast<std::uint64_t>(took.count()));
+        // Everything else waits while a task runs: point at it (at most every 10 s).
+        const int limit_ms = slow_task_ms_.load(std::memory_order_relaxed);
+        if (limit_ms > 0 && took > std::chrono::milliseconds(limit_ms)) {
+            slow.inc();
+            static std::atomic<std::int64_t> last_warning{0};
+            const auto now_s = std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count();
+            if (now_s - last_warning.exchange(now_s) >= 10 && logger_) {
+                logger_->warn("a main loop task took {} ms (> [forge].slow_task_ms = {}): everything else waited; "
+                              "move heavy work off the loop with background() (forge.loop.slow_tasks, trace \"loop.task\")",
+                              took.count() / 1000, limit_ms);
+            }
+        }
     });
 }
 
@@ -376,6 +394,7 @@ int Application::run(int argc, char** argv) {
 
         auth_.load(cfg);
         request_timeout_ms_ = cfg.value<int>("forge.request_timeout_ms");
+        slow_task_ms_ = cfg.value<int>("forge.slow_task_ms");
         start_observability(cfg);
         control_ = std::make_unique<ControlService>(*this);
         control_->set_legacy_json(cfg.value<bool>("forge.legacy_json"));
@@ -386,6 +405,7 @@ int Application::run(int argc, char** argv) {
         setup_web(*dashboard_);
         for (auto& c : components_) c->setup_web(*dashboard_);
         for (auto& h : hooks_.web) h(*this, *dashboard_);
+        dashboard_->bind_to_thread(main_thread_.load());  // its values belong to the main loop
         state_->restore(*dashboard_, cfg.value<std::string>("state.file"), logger_);
 
         http_->create(cfg);
@@ -603,6 +623,7 @@ void Application::do_reload() {
         config_ = fresh;
     }
     request_timeout_ms_ = fresh.value<int>("forge.request_timeout_ms");
+    slow_task_ms_ = fresh.value<int>("forge.slow_task_ms");
     if (control_) control_->set_legacy_json(fresh.value<bool>("forge.legacy_json"));
     if (auto level = fresh.get<std::string>("log.level")) {
         try {
@@ -766,6 +787,10 @@ void Application::declare_framework_config(config::Schema& s) {
     s.string("forge.events", "", "PUB: state, alarms, log, audit, health, metrics, e.g. \"tcp://*:5559\"");
     s.string("forge.data", "", "PUB: the application's streams (empty: an ephemeral port when used)");
     s.integer("forge.metrics_interval_s", 5, "Metrics event interval").range(1, 3600).unit("s");
+    s.integer("forge.slow_task_ms", 200,
+              "Warn when one main loop task (timer, control, command) runs longer than this (0 = never)")
+        .range(0, 60000)
+        .unit("ms");
     s.boolean("forge.legacy_json", true,
               "Accept the older JSON commands ({\"cmd\": ...}) on [forge].control (deprecated; off by default in 0.4)");
     s.integer("forge.control_workers", 2, "Requests on [forge].control handled at the same time").range(1, 16);

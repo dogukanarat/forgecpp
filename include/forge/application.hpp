@@ -205,15 +205,46 @@ public:
     /// True on the thread running the main loop.
     bool on_main_loop() const { return std::this_thread::get_id() == main_thread_.load(); }
 
-    /// Run `fn` on the main loop and get its result as a future.
-    /// Never wait on the future from the main loop itself (use invoke()).
+    /// Run `fn` on the main loop and get its result as a future. On the main
+    /// loop itself it runs at once (a ready future), so waiting on it never
+    /// deadlocks.
     template <class F>
     auto call(F&& fn) -> std::future<std::invoke_result_t<std::decay_t<F>>> {
         using R = std::invoke_result_t<std::decay_t<F>>;
         auto task = std::make_shared<std::packaged_task<R()>>(std::forward<F>(fn));
         auto future = task->get_future();
-        post([task] { (*task)(); });
+        if (on_main_loop()) {
+            (*task)();
+        } else {
+            post([task] { (*task)(); });
+        }
         return future;
+    }
+
+    /// Heavy work off the main loop: `work` runs on the worker pool, then
+    /// `then(result)` on the main loop (where the application's state may be
+    /// touched). An exception from `work` is logged, `then` is not called.
+    ///
+    ///   background([path] { return load_big_file(path); },
+    ///              [this](Data d) { data_ = std::move(d); });
+    template <class Work, class Then>
+    void background(Work work, Then then) {
+        using R = std::invoke_result_t<Work>;
+        pool().detach_task([this, work = std::move(work), then = std::move(then)]() mutable {
+            try {
+                if constexpr (std::is_void_v<R>) {
+                    work();
+                    post([then = std::move(then)]() mutable { then(); });
+                } else {
+                    auto result = std::make_shared<R>(work());
+                    post([then = std::move(then), result]() mutable { then(std::move(*result)); });
+                }
+            } catch (const std::exception& e) {
+                background_failed(e.what());
+            } catch (...) {
+                background_failed("unknown exception");
+            }
+        });
     }
 
     /// Timers; callbacks run on the main loop.
@@ -423,6 +454,7 @@ private:
     }
     /// Counts the timeout and throws 503 "main loop busy".
     [[noreturn]] void loop_busy() const;
+    void background_failed(const char* what);
 
     struct Hooks {
         std::vector<Hook> start, stop, reload;
@@ -470,6 +502,7 @@ private:
     std::string http_listen_;
     std::string instance_;
     bool manual_clock_ = false;
+    std::atomic<int> slow_task_ms_{200};  ///< [forge].slow_task_ms
     bool print_config_ = false;
     bool help_config_ = false;
     bool check_config_ = false;
