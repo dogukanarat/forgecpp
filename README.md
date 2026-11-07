@@ -511,7 +511,12 @@ and alarms through `alarms` and `ack <id|all>` (with tab completion).
 ### forge.v1: one message standard for every application
 
 The protocol is defined in [`proto/forge/v1`](proto/forge/v1) (installed in
-`share/forgecpp/proto`, Python modules in `share/forgecpp/python`):
+`share/forgecpp/proto`). Python: the `forge-v1` package (`forge.v1.*_pb2`
+and `forge.v1.framing`) is installed into site-packages; applications install
+their own messages next to it with `forge_install_python(DIRECTORY <dir>)`
+(the `PYTHON` dir of `forge_add_proto`), so scripts simply
+`from forge.v1 import framing` and `from radio.v1 import radio_pb2` (from a
+build directory: `PYTHONPATH=<build>/python`):
 
 | Endpoint (`[forge]`) | Socket | Carries |
 |---|---|---|
@@ -582,7 +587,7 @@ endpoints. The control endpoint still accepts the older JSON commands
 in `forge.control.legacy_json`, every client that sends them is named in a
 warning once, and `[forge].legacy_json = false` refuses them (status 410).
 They will be off by default in 0.4 and removed in 0.5; move scripts to
-forge.v1 (`forgectl`, `forge::zmq::Client`, `forge_msg.py`).
+forge.v1 (`forgectl`, `forge::zmq::Client`, Python `forge.v1`).
 
 ### Access control, leases and the audit trail
 

@@ -49,10 +49,8 @@ configure_file(config/radio-controller.toml "${CMAKE_CURRENT_BINARY_DIR}/radio-c
 if(RADIO_STANDALONE)
     install(PROGRAMS clients/rx_capture.py clients/tx_tone.py
             DESTINATION ${CMAKE_INSTALL_DATADIR}/radio-controller/clients)
-    install(FILES clients/forge_msg.py DESTINATION ${CMAKE_INSTALL_DATADIR}/radio-controller/clients)
-    # radio.v1 Python modules (forge.v1 ones come with forgecpp)
-    install(DIRECTORY ${AD936X_PYTHON_DIR}/ DESTINATION ${CMAKE_INSTALL_DATADIR}/radio-controller/python
-            FILES_MATCHING PATTERN "*.py")
+    # radio.v1 Python modules in site-packages (forge.v1 comes with forgecpp)
+    forge_install_python(DIRECTORY ${AD936X_PYTHON_DIR})
 endif()
 
 if(RADIO_STANDALONE)

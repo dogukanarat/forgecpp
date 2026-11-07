@@ -95,8 +95,7 @@ forge_add_app(${NAME}
     RESTART on-failure MAX_RESTARTS 3 RESTART_WINDOW 600 RESTART_DELAY 2 WATCHDOG 30)
 target_compile_definitions(${NAME} PRIVATE APP_VERSION="\${PROJECT_VERSION}")
 install(FILES proto/${PKG}/v1/${PKG}.proto DESTINATION \${CMAKE_INSTALL_DATADIR}/${NAME}/proto/${PKG}/v1)
-install(DIRECTORY "\${CMAKE_CURRENT_BINARY_DIR}/python/" DESTINATION \${CMAKE_INSTALL_DATADIR}/${NAME}/python
-        FILES_MATCHING PATTERN "*.py")
+forge_install_python(DIRECTORY "\${CMAKE_CURRENT_BINARY_DIR}/python")  # ${PKG}.v1 in site-packages
 install(PROGRAMS clients/watch.py DESTINATION \${CMAKE_INSTALL_DATADIR}/${NAME}/clients)
 
 include(CTest)
@@ -344,30 +343,20 @@ cat > "${DIR}/clients/watch.py" <<EOF
 """Print ${NAME}'s "ticks" stream: [b"ticks"][forge.v1.Header][${PKG}.v1.Tick].
 
     pip install pyzmq protobuf
-    FORGE_PYTHONPATH=<forgecpp>/share/forgecpp/python:build/python ./clients/watch.py tcp://localhost:5555
+    ./clients/watch.py tcp://localhost:5555        # installed: forge.v1 and ${PKG}.v1 in site-packages
+    PYTHONPATH=build/python ./clients/watch.py ...   # from the build directory (forgecpp installed)
 """
-import os
 import sys
 
-for p in os.environ.get("FORGE_PYTHONPATH", "").split(":") + [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "python"),
-        "/usr/share/forgecpp/python", "/usr/local/share/forgecpp/python"]:
-    if p and os.path.isdir(p):
-        sys.path.append(p)
-
-import zmq  # noqa: E402
-from forge.v1 import common_pb2  # noqa: E402
-from ${PKG}.v1 import ${PKG}_pb2  # noqa: E402
+import zmq
+from forge.v1 import framing
+from ${PKG}.v1 import ${PKG}_pb2
 
 sock = zmq.Context.instance().socket(zmq.SUB)
 sock.setsockopt(zmq.SUBSCRIBE, b"ticks")
 sock.connect(sys.argv[1] if len(sys.argv) > 1 else "tcp://127.0.0.1:5555")
 while True:
-    topic, header, body = sock.recv_multipart()[:3]
-    h = common_pb2.Header()
-    h.ParseFromString(header)
-    t = ${PKG}_pb2.Tick()
-    t.ParseFromString(body)
+    topic, h, t, _ = framing.parse(sock.recv_multipart(), ${PKG}_pb2.Tick)
     print(f"{h.source}@{h.host} seq {h.seq}: tick {t.count} ({t.message}, every {t.interval_ms} ms)")
 EOF
 chmod +x "${DIR}/clients/watch.py"

@@ -14,7 +14,7 @@ libraries with the Yocto toolchain via `install.sh`.
    ```
 
 Packages: `forgecpp` (libraries), `forgecpp-forgectl` (forge.v1 command line
-client on the target), `forgecpp-python` (forge.v1 Python modules; needs
+client on the target), `python3-forge-v1` (the forge-v1 Python package in site-packages; needs
 python3-protobuf and python3-pyzmq from meta-python), `forgecpp-tools`
 (`forgecpp-new`), `forgecpp-iio-tools`, `forgecpp-protoc` (protoc for the
 target, rarely needed), `forgecpp-dev` (headers, CMake packages, `.proto` files).

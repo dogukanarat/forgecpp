@@ -35,7 +35,7 @@ S = "${WORKDIR}/git"
 # same protobuf sources (generated code must match libprotobuf exactly).
 DEPENDS = "openssl zlib libxml2 forgecpp-protoc-native"
 
-inherit cmake pkgconfig systemd
+inherit cmake pkgconfig systemd python3-dir
 
 # forge-hub, the device dashboard and supervisor (port 80): built with the
 # "hub" PACKAGECONFIG, installed only when the image asks for it:
@@ -67,6 +67,7 @@ do_compile() {
         --quiet \
         --protoc ${STAGING_BINDIR_NATIVE}/forgecpp-protoc \
         --cmake-arg -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir} \
+        --cmake-arg -DFORGE_PYTHON_SITEDIR=${PYTHON_SITEPACKAGES_DIR} \
         ${@bb.utils.contains('PACKAGECONFIG', 'hub', '', '--without-hub', d)} \
         ${FORGECPP_INSTALL_ARGS}
 }
@@ -80,10 +81,10 @@ do_install() {
 # helper are development files; libforgecpp, libprotobuf, libzmq, libspdlog and
 # libreplxx are runtime.
 #   forgecpp-forgectl  forge.v1 command line client (forgectl) for the target
-#   forgecpp-python    forge.v1 Python modules (share/forgecpp/python)
+#   python3-forge-v1   forge-v1 Python package: forge.v1 messages and framing (site-packages)
 #   forgecpp-tools     forgecpp-new (scaffolder)
 #   forgecpp-protoc    protoc and libprotoc for the target (rarely needed)
-PACKAGES =+ "${PN}-hub ${PN}-forgectl ${PN}-python ${PN}-tools ${PN}-iio-tools ${PN}-protoc"
+PACKAGES =+ "${PN}-hub ${PN}-forgectl python3-forge-v1 ${PN}-tools ${PN}-iio-tools ${PN}-protoc"
 #   forgecpp-hub       forge-hub: dashboard of the device's applications (state, health, systemd restarts)
 FILES:${PN}-hub = "${bindir}/forge-hub ${sysconfdir}/forge-hub ${systemd_system_unitdir}/forge-hub.service"
 CONFFILES:${PN}-hub = "${sysconfdir}/forge-hub/forge-hub.toml"
@@ -91,8 +92,11 @@ RDEPENDS:${PN}-hub = "${PN}"
 SYSTEMD_PACKAGES = "${@bb.utils.contains('PACKAGECONFIG', 'hub', '${PN}-hub', '', d)}"
 SYSTEMD_SERVICE:${PN}-hub = "forge-hub.service"
 FILES:${PN}-forgectl = "${bindir}/forgectl"
-FILES:${PN}-python = "${datadir}/forgecpp/python"
-RDEPENDS:${PN}-python = "python3-core python3-protobuf python3-pyzmq"
+FILES:python3-forge-v1 = "${PYTHON_SITEPACKAGES_DIR}/forge"
+RDEPENDS:python3-forge-v1 = "python3-core python3-protobuf python3-pyzmq"
+RPROVIDES:python3-forge-v1 = "${PN}-python"
+RREPLACES:python3-forge-v1 = "${PN}-python"
+RCONFLICTS:python3-forge-v1 = "${PN}-python"
 FILES:${PN}-tools = "${bindir}/forgecpp-new"
 FILES:${PN}-iio-tools = "${bindir}/iio_*"
 FILES:${PN}-protoc = "${bindir}/protoc* ${libdir}/libprotoc${SOLIBS}"

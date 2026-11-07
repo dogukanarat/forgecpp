@@ -478,7 +478,7 @@ json ControlService::handle_legacy_json(const json& req, const Caller& transport
         return {{"ok", false},
                 {"status", 410},
                 {"error", "the older JSON protocol is off ([forge].legacy_json = false): use forge.v1 "
-                          "(forgectl, forge::zmq::Client, forge_msg.py)"}};
+                          "(forgectl, forge::zmq::Client, Python forge.v1)"}};
     }
     {
         std::lock_guard lock(legacy_mutex_);

@@ -255,8 +255,10 @@ install(DIRECTORY include/forge DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 install(DIRECTORY "${PROJECT_BINARY_DIR}/forge_proto/forgecpp/forge" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         FILES_MATCHING PATTERN "*.pb.h")
 install(DIRECTORY proto/forge DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp/proto)
-install(DIRECTORY "${PROJECT_BINARY_DIR}/python/" DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp/python
-        FILES_MATCHING PATTERN "*.py")
+# forge-v1 Python package: the generated forge/v1/*_pb2.py and the framing
+# helpers, in site-packages (from a build directory: PYTHONPATH=<build>/python).
+configure_file(python/forge/v1/framing.py "${PROJECT_BINARY_DIR}/python/forge/v1/framing.py" COPYONLY)
+forge_install_python(DIRECTORY "${PROJECT_BINARY_DIR}/python")
 install(TARGETS forgectl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES "${PROJECT_BINARY_DIR}/include/forge/version.hpp"
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/forge)

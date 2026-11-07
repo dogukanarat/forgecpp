@@ -151,9 +151,9 @@ register), `radio.temperature` (above `temperature_alarm_c`).
 ## Client tools
 
 `clients/` (installed to `share/radio-controller/clients`, need `pyzmq`,
-`numpy` and `protobuf`; the generated modules come with forgecpp
-(`share/forgecpp/python`) and radio-controller (`share/radio-controller/python`),
-or set `FORGE_PYTHONPATH`):
+`numpy` and `protobuf`; `forge.v1` comes with forgecpp and `radio.v1` with
+radio-controller, both in site-packages; from build directories set
+`PYTHONPATH=<forgecpp build>/python:<build>/examples/common/ad936x/python`):
 
 ```sh
 forgectl -e tcp://radio:5557 set rx_lo_mhz 2437            # control
@@ -163,7 +163,13 @@ forgectl -e tcp://radio:5557 set tx_enabled true
 ./tx_tone.py tcp://radio:5556 --offset 1e6 --rate 30.72e6   # cyclic test tone
 ```
 
-`forge_msg.py` builds and parses the forge.v1 framing for your own scripts.
+`forge.v1.framing` builds and parses the forge.v1 framing for your own scripts:
+
+```python
+from forge.v1 import framing
+from radio.v1 import radio_pb2
+topic, header, block, samples = framing.parse(sock.recv_multipart(), radio_pb2.IqBlock)
+```
 
 ## Configuration
 

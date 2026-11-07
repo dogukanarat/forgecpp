@@ -113,7 +113,9 @@ jobs:
               pass
           assert b"uptime" in out, out
           EOF
-          export FORGE_PYTHONPATH="$HOME/forgecpp/share/forgecpp/python:$PWD/radio_controller/ad936x/python:$PWD/spectrum_analyzer/python"
+          # forge-v1 from the install (site-packages), the examples' messages from the build
+          site=$(dirname "$(dirname "$(dirname "$(find "$HOME/forgecpp" -path '*/forge/v1/framing.py')")")")
+          export PYTHONPATH="$site:$PWD/radio_controller/ad936x/python:$PWD/spectrum_analyzer/python"
           export PYTHONDONTWRITEBYTECODE=1
           python3 ../../../examples/radio_controller/clients/rx_capture.py tcp://127.0.0.1:5555 --seconds 0.5 > /tmp/rx.txt
           grep -q "blocks" /tmp/rx.txt

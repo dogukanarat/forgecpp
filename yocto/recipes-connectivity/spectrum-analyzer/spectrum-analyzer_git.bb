@@ -19,10 +19,11 @@ S = "${WORKDIR}/git/examples/spectrum_analyzer"
 # forgecpp-protoc-native generates the application's messages (radio.v1, sa.v1).
 DEPENDS = "forgecpp forgecpp-protoc-native"
 
-inherit cmake systemd
+inherit cmake systemd python3-dir
 
 EXTRA_OECMAKE = " \
     -DBUILD_TESTING=OFF \
+    -DFORGE_PYTHON_SITEDIR=${PYTHON_SITEPACKAGES_DIR} \
     -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir} \
     -DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/forgecpp-protoc \
 "
@@ -51,6 +52,6 @@ CONFFILES:${PN} = "${sysconfdir}/spectrum-analyzer/spectrum-analyzer.toml"
 
 # spectrum_watch.py and the sa.v1 modules; .proto files are development files.
 PACKAGES =+ "${PN}-clients"
-FILES:${PN}-clients = "${datadir}/spectrum-analyzer/clients ${datadir}/spectrum-analyzer/python"
-RDEPENDS:${PN}-clients = "python3-core python3-pyzmq python3-protobuf forgecpp-python"
+FILES:${PN}-clients = "${datadir}/spectrum-analyzer/clients ${PYTHON_SITEPACKAGES_DIR}/sa"
+RDEPENDS:${PN}-clients = "python3-core python3-pyzmq python3-protobuf python3-forge-v1"
 FILES:${PN}-dev += "${datadir}/spectrum-analyzer/proto"

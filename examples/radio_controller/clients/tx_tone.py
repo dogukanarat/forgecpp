@@ -8,6 +8,9 @@
 
 TX must be enabled first:  forgectl -e tcp://radio:5557 set tx_enabled true
 Messages: [b"tx"][forge.v1.Header][radio.v1.TxBlock][cs16 samples].
+Needs the forge-v1 Python package (installed with forgecpp) and radio.v1
+(installed with radio-controller); from build directories set PYTHONPATH to
+<forgecpp build>/python:<build>/examples/common/ad936x/python.
 """
 import argparse
 import time
@@ -15,7 +18,8 @@ import time
 import numpy as np
 import zmq
 
-import forge_msg
+from forge.v1 import framing
+from radio.v1 import radio_pb2
 
 
 def main():
@@ -41,16 +45,16 @@ def main():
     time.sleep(0.2)  # let the connection come up
 
     if args.stream is None:
-        block = forge_msg.radio_pb2.TxBlock(format="cs16", cyclic=True)
-        sock.send_multipart(forge_msg.frames("tx", block, iq.tobytes(), source="tx_tone"))
+        block = radio_pb2.TxBlock(format="cs16", cyclic=True)
+        sock.send_multipart(framing.frames("tx", block, iq.tobytes(), source="tx_tone"))
         print(f"cyclic tone at {args.offset / 1e3:+.1f} kHz ({n} samples) sent")
     else:
-        block = forge_msg.radio_pb2.TxBlock(format="cs16")
+        block = radio_pb2.TxBlock(format="cs16")
         end = time.monotonic() + args.stream
         sent = 0
         while time.monotonic() < end:
             # blocks when the radio's queue is full
-            sock.send_multipart(forge_msg.frames("tx", block, iq.tobytes(), source="tx_tone"))
+            sock.send_multipart(framing.frames("tx", block, iq.tobytes(), source="tx_tone"))
             sent += n
         print(f"streamed {sent} samples")
     sock.close(linger=2000)

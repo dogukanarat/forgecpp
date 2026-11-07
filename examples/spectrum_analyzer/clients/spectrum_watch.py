@@ -6,30 +6,18 @@
     ./spectrum_watch.py tcp://board:5566 --json     # every sweep as JSON (forge.v1 JSON mapping)
 
 Messages: [b"spectrum"][forge.v1.Header][sa.v1.Spectrum]; levels[i] is at
-start_hz + i * (stop_hz - start_hz) / (points - 1). The generated modules
-come with forgecpp (share/forgecpp/python) and spectrum-analyzer
-(share/spectrum-analyzer/python); set FORGE_PYTHONPATH otherwise.
+start_hz + i * (stop_hz - start_hz) / (points - 1). Needs the forge-v1 Python
+package (installed with forgecpp) and sa.v1 (installed with spectrum-analyzer);
+from build directories set PYTHONPATH to <forgecpp build>/python:<build>/python.
 """
 import argparse
-import os
 import sys
 
-_here = os.path.dirname(os.path.abspath(__file__))
-for p in (os.environ.get("FORGE_PYTHONPATH", "").split(":") +
-          [os.path.join(_here, "..", "python"), os.path.join(_here, "..", "..", "forgecpp", "python"),
-           "/usr/share/forgecpp/python", "/usr/share/spectrum-analyzer/python",
-           "/usr/local/share/forgecpp/python", "/usr/local/share/spectrum-analyzer/python"]):
-    if p and os.path.isdir(p) and p not in sys.path:
-        sys.path.append(p)
+import zmq
+from google.protobuf import json_format
 
-import zmq  # noqa: E402
-from google.protobuf import json_format  # noqa: E402
-
-try:
-    from forge.v1 import common_pb2  # noqa: E402
-    from sa.v1 import spectrum_pb2  # noqa: E402
-except ImportError as e:
-    sys.exit(f"{e}: generated protobuf modules not found; set FORGE_PYTHONPATH")
+from forge.v1 import common_pb2
+from sa.v1 import spectrum_pb2
 
 
 def main():

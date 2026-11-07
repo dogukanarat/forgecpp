@@ -47,8 +47,7 @@ forge_add_app(spectrum-analyzer
 
 if(SA_STANDALONE)
     install(FILES proto/sa/v1/spectrum.proto DESTINATION ${CMAKE_INSTALL_DATADIR}/spectrum-analyzer/proto/sa/v1)
-    install(DIRECTORY ${SA_PYTHON_DIR}/ DESTINATION ${CMAKE_INSTALL_DATADIR}/spectrum-analyzer/python
-            FILES_MATCHING PATTERN "*.py")
+    forge_install_python(DIRECTORY ${SA_PYTHON_DIR})  # sa.v1 in site-packages
     install(PROGRAMS clients/spectrum_watch.py DESTINATION ${CMAKE_INSTALL_DATADIR}/spectrum-analyzer/clients)
 endif()
 

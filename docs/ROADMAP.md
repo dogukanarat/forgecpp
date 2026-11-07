@@ -18,20 +18,12 @@ pre-production security work: forgecpp is used in the lab for now.
 | Defaults written twice (schema and every `get_or`) | `Schema::apply_defaults()` fills in every declared key after loading and reloading; declared keys are read with `cfg.value<T>(key)` (framework, forge-hub, all examples migrated; the small examples declare their keys now). Environment-dependent defaults are `.computed()`. A test walks `src/`, `hub/src/`, `examples/` and fails on `get_or` of a declared key. |
 | `application.cpp` was 1600 lines doing everything | Internal services in `src/app/` own their state: `HttpFrontend` (server, framework routes, web events and logs), `LayoutStore`, `Messaging` (events, streams, control endpoint), `RemoteConsole` (commands, REPL, telnet), `StateStore`, `Watchdog`, `HubRegistration`. `Application` keeps the lifecycle and the public API (900 lines). `StateStore`, `LayoutStore` and `Watchdog` have their own tests. |
 | Two control protocols (forge.v1 and `{"cmd": ...}` JSON) | 0.3: the JSON one is counted (`forge.control.legacy_json`), each client is named in a warning once, `[forge].legacy_json = false` refuses it (410). 0.4: off by default. 0.5: removed. |
+| Python clients found the generated modules with `sys.path` searches | `forge-v1` package (`forge.v1.*_pb2`, `forge.v1.framing`) installed into site-packages (`FORGE_PYTHON_SITEDIR`: the interpreter's directory for the prefix; Yocto `python3-forge-v1`); applications use `forge_install_python()` for theirs (radio.v1, sa.v1, the scaffolder's). Clients import normally; `forge_msg.py` and every path search are gone. |
 
 ## Plan
 
 Ordered by risk to the running system. Each step lands on its own with tests,
 without changing behaviour that is not named.
-
-### 7. A real Python package
-
-*Problem.* The clients find the generated modules with `sys.path` searches.
-
-*Plan.* `forge-v1` Python package (generated `*_pb2.py` + the framing helpers
-of `clients/forge_msg.py`), installed into site-packages by CMake and by the
-Yocto recipe (`python3-forge-v1`); applications add their own messages the
-same way. Clients import it normally.
 
 ### 8. Versions and compatibility
 

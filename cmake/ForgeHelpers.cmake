@@ -30,6 +30,14 @@
 #       [ROOT <dir>]                 import root of the files, default: current source dir
 #       [IMPORT_DIRS <dirs...>]      extra import roots (forge/v1 and google/protobuf are always found)
 #       [PYTHON <dir>])              also generate Python modules (*_pb2.py) into <dir>
+#
+#   forge_install_python(DIRECTORY <dir>)
+#     Install the Python modules under <dir> (e.g. the PYTHON dir of
+#     forge_add_proto: <dir>/radio/v1/radio_pb2.py) into site-packages, next to
+#     forgecpp's forge-v1 package, so clients simply `from radio.v1 import radio_pb2`.
+#     The directory is FORGE_PYTHON_SITEDIR (relative to the install prefix);
+#     by default the interpreter's own for this prefix, else lib/python3.X/site-packages.
+#     Yocto: -DFORGE_PYTHON_SITEDIR=${PYTHON_SITEPACKAGES_DIR}.
 #     Generates C++ with protoc and compiles it into <target>; the generated
 #     headers are found as "<path>.pb.h" (e.g. #include "radio/v1/radio.pb.h").
 #     Cross builds: set FORGE_PROTOC to a protoc that runs on the build machine
@@ -128,6 +136,40 @@ function(forge_add_proto target)
     target_link_libraries(${target} PUBLIC protobuf::libprotobuf)
     # Generated code triggers warnings we cannot fix.
     set_source_files_properties(${sources} PROPERTIES COMPILE_OPTIONS "-w")
+endfunction()
+
+# Where Python modules go, relative to CMAKE_INSTALL_PREFIX (see forge_install_python).
+function(_forge_python_sitedir out)
+    if(DEFINED FORGE_PYTHON_SITEDIR AND NOT FORGE_PYTHON_SITEDIR STREQUAL "")
+        set(${out} "${FORGE_PYTHON_SITEDIR}" PARENT_SCOPE)
+        return()
+    endif()
+    set(dir "lib/python3/site-packages")
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND AND NOT CMAKE_CROSSCOMPILING)
+        # The interpreter's own directory when it is under the prefix (Debian:
+        # /usr/local/lib/python3.X/dist-packages), else lib/python3.X/site-packages.
+        execute_process(
+            COMMAND "${Python3_EXECUTABLE}" -c
+                "import sys,sysconfig,os;p=sysconfig.get_path('purelib');b=sys.argv[1];print(os.path.relpath(p,b) if p.startswith(b.rstrip('/')+'/') else 'lib/python%d.%d/site-packages'%sys.version_info[:2])"
+                "${CMAKE_INSTALL_PREFIX}"
+            OUTPUT_VARIABLE dir OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE rc)
+        if(NOT rc EQUAL 0 OR dir STREQUAL "")
+            set(dir "lib/python3/site-packages")
+        endif()
+    endif()
+    set(FORGE_PYTHON_SITEDIR "${dir}" CACHE STRING "Python modules, relative to the install prefix")
+    set(${out} "${dir}" PARENT_SCOPE)
+endfunction()
+
+function(forge_install_python)
+    cmake_parse_arguments(ARG "" "DIRECTORY" "" ${ARGN})
+    if(NOT ARG_DIRECTORY)
+        message(FATAL_ERROR "forge_install_python: DIRECTORY is required")
+    endif()
+    _forge_python_sitedir(site)
+    install(DIRECTORY "${ARG_DIRECTORY}/" DESTINATION "${site}"
+            FILES_MATCHING PATTERN "*.py" PATTERN "__pycache__" EXCLUDE)
 endfunction()
 
 function(forge_add_app name)
