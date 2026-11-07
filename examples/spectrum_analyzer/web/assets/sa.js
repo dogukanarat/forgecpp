@@ -511,10 +511,12 @@
     text('#a-gain', f.gain.toFixed(0) + ' dB');
     text('#a-sweep', f.sweep_ms.toFixed(1) + ' ms');
     const rate = (f.rate / 1e6).toFixed(2) + ' MSPS';
-    text('#a-mode', f.fixed ? 'RX2 · LO ' + fmtHz(f.lo, 3) + ' · ' + rate + ' (radio-controller) · FFT ' + f.fft
+    text('#a-mode', f.fixed ? 'RX' + f.channel + ' · LO ' + fmtHz(f.lo, 3) + ' · ' + rate + ' (radio-controller) · FFT ' + f.fft
       : f.swept ? 'SWEPT · ' + f.segments + ' seg · FFT ' + f.fft : 'REALTIME · FFT ' + f.fft + ' @ ' + rate);
-    $('#a-mode').title = f.fixed ? 'RX2 shares LO and sample rate with RX1: tune them in radio-controller. ' +
-      'Here you can zoom inside its band and set the RX2 gain.' : '';
+    $('#a-mode').title = f.fixed ? 'LO and sample rate are shared by RX1 and RX2 and set in radio-controller. ' +
+      'Here you can zoom inside its band' + (f.control_gain ? ' and set the RX' + f.channel + ' gain.' : '.') : '';
+    // The gain belongs to someone else: show it, but do not offer to change it.
+    $$('[data-forge-bind=gain_mode], [data-forge-bind=rx_gain_db]').forEach((el) => { el.disabled = !f.control_gain; });
     const digits = axisDigits(f.stop - f.start, f.stop) + 1;
     text('#a-start', fmtHz(f.start, digits));
     text('#a-center', fmtHz((f.start + f.stop) / 2, digits));

@@ -54,7 +54,7 @@ void Backend::apply(const Settings& s) {
         set_gain_mode(s.rx2_gain_mode, 1);
         if (s.rx2_gain_mode == "manual") set_rx_gain(s.rx2_gain_db, 1);
     }
-    set_tx_attenuation(s.tx_attenuation_db);
+    set_tx_attenuation(s.tx_attenuation_db, s.tx_channel);
 }
 
 #ifndef RADIO_HAS_IIO

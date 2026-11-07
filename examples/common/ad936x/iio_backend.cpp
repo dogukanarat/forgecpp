@@ -6,10 +6,11 @@
 //     altvoltage1 (out)        TX LO: frequency
 //     voltage0 (in)            RX1: sampling_frequency, rf_bandwidth, gain_control_mode, hardwaregain
 //     voltage1 (in)            RX2: gain_control_mode, hardwaregain (AD9361/AD9363 only)
-//     voltage0 (out)           TX: rf_bandwidth, hardwaregain (= -attenuation)
+//     voltage0 (out)           TX1: rf_bandwidth, hardwaregain (= -attenuation)
+//     voltage1 (out)           TX2: hardwaregain (AD9361/AD9363 only)
 //     temp0 (in)               input (milli-degree C)
 //   cf-ad9361-lpc            RX DMA (voltage0/1 = RX1 I/Q, voltage2/3 = RX2 I/Q on 2R parts)
-//   cf-ad9361-dds-core-lpc   TX DMA (voltage0 = I, voltage1 = Q)
+//   cf-ad9361-dds-core-lpc   TX DMA (voltage0/1 = TX1 I/Q, voltage2/3 = TX2 I/Q on 2T parts)
 //
 // Over/underflows are read from the AXI AD9361 core status register 0x80000088
 // (bit 2: ADC overflow, bit 0: DAC underflow), as ADI's iio_readdev/iio_writedev do.
@@ -77,6 +78,10 @@ public:
         rx2_q_ = iio_device_find_channel(rx_dev_, "voltage3", false);
         rx2_ = iio_device_find_channel(phy_, "voltage1", false);
         if (!rx2_i_ || !rx2_q_ || !rx2_) rx2_i_ = rx2_q_ = rx2_ = nullptr;
+        tx2_i_ = iio_device_find_channel(tx_dev_, "voltage2", true);
+        tx2_q_ = iio_device_find_channel(tx_dev_, "voltage3", true);
+        tx2_ = iio_device_find_channel(phy_, "voltage1", true);
+        if (!tx2_i_ || !tx2_q_ || !tx2_) tx2_i_ = tx2_q_ = tx2_ = nullptr;
         tx_i_ = channel(tx_dev_, "voltage0", true);
         tx_q_ = channel(tx_dev_, "voltage1", true);
 
@@ -94,7 +99,10 @@ public:
     std::string name() const override { return "iio:" + (uri_.empty() ? std::string("default") : uri_); }
 
     nlohmann::json describe() const override {
-        nlohmann::json j{{"backend", "iio"}, {"uri", uri_}, {"rx_channels", rx_channel_count()}};
+        nlohmann::json j{{"backend", "iio"},
+                         {"uri", uri_},
+                         {"rx_channels", rx_channel_count()},
+                         {"tx_channels", tx_channel_count()}};
         const char* desc = iio_context_get_description(ctx_);
         if (desc) j["description"] = desc;
         for (unsigned i = 0; i < iio_context_get_attrs_count(ctx_); ++i) {
@@ -132,11 +140,11 @@ public:
         }
     }
 
-    void set_tx_attenuation(double db) override {
+    void set_tx_attenuation(double db, unsigned ch) override {
         std::lock_guard lock(ctrl_mutex_);
         const double quantized = std::round(db * 4) / 4;  // 0.25 dB steps
-        if (int r = iio_channel_attr_write_double(tx_, "hardwaregain", -quantized); r < 0) {
-            fail("cannot set TX attenuation to " + std::to_string(db) + " dB", r);
+        if (int r = iio_channel_attr_write_double(tx_phy(ch), "hardwaregain", -quantized); r < 0) {
+            fail("cannot set TX" + std::to_string(ch + 1) + " attenuation to " + std::to_string(db) + " dB", r);
         }
     }
 
@@ -148,6 +156,7 @@ public:
     }
 
     unsigned rx_channel_count() const override { return rx2_ ? 2 : 1; }
+    unsigned tx_channel_count() const override { return tx2_ ? 2 : 1; }
 
     std::optional<double> temperature_c() override {
         if (!temp_) return std::nullopt;
@@ -158,24 +167,16 @@ public:
     }
 
     // --- RX ------------------------------------------------------------------------
-    void start_rx(std::size_t samples, unsigned channels) override {
+    void start_rx(std::size_t samples, unsigned mask) override {
         stop_rx();
-        if (channels > rx_channel_count()) throw DeviceError(no_rx2_message());
-        iio_channel_enable(rx_i_);
-        iio_channel_enable(rx_q_);
-        if (rx2_i_) {
-            if (channels > 1) {
-                iio_channel_enable(rx2_i_);
-                iio_channel_enable(rx2_q_);
-            } else {
-                iio_channel_disable(rx2_i_);
-                iio_channel_disable(rx2_q_);
-            }
-        }
-        rx_channels_ = channels;
+        if ((mask & kRx2) && !rx2_i_) throw DeviceError(no_second_channel("RX"));
+        if ((mask & (kRx1 | kRx2)) == 0) throw DeviceError("no RX channel selected");
+        enable(rx_i_, rx_q_, mask & kRx1);
+        if (rx2_i_) enable(rx2_i_, rx2_q_, mask & kRx2);
+        rx_mask_ = mask;
         auto* buf = iio_device_create_buffer(rx_dev_, samples, false);
         if (!buf) fail("cannot create RX buffer of " + std::to_string(samples) + " samples", errno);
-        const auto* fmt = iio_channel_get_data_format(rx_i_);
+        const auto* fmt = iio_channel_get_data_format((mask & kRx1) ? rx_i_ : rx2_i_);
         rx_bits_ = fmt->bits;
         rx_shift_ = fmt->shift;
         clear_status(rx_dev_);
@@ -198,9 +199,9 @@ public:
         }
         check_status(rx_dev_, kRxOverflow, rx_overflow_, rx_status_ok_);
 
-        // One sample of every enabled channel per step: I1 Q1 [I2 Q2].
+        // One sample of every enabled channel per step: [I1 Q1] [I2 Q2].
         const auto step = iio_buffer_step(buf);
-        const auto* first = static_cast<const std::uint8_t*>(iio_buffer_first(buf, rx_i_));
+        const auto* first = static_cast<const std::uint8_t*>(iio_buffer_first(buf, (rx_mask_ & kRx1) ? rx_i_ : rx2_i_));
         const auto* end = static_cast<const std::uint8_t*>(iio_buffer_end(buf));
         const std::size_t available = step > 0 ? static_cast<std::size_t>(end - first) / static_cast<std::size_t>(step) : 0;
         const std::size_t n = std::min(available, max_samples);
@@ -211,8 +212,8 @@ public:
                 out[2 * i + 1] = to_full_scale(s[1], rx_bits_, rx_shift_);
             }
         };
-        if (rx1) convert(first, rx1);
-        if (rx2 && rx_channels_ > 1) convert(static_cast<const std::uint8_t*>(iio_buffer_first(buf, rx2_i_)), rx2);
+        if (rx1 && (rx_mask_ & kRx1)) convert(first, rx1);
+        if (rx2 && (rx_mask_ & kRx2)) convert(static_cast<const std::uint8_t*>(iio_buffer_first(buf, rx2_i_)), rx2);
         return n;
     }
 
@@ -233,14 +234,16 @@ public:
     bool take_rx_overflow() override { return rx_overflow_.exchange(false); }
 
     // --- TX ------------------------------------------------------------------------
-    void start_tx(std::size_t samples, bool cyclic) override {
+    void start_tx(std::size_t samples, bool cyclic, unsigned ch) override {
         std::lock_guard lock(tx_mutex_);
         destroy_tx_locked();
-        iio_channel_enable(tx_i_);
-        iio_channel_enable(tx_q_);
+        if (ch > 1 || (ch == 1 && !tx2_i_)) throw DeviceError(no_second_channel("TX"));
+        enable(tx_i_, tx_q_, ch == 0);
+        if (tx2_i_) enable(tx2_i_, tx2_q_, ch == 1);
+        tx_ch_i_ = ch == 0 ? tx_i_ : tx2_i_;
         tx_buf_ = iio_device_create_buffer(tx_dev_, samples, cyclic);
         if (!tx_buf_) fail("cannot create TX buffer of " + std::to_string(samples) + " samples", errno);
-        const auto* fmt = iio_channel_get_data_format(tx_i_);
+        const auto* fmt = iio_channel_get_data_format(tx_ch_i_);
         tx_bits_ = fmt->bits;
         tx_shift_ = fmt->shift;
         tx_samples_ = samples;
@@ -251,7 +254,7 @@ public:
         std::lock_guard lock(tx_mutex_);
         if (!tx_buf_) throw DeviceError("TX is not started");
         const auto step = iio_buffer_step(tx_buf_);
-        auto* p = static_cast<std::uint8_t*>(iio_buffer_first(tx_buf_, tx_i_));
+        auto* p = static_cast<std::uint8_t*>(iio_buffer_first(tx_buf_, tx_ch_i_));
         auto* end = static_cast<std::uint8_t*>(iio_buffer_end(tx_buf_));
         std::size_t n = 0;
         for (; p < end; p += step, ++n) {
@@ -272,15 +275,31 @@ public:
     bool take_tx_underflow() override { return tx_underflow_.exchange(false); }
 
 private:
-    std::string no_rx2_message() const {
-        return "this transceiver has one RX channel (AD9364, or an AD9361 in 1R1T mode); RX2 needs an "
-               "AD9361/AD9363 in 2R2T mode";
+    static std::string no_second_channel(const std::string& dir) {
+        return "this transceiver has one " + dir + " channel (AD9364, or an AD9361 in 1R1T mode); " + dir +
+               "2 needs an AD9361/AD9363 in 2R2T mode";
+    }
+
+    static void enable(iio_channel* i, iio_channel* q, bool on) {
+        if (on) {
+            iio_channel_enable(i);
+            iio_channel_enable(q);
+        } else {
+            iio_channel_disable(i);
+            iio_channel_disable(q);
+        }
     }
 
     iio_channel* rx_phy(unsigned ch) {
         if (ch == 0) return rx_;
         if (ch == 1 && rx2_) return rx2_;
-        throw DeviceError(no_rx2_message());
+        throw DeviceError(no_second_channel("RX"));
+    }
+
+    iio_channel* tx_phy(unsigned ch) {
+        if (ch == 0) return tx_;
+        if (ch == 1 && tx2_) return tx2_;
+        throw DeviceError(no_second_channel("TX"));
     }
 
     iio_channel* channel(iio_device* dev, const char* id, bool output) {
@@ -335,8 +354,10 @@ private:
     iio_channel *rx_lo_ = nullptr, *tx_lo_ = nullptr, *rx_ = nullptr, *tx_ = nullptr, *temp_ = nullptr;
     iio_channel *rx_i_ = nullptr, *rx_q_ = nullptr, *tx_i_ = nullptr, *tx_q_ = nullptr;
     iio_channel *rx2_ = nullptr, *rx2_i_ = nullptr, *rx2_q_ = nullptr;
+    iio_channel *tx2_ = nullptr, *tx2_i_ = nullptr, *tx2_q_ = nullptr;
+    iio_channel* tx_ch_i_ = nullptr;
     std::string gain_mode_[2] = {"slow_attack", "slow_attack"};
-    unsigned rx_channels_ = 1;
+    unsigned rx_mask_ = kRx1;
 
     std::mutex ctrl_mutex_;
     std::mutex rx_mutex_;

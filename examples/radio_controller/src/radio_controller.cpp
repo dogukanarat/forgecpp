@@ -23,8 +23,37 @@ constexpr const char* kDeviceAlarm = "radio.device";
 constexpr const char* kOverflowAlarm = "radio.rx_overflow";
 constexpr const char* kUnderflowAlarm = "radio.tx_underflow";
 constexpr const char* kTemperatureAlarm = "radio.temperature";
-constexpr const char* kRx2Alarm = "radio.rx2";
-constexpr int kRx2SettleBuffers = 2;  ///< RX2 buffers skipped after a retune (still queued with the old LO)
+constexpr int kTapSettleBuffers = 2;  ///< tap buffers skipped after a retune (still queued with the old LO)
+
+std::string channel_list(unsigned mask, const char* prefix) {
+    std::string out;
+    for (unsigned ch = 0; ch < 2; ++ch) {
+        if (mask >> ch & 1u) out += (out.empty() ? "" : ", ") + std::string(prefix) + std::to_string(ch + 1);
+    }
+    return out.empty() ? "none" : out;
+}
+
+json channel_array(unsigned mask) {
+    json a = json::array();
+    for (unsigned ch = 0; ch < 2; ++ch) {
+        if (mask >> ch & 1u) a.push_back(ch + 1);
+    }
+    return a;
+}
+
+/// [radio].<key>: a channel number or a list of them (1 = RX1/TX1, 2 = RX2/TX2) -> bit mask.
+unsigned channel_mask(const json& radio, const char* key, unsigned fallback) {
+    if (!radio.contains(key)) return fallback;
+    const json& v = radio[key];
+    unsigned mask = 0;
+    for (const auto& c : v.is_array() ? v : json::array({v})) {
+        if (!c.is_number_integer() || c.get<int>() < 1 || c.get<int>() > 2) {
+            throw forge::ConfigError(std::string("radio.") + key + ": channels are 1 or 2, got " + c.dump());
+        }
+        mask |= 1u << (c.get<int>() - 1);
+    }
+    return mask;
+}
 
 std::int64_t now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
@@ -103,19 +132,19 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
         .range(Limits::bw_min_hz / 1e6, Limits::bw_max_hz / 1e6, 0.001)
         .unit("MHz")
         .precision(3);
-    rx.select("gain_mode", "Gain control", gain_modes(), [this] { return settings_.gain_mode; },
+    rx.select("gain_mode", "RX1 gain control", gain_modes(), [this] { return settings_.gain_mode; },
               [this](const std::string& mode) {
                   control("gain mode", [&] { backend_->set_gain_mode(mode); });
                   settings_.gain_mode = mode;
               });
-    rx.slider("rx_gain_db", "RX gain", [this] { return rx_gain_actual_; },
+    rx.slider("rx_gain_db", "RX1 gain", [this] { return rx_gain_actual_[0].load(); },
               [this](double db) {
                   if (settings_.gain_mode != "manual") {
                       throw HttpError(409, "RX gain is controlled by the AGC; set gain_mode to manual first");
                   }
                   control("RX gain", [&] { backend_->set_rx_gain(db); });
                   settings_.rx_gain_db = db;
-                  rx_gain_actual_ = db;
+                  rx_gain_actual_[0] = db;
               },
               Limits::rx_gain_min_db, Limits::rx_gain_max_db, 1)
         .unit("dB")
@@ -130,39 +159,34 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
     rx.value("subscriptions", "IQ subscribers", [this] { return subscriptions_.load(); });
 
     auto& rx2 = ui.group("RX2");
-    rx2.toggle("rx2_enabled", "RX2", [this] { return rx2_enabled_.load(); },
-               [this](bool on) {
-                   if (on && connected_ && rx_channel_count_ < 2) {
-                       throw HttpError(409, "this transceiver has one RX channel (AD9364); RX2 needs an AD9361/AD9363");
-                   }
-                   rx2_enabled_ = on;
-                   restart_rx_ = true;  // the DMA buffer carries both channels
-                   std::shared_lock lock(backend_mutex_);
-                   if (backend_) backend_->cancel_rx();
-                   logger()->info("RX2 {}", on ? "enabled" : "disabled");
-                   mark_dirty();
-               })
-        .help("AD9361/AD9363: RX2 shares the RX LO and sample rate with RX1; its samples go to the RX2 socket "
-              "(spectrum analyzer). Toggling restarts RX streaming.");
     rx2.select("rx2_gain_mode", "RX2 gain control", gain_modes(), [this] { return settings_.rx2_gain_mode; },
                [this](const std::string& mode) {
                    control("RX2 gain mode", [&] { backend_->set_gain_mode(mode, 1); });
                    settings_.rx2_gain_mode = mode;
-               });
-    rx2.slider("rx2_gain_db", "RX2 gain", [this] { return rx2_gain_actual_.load(); },
+               })
+        .help("AD9361/AD9363: RX2 shares the RX LO and sample rate with RX1 and has its own gain");
+    rx2.slider("rx2_gain_db", "RX2 gain", [this] { return rx_gain_actual_[1].load(); },
                [this](double db) {
                    if (settings_.rx2_gain_mode != "manual") {
                        throw HttpError(409, "RX2 gain is controlled by the AGC; set rx2_gain_mode to manual first");
                    }
                    control("RX2 gain", [&] { backend_->set_rx_gain(db, 1); });
                    settings_.rx2_gain_db = db;
-                   rx2_gain_actual_ = db;
+                   rx_gain_actual_[1] = db;
                },
                Limits::rx_gain_min_db, Limits::rx_gain_max_db, 1)
         .unit("dB")
         .precision(0);
-    rx2.value("rx2_blocks", "Blocks sent", [this] { return rx2_blocks_.load(); });
-    rx2.value("rx2_subscriptions", "RX2 subscribers", [this] { return rx2_subscriptions_.load(); });
+
+    auto& roles = ui.group("Channels");
+    roles.value("hw_channels", "Transceiver", [this] {
+        return connected_ ? fmt::format("{}R{}T", hw_rx_channels_.load(), hw_tx_channels_.load()) : std::string("-");
+    });
+    roles.value("rx_channels", "Listens to (IQ stream)", [this] { return channel_array(rx_mask_); });
+    roles.value("tx_channel", "Drives", [this] { return fmt::format("TX{}", tx_channel_ + 1); });
+    roles.value("tap_channels", "Shares (tap)", [this] { return channel_array(tap_mask_); });
+    roles.value("tap_blocks", "Tap blocks sent", [this] { return tap_blocks_.load(); });
+    roles.value("tap_subscriptions", "Tap subscribers", [this] { return tap_subscriptions_.load(); });
 
     auto& tx = ui.group("Transmitter");
     tx.toggle("tx_enabled", "TX enabled", [this] { return tx_enabled_.load(); },
@@ -197,7 +221,7 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
         .precision(3);
     tx.slider("tx_atten_db", "TX attenuation", [this] { return settings_.tx_attenuation_db; },
               [this](double db) {
-                  control("TX attenuation", [&] { backend_->set_tx_attenuation(db); });
+                  control("TX attenuation", [&] { backend_->set_tx_attenuation(db, tx_channel_); });
                   settings_.tx_attenuation_db = round_to(db, 0.25);
               },
               Limits::tx_atten_min_db, Limits::tx_atten_max_db, 0.25)
@@ -227,7 +251,6 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
         }
         return device_info_.value("model", std::string("AD936x"));
     });
-    dev.value("rx_channels", "RX channels", [this] { return rx_channel_count_.load(); });
     dev.value("temperature_c", "Temperature", [this] { return temperature_ ? json(*temperature_) : json(nullptr); })
         .unit("°C")
         .precision(1);
@@ -250,7 +273,7 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
 
     auto& net = ui.group("ZeroMQ");
     net.value("zmq_rx", "IQ stream (PUB)", rx_endpoint_);
-    net.value("zmq_rx2", "RX2 blocks (PUB)", rx2_endpoint_);
+    net.value("zmq_tap", "Tap (PUB)", tap_endpoint_);
     net.value("zmq_tx", "TX input (PULL)", [this] { return tx_endpoint(); });
     net.value("zmq_control", "Control (REP)", [this] { return control_endpoint(); });
 }
@@ -277,13 +300,22 @@ void RadioController::load_settings(const forge::Config& cfg) {
     spectrum_size_ = cfg.get_or<std::size_t>("radio.spectrum_size", 1024);
     if (!dsp::is_power_of_two(spectrum_size_)) throw forge::ConfigError("radio.spectrum_size must be a power of two");
     temperature_alarm_c_ = cfg.get_or<double>("radio.temperature_alarm_c", 75);
-    sim_loopback_ = cfg.get_or<bool>("radio.sim.loopback", true);
-    sim_rx_channels_ = std::clamp(cfg.get_or<unsigned>("radio.sim.rx_channels", 1), 1u, 2u);
-    sim_loopback_rx_ = std::clamp(cfg.get_or<unsigned>("radio.sim.loopback_rx", 1), 1u, 2u) - 1;
-    rx2_tap_hz_ = std::clamp(cfg.get_or<double>("radio.rx2_tap_hz", 20.0), 0.0, 1000.0);
-    rx2_tap_samples_ = cfg.get_or<std::size_t>("radio.rx2_tap_samples", 65536);
-    if (rx2_tap_samples_ < 1024 || rx2_tap_samples_ > (1u << 22)) {
-        throw forge::ConfigError("radio.rx2_tap_samples must be between 1024 and 4194304");
+    sim_.loopback = cfg.get_or<bool>("radio.sim.loopback", true);
+    sim_.channels = std::clamp(cfg.get_or<unsigned>("radio.sim.channels", 1), 1u, 2u);
+    sim_.loopback_tx = std::clamp(cfg.get_or<unsigned>("radio.sim.loopback_tx", 1), 1u, 2u) - 1;
+    sim_.loopback_rx = std::clamp(cfg.get_or<unsigned>("radio.sim.loopback_rx", 1), 1u, 2u) - 1;
+
+    // Channel roles (fixed at start-up; must fit the transceiver)
+    const json radio = cfg.section("radio").to_json();
+    rx_mask_ = channel_mask(radio, "rx_channels", Backend::kRx1);
+    tap_mask_ = channel_mask(radio, "tap_rx", 0);
+    const unsigned tx = channel_mask(radio, "tx_channel", 1);
+    if (tx != 1 && tx != 2) throw forge::ConfigError("radio.tx_channel is one channel: 1 or 2");
+    tx_channel_ = tx == 1 ? 0 : 1;
+    tap_hz_ = std::clamp(cfg.get_or<double>("radio.tap_hz", 20.0), 0.0, 1000.0);
+    tap_samples_ = cfg.get_or<std::size_t>("radio.tap_samples", 65536);
+    if (tap_samples_ < 1024 || tap_samples_ > (1u << 22)) {
+        throw forge::ConfigError("radio.tap_samples must be between 1024 and 4194304");
     }
 
     json j = cfg.section("radio").to_json();
@@ -298,10 +330,10 @@ void RadioController::load_settings(const forge::Config& cfg) {
         }
     }
     settings_ = settings_from_json(j, Settings{});
+    settings_.tx_channel = tx_channel_;
     buffer_size_ = j.value("buffer_size", std::size_t{65536});
     rx_enabled_ = j.value("rx_enabled", true);
     tx_enabled_ = j.value("tx_enabled", false);
-    rx2_enabled_ = j.value("rx2_enabled", false);
     rx_lo_hz_ = settings_.rx_lo_hz;
     rate_hz_ = settings_.sample_rate_hz;
 }
@@ -316,7 +348,7 @@ void RadioController::on_start() {
     rx_thread_ = std::thread([this, p = std::move(bound)]() mutable { rx_loop(std::move(p)); });
     const auto endpoints = rx_bound.get();
     rx_endpoint_ = endpoints.rx;
-    rx2_endpoint_ = endpoints.rx2;
+    tap_endpoint_ = endpoints.tap;
 
     forge::zmq::Receiver::Options tx_opts;
     tx_opts.bind = true;
@@ -325,8 +357,10 @@ void RadioController::on_start() {
         forge::zmq::Receiver::Kind::pull, cfg.get_or<std::string>("zmq.tx", "tcp://*:5556"),
         [this](forge::zmq::Message&& m) { on_tx_frame(std::move(m)); }, tx_opts);
     control_server_ = forge::zmq::serve_application(*this, cfg.get_or<std::string>("zmq.control", "tcp://*:5557"));
-    logger()->info("zmq: IQ stream on {}, RX2 blocks on {}, TX input on {}, control on {}", rx_endpoint_,
-                   rx2_endpoint_, tx_endpoint(), control_endpoint());
+    logger()->info("zmq: IQ stream on {}, tap on {}, TX input on {}, control on {}", rx_endpoint_, tap_endpoint_,
+                   tx_endpoint(), control_endpoint());
+    logger()->info("channels: listens to {}, drives TX{}, shares {}", channel_list(rx_mask_, "RX"), tx_channel_ + 1,
+                   channel_list(tap_mask_, "RX"));
 
     open_backend();
 
@@ -357,7 +391,20 @@ void RadioController::on_stop() {
 void RadioController::on_reload(const forge::Config& cfg) {
     const auto old_kind = backend_kind_;
     const auto old_uri = uri_;
+    // Channel roles are fixed while streaming (the RX thread uses them): restart to change them.
+    const auto rx = rx_mask_, tap = tap_mask_, tx = tx_channel_;
+    const auto tap_samples = tap_samples_;
+    const auto tap_hz = tap_hz_;
     load_settings(cfg);
+    if (rx_mask_ != rx || tap_mask_ != tap || tx_channel_ != tx) {
+        logger()->warn("channel roles (rx_channels, tap_rx, tx_channel) take effect at the next start");
+    }
+    rx_mask_ = rx;
+    tap_mask_ = tap;
+    tx_channel_ = tx;
+    settings_.tx_channel = tx;
+    tap_samples_ = tap_samples;
+    tap_hz_ = tap_hz;
     if (backend_kind_ != old_kind || uri_ != old_uri) {
         close_backend();
         open_backend();
@@ -378,16 +425,23 @@ void RadioController::open_backend() {
         if (backend_kind_ == "iio") {
             b = make_iio_backend(uri_, timeout_ms_);
         } else {
-            SimOptions opts;
-            opts.loopback = sim_loopback_;
-            opts.loopback_rx = sim_loopback_rx_;
-            opts.rx_channels = sim_rx_channels_;
-            b = make_sim_backend(opts);
+            b = make_sim_backend(sim_);
+        }
+        // The configured roles must fit the hardware (AD9364: RX1/TX1 only).
+        const unsigned rx_need = (rx_mask_ | tap_mask_) & Backend::kRx2 ? 2 : 1;
+        if (rx_need > b->rx_channel_count() || tx_channel_ + 1 > b->tx_channel_count()) {
+            throw DeviceError(fmt::format(
+                "the configuration uses {} and TX{} but the transceiver has {} RX / {} TX channel(s); "
+                "set [radio] rx_channels, tap_rx and tx_channel to channels it has (RX2/TX2 need an "
+                "AD9361/AD9363 in 2R2T mode)",
+                channel_list(rx_mask_ | tap_mask_, "RX"), tx_channel_ + 1, b->rx_channel_count(),
+                b->tx_channel_count()));
         }
         b->apply(settings_);
-        rx_gain_actual_ = b->rx_gain();
-        rx_channel_count_ = b->rx_channel_count();
-        if (b->rx_channel_count() > 1) rx2_gain_actual_ = b->rx_gain(1);
+        rx_gain_actual_[0] = b->rx_gain(0);
+        if (b->rx_channel_count() > 1) rx_gain_actual_[1] = b->rx_gain(1);
+        hw_rx_channels_ = b->rx_channel_count();
+        hw_tx_channels_ = b->tx_channel_count();
         device_info_ = b->describe();
     } catch (const DeviceError& e) {
         if (connected_ || !alarms().active(kDeviceAlarm)) logger()->error("radio: {}", e.what());
@@ -405,15 +459,9 @@ void RadioController::open_backend() {
     tx_reset_ = true;
     alarms().clear(kDeviceAlarm);
     ++tuning_version_;
-    logger()->info("radio: connected to {} (RX {:.3f} MHz, {:.3f} MSPS, {} RX channel{})", backend_->name(),
-                   settings_.rx_lo_hz / 1e6, settings_.sample_rate_hz / 1e6, rx_channel_count_.load(),
-                   rx_channel_count_ > 1 ? "s" : "");
-    if (rx2_enabled_ && rx_channel_count_ < 2) {
-        alarms().raise(kRx2Alarm, forge::Severity::warning,
-                       "RX2 is enabled but the transceiver has one RX channel (AD9364): streaming RX1 only");
-    } else {
-        alarms().clear(kRx2Alarm);
-    }
+    logger()->info("radio: connected to {} ({}R{}T; RX {:.3f} MHz, {:.3f} MSPS)", backend_->name(),
+                   hw_rx_channels_.load(), hw_tx_channels_.load(), settings_.rx_lo_hz / 1e6,
+                   settings_.sample_rate_hz / 1e6);
 }
 
 void RadioController::close_backend() {
@@ -448,30 +496,29 @@ void RadioController::device_lost(const std::string& why) {
 // RX thread: device -> ZeroMQ PUB
 
 void RadioController::rx_loop(std::promise<Endpoints> bound) {
-    std::unique_ptr<forge::zmq::Sender> pub, pub2;
+    std::unique_ptr<forge::zmq::Sender> pub, tap;
     try {
         forge::zmq::SocketOptions so;
         so.send_hwm = 32;  // frames queued per subscriber before that subscriber drops
         pub = std::make_unique<forge::zmq::Sender>(forge::zmq::Sender::Kind::pub,
                                                     config().get_or<std::string>("zmq.rx", "tcp://*:5555"), true, so);
-        so.send_hwm = 4;   // RX2 blocks: a slow reader only ever wants the newest
-        pub2 = std::make_unique<forge::zmq::Sender>(forge::zmq::Sender::Kind::pub,
-                                                     config().get_or<std::string>("zmq.rx2", "tcp://*:5558"), true, so);
-        bound.set_value({pub->endpoint(), pub2->endpoint()});
+        so.send_hwm = 4;   // tap blocks: a slow reader only ever wants the newest
+        tap = std::make_unique<forge::zmq::Sender>(forge::zmq::Sender::Kind::pub,
+                                                    config().get_or<std::string>("zmq.tap", "tcp://*:5558"), true, so);
+        bound.set_value({pub->endpoint(), tap->endpoint()});
     } catch (...) {
         bound.set_exception(std::current_exception());
         return;
     }
 
-    std::vector<std::int16_t> buf, buf2;
+    std::vector<std::int16_t> buf[2];
     std::uint64_t seq = 0;
     std::uint64_t generation_seen = ~0ull;
     bool streaming = false;
-    unsigned channels = 1;
     auto next_snapshot = std::chrono::steady_clock::now();
 
-    // RX2 blocks: the start of one DMA buffer (contiguous even when samples
-    // are lost between buffers), at most rx2_tap_hz_ blocks per second.
+    // Tap blocks: the start of one DMA buffer (contiguous even when samples
+    // are lost between buffers), at most tap_hz_ blocks per second.
     std::uint64_t block_seq = 0;
     std::uint64_t tuning_seen = ~0ull;
     int settle = 0;
@@ -479,6 +526,7 @@ void RadioController::rx_loop(std::promise<Endpoints> bound) {
 
     while (running_) {
         subscriptions_ = pub->subscriptions();
+        tap_subscriptions_ = tap_mask_ ? tap->subscriptions() : 0;
         std::shared_lock lock(backend_mutex_);
         Backend* b = backend_.get();
 
@@ -487,7 +535,8 @@ void RadioController::rx_loop(std::promise<Endpoints> bound) {
             streaming = false;
             generation_seen = generation_;
         }
-        if (!b || !rx_enabled_) {
+        const unsigned mask = rx_mask_ | tap_mask_;  // channels in the DMA buffer
+        if (!b || !rx_enabled_ || mask == 0) {
             if (streaming && b) b->stop_rx();
             streaming = false;
             lock.unlock();
@@ -497,19 +546,19 @@ void RadioController::rx_loop(std::promise<Endpoints> bound) {
 
         const std::size_t size = buffer_size_;
         std::size_t n = 0;
-        bool want_rx2 = false;
+        bool tap_due = false;
         try {
             if (!streaming) {
-                channels = rx2_enabled_ && b->rx_channel_count() > 1 ? 2 : 1;
-                buf.resize(2 * size);
-                buf2.resize(channels > 1 ? 2 * size : 0);
-                b->start_rx(size, channels);
+                for (unsigned ch = 0; ch < 2; ++ch) buf[ch].resize((mask >> ch & 1u) ? 2 * size : 0);
+                b->start_rx(size, mask);
                 streaming = true;
             }
-            // RX2 is only converted when a block is due and someone listens.
-            want_rx2 = channels > 1 && rx2_subscriptions_ > 0 && settle == 0 &&
-                       std::chrono::steady_clock::now() >= next_block;
-            n = b->read_rx(buf.data(), want_rx2 ? buf2.data() : nullptr, size);
+            // Own channels are always converted (stream, spectrum); tapped ones
+            // only when a block is due and someone listens.
+            tap_due = tap_subscriptions_ > 0 && settle == 0 && std::chrono::steady_clock::now() >= next_block;
+            const unsigned convert = rx_mask_ | (tap_due ? tap_mask_ : 0u);
+            n = b->read_rx((convert & Backend::kRx1) ? buf[0].data() : nullptr,
+                           (convert & Backend::kRx2) ? buf[1].data() : nullptr, size);
             if (b->take_rx_overflow()) ++rx_overflows_;
         } catch (const DeviceError& e) {
             streaming = false;
@@ -530,48 +579,57 @@ void RadioController::rx_loop(std::promise<Endpoints> bound) {
         rx_samples_ += n;
         ++seq;
 
+        // Own channels: topic "iq", one message per channel ("channel": 1 or 2).
         if (subscriptions_ > 0) {
-            const json header{{"seq", seq},
-                              {"timestamp_ns", now_ns()},
-                              {"samples", n},
-                              {"format", "cs16"},
-                              {"sample_rate", rate_hz_.load()},
-                              {"center_freq", rx_lo_hz_.load()}};
-            pub->send("iq", header, buf.data(), n * 2 * sizeof(std::int16_t));
+            for (unsigned ch = 0; ch < 2; ++ch) {
+                if (!(rx_mask_ >> ch & 1u)) continue;
+                const json header{{"seq", seq},
+                                  {"timestamp_ns", now_ns()},
+                                  {"samples", n},
+                                  {"format", "cs16"},
+                                  {"channel", ch + 1},
+                                  {"sample_rate", rate_hz_.load()},
+                                  {"center_freq", rx_lo_hz_.load()}};
+                pub->send("iq", header, buf[ch].data(), n * 2 * sizeof(std::int16_t));
+            }
         }
 
         const auto now = std::chrono::steady_clock::now();
-        rx2_subscriptions_ = channels > 1 ? pub2->subscriptions() : 0;
-        if (channels > 1 && rx2_subscriptions_ > 0) {
+        if (tap_mask_ && tap_subscriptions_ > 0) {
             // Buffers queued before a retune carry the old LO: skip a few.
             if (const auto tv = tuning_version_.load(); tv != tuning_seen) {
                 tuning_seen = tv;
-                settle = kRx2SettleBuffers;
-                want_rx2 = false;
+                settle = kTapSettleBuffers;
+                tap_due = false;
             }
             if (settle > 0) {
                 --settle;
-            } else if (want_rx2 && n > 0) {
-                const std::size_t samples = std::min(n, rx2_tap_samples_);
-                const json header{{"seq", ++block_seq},
-                                  {"timestamp_ns", now_ns()},
-                                  {"samples", samples},
-                                  {"format", "cs16"},
-                                  {"channel", 2},
-                                  {"sample_rate", rate_hz_.load()},
-                                  {"center_freq", rx_lo_hz_.load()},
-                                  {"rx_gain_db", rx2_gain_actual_.load()}};
-                pub2->send("iq", header, buf2.data(), samples * 2 * sizeof(std::int16_t));
-                ++rx2_blocks_;
-                if (rx2_tap_hz_ > 0) {
+            } else if (tap_due) {
+                const std::size_t samples = std::min(n, tap_samples_);
+                for (unsigned ch = 0; ch < 2; ++ch) {
+                    if (!(tap_mask_ >> ch & 1u)) continue;
+                    const json header{{"seq", ++block_seq},
+                                      {"timestamp_ns", now_ns()},
+                                      {"samples", samples},
+                                      {"format", "cs16"},
+                                      {"channel", ch + 1},
+                                      {"sample_rate", rate_hz_.load()},
+                                      {"center_freq", rx_lo_hz_.load()},
+                                      {"rx_gain_db", rx_gain_actual_[ch].load()}};
+                    tap->send("rx" + std::to_string(ch + 1), header, buf[ch].data(),
+                              samples * 2 * sizeof(std::int16_t));
+                }
+                ++tap_blocks_;
+                if (tap_hz_ > 0) {
                     next_block = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                                           std::chrono::duration<double>(1.0 / rx2_tap_hz_));
+                                           std::chrono::duration<double>(1.0 / tap_hz_));
                 }
             }
         }
-        if (now >= next_snapshot && n >= spectrum_size_) {
+        const unsigned first = (rx_mask_ & Backend::kRx1) ? 0u : 1u;  // spectrum of the first own channel
+        if (rx_mask_ && now >= next_snapshot && n >= spectrum_size_) {
             std::lock_guard l(snapshot_mutex_);
-            snapshot_.assign(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(2 * spectrum_size_));
+            snapshot_.assign(buf[first].begin(), buf[first].begin() + static_cast<std::ptrdiff_t>(2 * spectrum_size_));
             next_snapshot = now + 50ms;
         }
     }
@@ -612,13 +670,13 @@ void RadioController::on_tx_frame(forge::zmq::Message&& m) {
     try {
         if (cyclic) {
             // A waveform the hardware repeats until stopped (e.g. a test tone).
-            b->start_tx(n, true);
+            b->start_tx(n, true, tx_channel_);
             b->write_tx(samples, n);
             tx_mode_ = TxMode::cyclic;
         } else {
             const std::size_t size = buffer_size_;
             if (tx_mode_ != TxMode::streaming) {
-                b->start_tx(size, false);
+                b->start_tx(size, false, tx_channel_);
                 tx_mode_ = TxMode::streaming;
             }
             tx_pending_.insert(tx_pending_.end(), samples, samples + 2 * n);
@@ -651,8 +709,8 @@ void RadioController::telemetry() {
 
     if (backend_) {
         try {
-            rx_gain_actual_ = backend_->rx_gain();
-            if (rx_channel_count_ > 1) rx2_gain_actual_ = backend_->rx_gain(1);
+            rx_gain_actual_[0] = backend_->rx_gain(0);
+            if (hw_rx_channels_ > 1) rx_gain_actual_[1] = backend_->rx_gain(1);
             temperature_ = backend_->temperature_c();
         } catch (const DeviceError& e) {
             device_lost(e.what());
@@ -715,7 +773,6 @@ void RadioController::save_state() {
     j["buffer_size"] = buffer_size_.load();
     j["rx_enabled"] = rx_enabled_.load();
     j["tx_enabled"] = tx_enabled_.load();
-    j["rx2_enabled"] = rx2_enabled_.load();
     try {
         forge::save_json(state_file_, j);
     } catch (const std::exception& e) {

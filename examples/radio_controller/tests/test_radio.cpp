@@ -9,6 +9,7 @@
 #include <complex>
 #include <cstring>
 #include <future>
+#include <map>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -128,7 +129,8 @@ TEST_CASE("radio: simulator TX loopback (cyclic tone)") {
 
 TEST_CASE("radio: simulated AD9361 streams RX1 and RX2 with per-channel gain") {
     radio::SimOptions o;
-    o.rx_channels = 2;
+    o.channels = 2;
+    o.loopback_tx = 0;
     o.loopback_rx = 1;  // TX1 -> RX2 cable
     auto b = radio::make_sim_backend(o);
     REQUIRE(b->rx_channel_count() == 2);
@@ -153,7 +155,7 @@ TEST_CASE("radio: simulated AD9361 streams RX1 and RX2 with per-channel gain") {
 
     const std::size_t n = 8192;
     std::vector<std::int16_t> rx1(2 * n), rx2(2 * n);
-    b->start_rx(n, 2);
+    b->start_rx(n, radio::Backend::kRx1 | radio::Backend::kRx2);
     REQUIRE(b->read_rx(rx1.data(), rx2.data(), n) == n);
     REQUIRE(b->read_rx(rx1.data(), rx2.data(), n) == n);
     const auto s1 = radio::dsp::spectrum_dbfs(rx1.data(), n);
@@ -168,16 +170,31 @@ TEST_CASE("radio: simulated AD9361 streams RX1 and RX2 with per-channel gain") {
     CHECK(level_at(s2, 1e6) > -40);
     CHECK(level_at(s1, 1e6) < -80);
     // RX1 only: RX2 pointer is ignored
-    b->start_rx(n, 1);
+    b->start_rx(n, radio::Backend::kRx1);
     CHECK(b->read_rx(rx1.data(), n) == n);
+    // RX2 only
+    b->start_rx(n, radio::Backend::kRx2);
+    CHECK(b->read_rx(nullptr, rx2.data(), n) == n);
+
+    // TX2 is not cabled: nothing new on RX2
+    b->stop_tx();
+    b->set_tx_attenuation(0, 1);
+    b->start_tx(1000, true, 1);
+    b->write_tx(tx.data(), 1000);
+    b->start_rx(n, radio::Backend::kRx2);
+    REQUIRE(b->read_rx(nullptr, rx2.data(), n) == n);
+    CHECK(level_at(radio::dsp::spectrum_dbfs(rx2.data(), n), 1e6) < -80);
 }
 
 TEST_CASE("radio: single-RX parts reject RX2") {
     auto b = radio::make_sim_backend();  // AD9364
     CHECK(b->rx_channel_count() == 1);
-    CHECK_THROWS_AS(b->start_rx(4096, 2), radio::DeviceError);
+    CHECK(b->tx_channel_count() == 1);
+    CHECK_THROWS_AS(b->start_rx(4096, radio::Backend::kRx2), radio::DeviceError);
     CHECK_THROWS_AS(b->set_gain_mode("manual", 1), radio::DeviceError);
     CHECK_THROWS_AS(b->rx_gain(1), radio::DeviceError);
+    CHECK_THROWS_AS(b->start_tx(1024, false, 1), radio::DeviceError);
+    CHECK_THROWS_AS(b->set_tx_attenuation(10, 1), radio::DeviceError);
     radio::Settings s;
     s.rx2_gain_mode = "manual";
     b->apply(s);  // RX2 settings are skipped, not an error
@@ -203,7 +220,7 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
                                   "-D", "http.enabled=false",
                                   "-D", "zmq.rx=tcp://127.0.0.1:*",
                                   "-D", "zmq.tx=tcp://127.0.0.1:*",
-                                  "-D", "zmq.rx2=tcp://127.0.0.1:*",
+                                  "-D", "zmq.tap=tcp://127.0.0.1:*",
                                   "-D", "zmq.control=tcp://127.0.0.1:*",
                                   "-D", "radio.rx_lo_hz=2410e6",
                                   "-D", "radio.tx_lo_hz=2410e6",
@@ -303,7 +320,7 @@ struct RunningRadio {
         args = {"radio-controller", "-c", std::string(RADIO_TEST_DATA_DIR) + "/empty.toml", "--backend", "sim",
                 "-D", "log.console=false", "-D", "http.enabled=false",
                 "-D", "zmq.rx=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-                "-D", "zmq.rx2=tcp://127.0.0.1:*", "-D", "zmq.control=tcp://127.0.0.1:*"};
+                "-D", "zmq.tap=tcp://127.0.0.1:*", "-D", "zmq.control=tcp://127.0.0.1:*"};
         args.insert(args.end(), extra.begin(), extra.end());
         for (auto& a : args) argv.push_back(a.data());
         std::promise<void> started;
@@ -322,39 +339,47 @@ struct RunningRadio {
 };
 }  // namespace
 
-TEST_CASE("radio-controller: RX2 blocks for the spectrum analyzer (AD9361, TX1 -> RX2 cable)") {
-    RunningRadio r({"-D", "radio.sim.rx_channels=2", "-D", "radio.sim.loopback_rx=2",
-                    "-D", "radio.rx2_enabled=true", "-D", "radio.rx2_tap_samples=16384", "-D", "radio.rx2_tap_hz=50",
+TEST_CASE("radio-controller: channel roles from the configuration (AD9361: RX1 own, RX2 shared, TX1 -> RX2 cable)") {
+    RunningRadio r({"-D", "radio.sim.channels=2", "-D", "radio.sim.loopback_tx=1", "-D", "radio.sim.loopback_rx=2",
+                    "-D", "radio.rx_channels=[1]", "-D", "radio.tx_channel=1", "-D", "radio.tap_rx=[2]",
+                    "-D", "radio.tap_samples=16384", "-D", "radio.tap_hz=50",
                     "-D", "radio.rx_lo_hz=2410e6", "-D", "radio.tx_lo_hz=2410e6",
                     "-D", "radio.sample_rate_hz=5e6", "-D", "radio.rx_bandwidth_hz=5e6",
                     "-D", "radio.buffer_size=32768"});
     std::mutex m;
-    std::vector<fz::Message> rx2, rx1;
+    std::vector<fz::Message> tap, rx1;
+    fz::Receiver::Options tap_opts;
+    tap_opts.topics = {"rx2"};
+    fz::Receiver sub2(fz::Receiver::Kind::sub, r.app.tap_endpoint(), [&](fz::Message&& msg) {
+        std::lock_guard lock(m);
+        if (tap.size() < 400) tap.push_back(std::move(msg));
+    }, tap_opts);
     fz::Receiver::Options opts;
     opts.topics = {"iq"};
-    fz::Receiver sub2(fz::Receiver::Kind::sub, r.app.rx2_endpoint(), [&](fz::Message&& msg) {
-        std::lock_guard lock(m);
-        if (rx2.size() < 400) rx2.push_back(std::move(msg));
-    }, opts);
     fz::Receiver sub1(fz::Receiver::Kind::sub, r.app.rx_endpoint(), [&](fz::Message&& msg) {
         std::lock_guard lock(m);
         if (rx1.size() < 400) rx1.push_back(std::move(msg));
     }, opts);
-    REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return rx2.size() >= 2; }, 10s));
+    REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return tap.size() >= 2 && !rx1.empty(); }, 10s));
     {
         std::lock_guard lock(m);
-        const auto& h = rx2.back().header;
+        const auto& h = tap.back().header;
+        CHECK(tap.back().topic == "rx2");
         CHECK(h["channel"] == 2);
         CHECK(h["samples"] == 16384);  // the start of a 32768-sample DMA buffer
         CHECK(h["format"] == "cs16");
         CHECK(h["center_freq"] == 2410e6);
         CHECK(h["sample_rate"] == 5e6);
-        CHECK(rx2.back().payload.size() == 16384 * 4);
-        CHECK(rx2[1].header["seq"].get<int>() > rx2[0].header["seq"].get<int>());
+        CHECK(tap.back().payload.size() == 16384 * 4);
+        CHECK(tap[1].header["seq"].get<int>() > tap[0].header["seq"].get<int>());
+        for (const auto& f : rx1) CHECK(f.header["channel"] == 1);  // it listens to RX1 only
     }
 
     fz::Client ctl(r.app.control_endpoint(), 5s);
-    CHECK(ctl.call("get", {{"id", "rx_channels"}})["value"] == 2);
+    CHECK(ctl.call("get", {{"id", "hw_channels"}})["value"] == "2R2T");
+    CHECK(ctl.call("get", {{"id", "rx_channels"}})["value"] == json::array({1}));
+    CHECK(ctl.call("get", {{"id", "tap_channels"}})["value"] == json::array({2}));
+    CHECK(ctl.call("get", {{"id", "tx_channel"}})["value"] == "TX1");
     ctl.call("set", {{"id", "rx2_gain_mode"}, {"value", "manual"}});
     CHECK(ctl.call("set", {{"id", "rx2_gain_db"}, {"value", 25}})["value"] == 25);
     auto newest = [&](std::vector<fz::Message>& v) {
@@ -364,10 +389,10 @@ TEST_CASE("radio-controller: RX2 blocks for the spectrum analyzer (AD9361, TX1 -
     auto clear = [&] {
         std::lock_guard lock(m);
         rx1.clear();
-        rx2.clear();
+        tap.clear();
     };
     clear();
-    REQUIRE(forge::testing::wait_until([&] { return newest(rx2).header.value("rx_gain_db", 0.0) == 25.0; }));
+    REQUIRE(forge::testing::wait_until([&] { return newest(tap).header.value("rx_gain_db", 0.0) == 25.0; }));
 
     // A cyclic tone on TX1 shows up on RX2 (cable) but not on RX1.
     ctl.call("set", {{"id", "tx_enabled"}, {"value", true}});
@@ -382,7 +407,7 @@ TEST_CASE("radio-controller: RX2 blocks for the spectrum analyzer (AD9361, TX1 -
     };
     clear();
     CHECK(forge::testing::wait_until([&] {
-        const auto b = newest(rx2);
+        const auto b = newest(tap);
         return !b.payload.empty() && std::abs(peak_of(b, 16384) - 1.25e6) < 5e3;
     }, 10s));
     clear();
@@ -391,27 +416,54 @@ TEST_CASE("radio-controller: RX2 blocks for the spectrum analyzer (AD9361, TX1 -
 
     // Retuning (radio-controller owns the shared RX LO) is visible in the headers.
     ctl.call("set", {{"id", "rx_lo_mhz"}, {"value", 2411}});
-    CHECK(forge::testing::wait_until([&] { return newest(rx2).header.value("center_freq", 0.0) == 2411e6; }));
-
-    // RX2 off: no more blocks.
-    ctl.call("set", {{"id", "rx2_enabled"}, {"value", false}});
-    std::this_thread::sleep_for(300ms);
-    clear();
-    std::this_thread::sleep_for(300ms);
-    CHECK(newest(rx2).payload.empty());
+    CHECK(forge::testing::wait_until([&] { return newest(tap).header.value("center_freq", 0.0) == 2411e6; }));
 }
 
-TEST_CASE("radio-controller: RX2 on an AD9364 is refused with an explanation") {
-    RunningRadio r({"-D", "radio.rx2_enabled=true"});  // simulated AD9364 (one RX channel)
+TEST_CASE("radio-controller: listens to both RX channels and drives TX2") {
+    RunningRadio r({"-D", "radio.sim.channels=2", "-D", "radio.sim.loopback_tx=2", "-D", "radio.sim.loopback_rx=1",
+                    "-D", "radio.rx_channels=[1, 2]", "-D", "radio.tx_channel=2",
+                    "-D", "radio.rx_lo_hz=2410e6", "-D", "radio.tx_lo_hz=2410e6",
+                    "-D", "radio.sample_rate_hz=5e6", "-D", "radio.rx_bandwidth_hz=5e6",
+                    "-D", "radio.buffer_size=8192", "-D", "radio.tx_enabled=true",
+                    "-D", "radio.tx_attenuation_db=0"});
+    std::mutex m;
+    std::map<int, fz::Message> last;
+    fz::Receiver::Options opts;
+    opts.topics = {"iq"};
+    fz::Receiver sub(fz::Receiver::Kind::sub, r.app.rx_endpoint(), [&](fz::Message&& msg) {
+        std::lock_guard lock(m);
+        last[msg.header["channel"].get<int>()] = std::move(msg);
+    }, opts);
+    fz::Sender push(fz::Sender::Kind::push, r.app.tx_endpoint(), false);
+    const auto tx = tone(4000, 1.25e6, 5e6, 0.5);
+    REQUIRE(forge::testing::wait_until([&] { return push.send("tx", {{"format", "cs16"}, {"cyclic", true}}, tx.data(), tx.size() * 2); }));
+    auto peak = [&](int ch) {
+        std::lock_guard lock(m);
+        if (!last.count(ch)) return 0.0;
+        const auto& p = last[ch].payload;
+        std::vector<std::int16_t> iq(p.size() / 2);
+        std::memcpy(iq.data(), p.data(), p.size());
+        return peak_offset(iq, 8192, 5e6);
+    };
+    // TX2 is cabled to RX1 in this setup: the tone is on RX1, RX2 sees the carrier
+    CHECK(forge::testing::wait_until([&] { return std::abs(peak(1) - 1.25e6) < 5e3; }, 10s));
+    CHECK(std::abs(peak(2) - 2e6) < 5e3);
     fz::Client ctl(r.app.control_endpoint(), 5s);
-    CHECK(ctl.call("get", {{"id", "rx_channels"}})["value"] == 1);
+    CHECK(ctl.call("get", {{"id", "rx_channels"}})["value"] == json::array({1, 2}));
+    CHECK(ctl.call("get", {{"id", "tx_channel"}})["value"] == "TX2");
+}
+
+TEST_CASE("radio-controller: a configuration the transceiver cannot do is reported") {
+    RunningRadio r({"-D", "radio.tap_rx=[2]"});  // simulated AD9364: one RX, one TX
+    fz::Client ctl(r.app.control_endpoint(), 5s);
+    CHECK(ctl.call("get", {{"id", "connected"}})["value"] == false);
     const auto alarms = ctl.call("alarms")["alarms"];
     REQUIRE(alarms.size() == 1);
-    CHECK(alarms[0]["id"] == "radio.rx2");
-    const auto reply = ctl.request({{"cmd", "set"}, {"id", "rx2_enabled"}, {"value", true}});
-    CHECK(reply["status"] == 409);
-    CHECK(reply["error"].get<std::string>().find("AD9361/AD9363") != std::string::npos);
-    CHECK(ctl.request({{"cmd", "set"}, {"id", "rx2_gain_mode"}, {"value", "manual"}})["status"] == 502);
+    CHECK(alarms[0]["id"] == "radio.device");
+    const auto msg = alarms[0]["message"].get<std::string>();
+    CHECK(msg.find("RX1, RX2") != std::string::npos);
+    CHECK(msg.find("1 RX / 1 TX") != std::string::npos);
+    CHECK(msg.find("tap_rx") != std::string::npos);
 }
 
 #ifdef RADIO_HAS_IIO
@@ -443,12 +495,13 @@ TEST_CASE("radio: libiio backend detects RX2 on an AD9361 and its absence on an 
     auto two = radio::make_iio_backend(std::string("xml:") + RADIO_TEST_DATA_DIR + "/ad9361.xml", 1000);
     CHECK(two->rx_channel_count() == 2);
     CHECK(two->describe()["rx_channels"] == 2);
+    CHECK(two->tx_channel_count() == 1);  // the fixture has no TX2 channels
     CHECK_THROWS_AS(two->rx_gain(1), radio::DeviceError);  // channel exists, XML attributes are unreadable
 
     auto one = radio::make_iio_backend(std::string("xml:") + RADIO_TEST_DATA_DIR + "/ad9364.xml", 1000);
     CHECK(one->rx_channel_count() == 1);
     try {
-        one->start_rx(4096, 2);
+        one->start_rx(4096, radio::Backend::kRx2);
         FAIL("expected DeviceError");
     } catch (const radio::DeviceError& e) {
         CHECK(std::string(e.what()).find("one RX channel (AD9364") != std::string::npos);
@@ -480,7 +533,7 @@ TEST_CASE("radio-controller: keeps running and raises an alarm when the radio is
                                   "--uri", std::string("xml:") + RADIO_TEST_DATA_DIR + "/ad9364.xml",
                                   "-D", "log.console=false", "-D", "http.enabled=false",
                                   "-D", "zmq.rx=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-                                  "-D", "zmq.rx2=tcp://127.0.0.1:*", "-D", "zmq.control=tcp://127.0.0.1:*"};
+                                  "-D", "zmq.tap=tcp://127.0.0.1:*", "-D", "zmq.control=tcp://127.0.0.1:*"};
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
 

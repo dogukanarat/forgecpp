@@ -112,7 +112,12 @@ class Engine {
 public:
     using BackendFactory = std::function<std::unique_ptr<radio::Backend>()>;
 
-    Engine(BackendFactory factory, HardwareLimits limits);
+    struct Options {
+        unsigned rx_channel = 0;   ///< 0 = RX1, 1 = RX2 of the backend
+        bool control_gain = true;  ///< apply gain_mode / rx_gain_db (else leave the gain alone)
+    };
+    Engine(BackendFactory factory, HardwareLimits limits, Options options);
+    Engine(BackendFactory factory, HardwareLimits limits) : Engine(std::move(factory), limits, Options{}) {}
     ~Engine();
 
     void start(const Settings& initial);
@@ -151,6 +156,8 @@ private:
 
     BackendFactory factory_;
     HardwareLimits limits_;
+    Options options_;
+    std::size_t read(std::size_t samples);  ///< from the selected channel into iq_
 
     mutable std::mutex mutex_;
     std::condition_variable cv_;

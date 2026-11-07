@@ -43,14 +43,26 @@ in `/var/lib/spectrum-analyzer`). By default (`SA_BACKEND = "radio"`) it
 analyzes RX2 of an AD9361/AD9363 through radio-controller, so both daemons
 run together; the unit starts after radio-controller.
 
+Channel roles come from the configuration and must fit the hardware; the
+recipes set them from variables:
+
+| Variable | Default | Configuration |
+|---|---|---|
+| `RADIO_RX_CHANNELS` | `[1]` | radio-controller listens to |
+| `RADIO_TX_CHANNEL` | `1` | radio-controller drives |
+| `RADIO_TAP_RX` | `[2]` | radio-controller shares (use `[]` on an AD9364) |
+| `SA_CHANNEL` | `2` | the analyzer listens to (must be in `RADIO_TAP_RX`) |
+| `SA_CONTROL_GAIN` | `true` | the analyzer sets that channel's gain |
+
 ```
 IMAGE_INSTALL:append = " radio-controller spectrum-analyzer"
 ```
 
 For a 2R2T transceiver the device tree must not force 1R1T mode
 (`adi,1rx-1tx-mode-enable`), so that `cf-ad9361-lpc` has `voltage0` – `voltage3`.
-On an AD9364 board set `SA_BACKEND = "iio"`: the analyzer then owns the RX
-path (and can sweep) and radio-controller must not run.
+On an AD9364 board set `RADIO_TAP_RX = "[]"`, `SA_BACKEND = "iio"` and
+`SA_CHANNEL = "1"`: the analyzer then owns the RX path (and can sweep) and
+radio-controller must not run.
 
 ## Application recipes
 

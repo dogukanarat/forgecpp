@@ -8,10 +8,10 @@ console and a ZeroMQ control socket.
 
 ```
             ZeroMQ                                   libiio
-clients  <-- PUB  tcp://*:5555  "iq" frames  <--  RX thread  <--  cf-ad9361-lpc (RX DMA)
-clients  --> PULL tcp://*:5556  TX frames    -->  TX thread  -->  cf-ad9361-dds-core-lpc (TX DMA)
+clients  <-- PUB  tcp://*:5555  "iq" frames  <--  RX thread  <--  cf-ad9361-lpc (RX DMA)     rx_channels
+clients  --> PULL tcp://*:5556  TX frames    -->  TX thread  -->  cf-ad9361-dds-core-lpc     tx_channel
 clients  <-> REP  tcp://*:5557  JSON control -->  main loop  -->  ad9361-phy (LO, rate, gain, ...)
-analyzer <-- PUB  tcp://*:5558  RX2 blocks   <--  RX thread      (AD9361/AD9363, rx2_enabled)
+analyzer <-- PUB  tcp://*:5558  "rx2" blocks <--  RX thread      (shared channels)           tap_rx
 browser  <-> HTTP :8080  /  spectrum + waterfall + controls,  /forge/  control panel
 ```
 
@@ -56,34 +56,44 @@ counted as dropped.
 - `{"format": "cs16", "cyclic": true}`: the hardware repeats this frame
   until `tx_stop` (test tones, beacons).
 
-## RX2 (AD9361/AD9363)
+## Channel roles (`[radio]`)
 
-On a 2R2T transceiver RX2 can feed `spectrum-analyzer` while RX1/TX1 carry
-your own traffic. In the AD9361, RX1 and RX2 share the RX LO, the sample
-rate and the RF bandwidth, and both arrive in one DMA buffer. So
-radio-controller stays the only owner of the transceiver: with `rx2_enabled`
-it streams both channels and publishes RX2 on `[zmq].rx2`:
+An AD9364 has RX1 and TX1; an AD9361/AD9363 in 2R2T mode has RX1, RX2, TX1
+and TX2. Which of them this daemon uses, and which it shares with other
+applications, is set in the configuration, according to the hardware:
+
+```toml
+rx_channels = [1]   # listens to: IQ stream on [zmq].rx, topic "iq", "channel" in the header
+tx_channel  = 1     # drives: samples from [zmq].tx
+tap_rx      = [2]   # shares: blocks on [zmq].tap, topics "rx1" / "rx2" (e.g. the spectrum analyzer)
+```
+
+A role the transceiver cannot do (RX2 or TX2 on an AD9364) keeps the radio
+closed with a `radio.device` alarm that names the setting; roles are fixed
+until the next start (a reload keeps them).
+
+In the AD936x, RX1 and RX2 share the RX LO, the sample rate and the RF
+bandwidth and arrive in one DMA buffer (TX1 and TX2 share the TX LO). So
+radio-controller stays the only owner of the transceiver; other applications
+get the shared channels from [zmq].tap:
 
 ```json
 {"seq": 812, "samples": 65536, "format": "cs16", "channel": 2,
  "sample_rate": 30720000.0, "center_freq": 2412000000.0, "rx_gain_db": 40.0}
 ```
 
-- A block is the start of one DMA buffer (`min(rx2_tap_samples, buffer_size)`
-  contiguous samples), sent at most `rx2_tap_hz` times per second and only
-  while someone subscribes. RX2 is converted only when a block is due, so
-  the cost is a few MB/s of copying.
+- A block is the start of one DMA buffer (`min(tap_samples, buffer_size)`
+  contiguous samples), sent at most `tap_hz` times per second and only while
+  someone subscribes. Shared channels are converted only when a block is due,
+  so the cost is a few MB/s of copying.
 - After a change of RX LO, rate or bandwidth, the next buffers are skipped
   (they were captured with the old LO).
-- RX2 has its own gain control (`rx2_gain_mode`, `rx2_gain_db`); the analyzer
-  sets them. LO and sample rate stay radio-controller's controls.
-- On an AD9364 (or an AD9361 in 1R1T mode) `rx2_enabled` is refused (409) and
-  a configured `rx2_enabled = true` raises the `radio.rx2` alarm.
+- Gain is per channel: `gain_mode` / `rx_gain_db` (RX1), `rx2_gain_mode` /
+  `rx2_gain_db` (RX2). TX attenuation applies to `tx_channel`.
 
-Loopback test: cable TX1 to RX2 **through an attenuator** (30 dB or more):
-the TX output (up to about +8 dBm) must stay well below the RX input's
-maximum (about +2.5 dBm) and the RX2 gain must leave the ADC unclipped. The
-analyzer reports clipping as `ADC OVERLOAD`.
+Loopback test (e.g. TX1 → RX2): put an attenuator in the cable (30 dB or
+more): the TX output (up to about +8 dBm) must stay well below the RX input's
+maximum (about +2.5 dBm). The analyzer reports clipping as `ADC OVERLOAD`.
 
 ## Control plane (ZeroMQ REP, web, console)
 
@@ -113,16 +123,15 @@ connected).
 | `tx_enabled` | toggle | accept TX frames |
 | `tx_atten_db` | slider | 0 – 89.75 dB, 0.25 dB steps |
 | `buffer_size` | number | samples per DMA buffer (restarts streaming) |
-| `rx2_enabled` | toggle | stream RX2 too (AD9361/AD9363; restarts streaming) |
 | `rx2_gain_mode`, `rx2_gain_db` | select / slider | RX2 gain control, as for RX1 |
 | `tx_stop`, `reconnect` | buttons | stop TX output / reopen the radio |
-| `rx_power_dbfs`, `peak`, `rx_rate_msps`, `rx_overflows`, `subscriptions`, `rx_channels`, `rx2_blocks`, `rx2_subscriptions`, `tx_mode`, `tx_frames`, `tx_underflows`, `tx_dropped`, `temperature_c`, `connected`, ... | values | read-only telemetry |
+| `rx_power_dbfs`, `peak`, `rx_rate_msps`, `rx_overflows`, `subscriptions`, `hw_channels`, `rx_channels`, `tx_channel`, `tap_channels`, `tap_blocks`, `tap_subscriptions`, `tx_mode`, `tx_frames`, `tx_underflows`, `tx_dropped`, `temperature_c`, `connected`, ... | values | read-only telemetry |
 
 The same commands are available in the console (`-i`):
 `set rx_lo_mhz 2437`, `press tx_stop`, `controls`, `alarms`, `ack all`.
 
-Alarms: `radio.device` (radio unavailable / connection lost), `radio.rx2`
-(RX2 configured on a single-RX transceiver),
+Alarms: `radio.device` (radio unavailable / connection lost / channel roles
+the transceiver cannot do),
 `radio.rx_overflow`, `radio.tx_underflow` (both from the AXI core status
 register), `radio.temperature` (above `temperature_alarm_c`).
 
@@ -146,14 +155,13 @@ runtime (web, console, ZeroMQ) are restored on the next start.
 
 ## Simulator
 
-`backend = "sim"` emulates an AD9364 (or, with `[radio.sim].rx_channels = 2`,
+`backend = "sim"` emulates an AD9364 (or, with `[radio.sim].channels = 2`,
 an AD9361 whose RX1 and RX2 see the same signals with independent noise) for
 development and tests: a few
 carriers at fixed frequencies (433.92, 868.3, 915, 1575.42, 2412, 2418.5,
 2437, 5800 MHz), a noise floor and signal levels that follow the RX gain,
 bandwidth filtering, AGC, real-time pacing (a slow reader gets overflows) and
-TX→RX loopback (`[radio.sim].loopback`, into the RX channel `loopback_rx`:
-2 models a TX1 → RX2 cable). Generating samples costs CPU: on a PC it keeps up
+a TX→RX cable (`[radio.sim].loopback`, from `loopback_tx` to `loopback_rx`). Generating samples costs CPU: on a PC it keeps up
 with about 10 – 20 MSPS in a release build; use lower rates in debug builds.
 
 ## Building

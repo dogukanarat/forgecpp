@@ -100,7 +100,11 @@ void Analyzer::load(const forge::Config& cfg) {
     tap_.tap = cfg.get_or<std::string>("analyzer.radio_tap", "tcp://127.0.0.1:5558");
     tap_.control = cfg.get_or<std::string>("analyzer.radio_control", "tcp://127.0.0.1:5557");
     tap_.timeout = std::chrono::milliseconds(std::max(cfg.get_or<unsigned>("analyzer.radio_timeout_ms", 3000), 500u));
-    tap_.enable_rx2 = cfg.get_or<bool>("analyzer.radio_enable_rx2", true);
+    channel_ = cfg.get_or<unsigned>("analyzer.channel", 1);
+    if (channel_ < 1 || channel_ > 2) throw forge::ConfigError("analyzer.channel must be 1 (RX1) or 2 (RX2)");
+    control_gain_ = cfg.get_or<bool>("analyzer.control_gain", true);
+    tap_.channel = channel_;
+    tap_.control_gain = control_gain_;
     state_file_ = cfg.get_or<std::string>("analyzer.state_file", "");
     limits_.sweep_rate_hz = std::clamp(cfg.get_or<double>("analyzer.sweep_rate_hz", 61.44e6), 2.083334e6, 61.44e6);
     limits_.usable_fraction = std::clamp(cfg.get_or<double>("analyzer.usable_fraction", 0.8), 0.3, 0.95);
@@ -242,8 +246,8 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
         const auto f = engine_ ? engine_->latest() : nullptr;
         if (!f) return std::string("-");
         if (f->plan.fixed) {
-            return fmt::format("RX2 of radio-controller (LO {:.3f} MHz, {:.3f} MSPS)", f->plan.segments.front().lo_hz / 1e6,
-                               f->plan.sample_rate_hz / 1e6);
+            return fmt::format("RX{} of radio-controller (LO {:.3f} MHz, {:.3f} MSPS)", channel_,
+                               f->plan.segments.front().lo_hz / 1e6, f->plan.sample_rate_hz / 1e6);
         }
         return f->plan.swept ? fmt::format("swept, {} segments", f->plan.segments.size()) : std::string("realtime");
     });
@@ -321,12 +325,18 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
         .help("dBm = dBFS - RX gain + calibration (measure a known signal to find it)");
     am.select("gain_mode", "Gain control", radio::gain_modes(), [this] { return settings_.gain_mode; },
               [this](const std::string& m) {
+                  require_gain_control();
                   settings_.gain_mode = m;
                   changed();
               })
         .help("Manual gain keeps levels comparable between sweeps");
-    am.slider("rx_gain_db", "RX gain", [this] { return settings_.rx_gain_db; },
+    am.slider("rx_gain_db", "RX gain", [this] {
+                  if (control_gain_) return settings_.rx_gain_db;
+                  const auto f = latest();  // someone else's: show what it is
+                  return f ? f->rx_gain_db : settings_.rx_gain_db;
+              },
               [this](double v) {
+                  require_gain_control();
                   if (settings_.gain_mode != "manual") throw HttpError(409, "set gain control to manual first");
                   settings_.rx_gain_db = v;
                   changed();
@@ -530,6 +540,14 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
 // ---------------------------------------------------------------------------
 // marker commands (main loop)
 
+void Analyzer::require_gain_control() const {
+    if (!control_gain_) {
+        throw HttpError(409, fmt::format("the gain of RX{} is not the analyzer's to set ([analyzer] control_gain = "
+                                         "false): change it where that channel is used",
+                                         channel_));
+    }
+}
+
 MarkerSettings& Analyzer::active() { return settings_.markers[std::min(settings_.active_marker, kMarkers - 1)]; }
 
 std::shared_ptr<const Frame> Analyzer::require_frame() const {
@@ -618,6 +636,8 @@ json Analyzer::frame_json(const Frame& f) const {
            {"rate", f.plan.sample_rate_hz},
            {"swept", f.plan.swept},
            {"fixed", f.plan.fixed},
+           {"channel", channel_},
+           {"control_gain", control_gain_},
            {"lo", f.plan.segments.empty() ? 0.0 : f.plan.segments.front().lo_hz},
            {"segments", f.plan.segments.size()},
            {"sweep_ms", std::round(f.sweep_ms * 10) / 10},
@@ -725,15 +745,29 @@ void Analyzer::on_start() {
     const auto uri = uri_;
     const auto timeout = timeout_ms_;
     const auto tap = tap_;
+    const auto channel = channel_;
+    Engine::Options eo;
+    eo.rx_channel = kind == "radio" ? 0 : channel - 1;  // the tap carries just the shared channel
+    eo.control_gain = control_gain_;
     engine_ = std::make_unique<Engine>(
-        [kind, uri, timeout, tap]() -> std::unique_ptr<radio::Backend> {
-            if (kind == "iio") return radio::make_iio_backend(uri, timeout);
+        [kind, uri, timeout, tap, channel]() -> std::unique_ptr<radio::Backend> {
+            if (kind == "iio") {
+                auto b = radio::make_iio_backend(uri, timeout);
+                if (channel > b->rx_channel_count()) {
+                    throw radio::DeviceError("[analyzer] channel = " + std::to_string(channel) +
+                                             " but the transceiver has one RX channel (AD9364)");
+                }
+                return b;
+            }
             if (kind == "radio") return make_radio_tap_backend(tap);
             radio::SimOptions o;
             o.loopback = false;
+            o.channels = channel;
             return radio::make_sim_backend(o);
         },
-        limits_);
+        limits_, eo);
+    logger()->info("analyzer: listens to RX{} ({}), {} its gain", channel_, backend_kind_,
+                   control_gain_ ? "controls" : "does not touch");
     engine_->start(settings_);
 
     control_ = forge::zmq::serve_application(*this, cfg.get_or<std::string>("zmq.control", "tcp://*:5567"));

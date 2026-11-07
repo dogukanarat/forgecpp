@@ -18,20 +18,25 @@ namespace fz = forge::zmq;
 class RadioTapBackend final : public radio::Backend, public FixedTuning {
 public:
     explicit RadioTapBackend(RadioTapOptions o) : options_(std::move(o)), control_(options_.control, options_.timeout) {
+        if (options_.channel < 1 || options_.channel > 2) throw DeviceError("channel must be 1 or 2");
+        // radio-controller's control ids for the channel's gain
+        mode_id_ = options_.channel == 1 ? "gain_mode" : "rx2_gain_mode";
+        gain_id_ = options_.channel == 1 ? "rx_gain_db" : "rx2_gain_db";
         // Check radio-controller first: a clear error beats a silent wait for data.
         try {
-            const auto channels = call("get", {{"id", "rx_channels"}})["value"];
-            if (channels.is_number() && channels.get<int>() < 2) {
-                throw DeviceError("radio-controller's transceiver has one RX channel (AD9364): no RX2 to analyze");
-            }
-            if (options_.enable_rx2 && call("get", {{"id", "rx2_enabled"}})["value"] != true) {
-                call("set", {{"id", "rx2_enabled"}, {"value", true}});
+            const auto shared = call("get", {{"id", "tap_channels"}})["value"];
+            bool found = false;
+            for (const auto& c : shared) found = found || (c.is_number() && c.get<unsigned>() == options_.channel);
+            if (!found) {
+                const auto ch = std::to_string(options_.channel);
+                throw DeviceError("radio-controller does not share RX" + ch + " (it shares " + shared.dump() +
+                                  "): add " + ch + " to [radio] tap_rx in its configuration");
             }
         } catch (const fz::Error& e) {
             throw DeviceError("radio-controller at " + options_.control + ": " + e.what());
         }
         fz::Receiver::Options ro;
-        ro.topics = {"iq"};
+        ro.topics = {"rx" + std::to_string(options_.channel)};
         ro.socket.recv_hwm = 4;
         receiver_ = std::make_unique<fz::Receiver>(
             fz::Receiver::Kind::sub, options_.tap, [this](fz::Message&& m) { on_block(std::move(m)); }, ro);
@@ -42,10 +47,16 @@ public:
         receiver_.reset();
     }
 
-    std::string name() const override { return "radio-controller RX2 (" + options_.tap + ")"; }
+    std::string name() const override {
+        return "radio-controller RX" + std::to_string(options_.channel) + " (" + options_.tap + ")";
+    }
 
     nlohmann::json describe() const override {
-        return {{"backend", "radio"}, {"tap", options_.tap}, {"control", options_.control}, {"channel", 2}};
+        return {{"backend", "radio"},
+                {"tap", options_.tap},
+                {"control", options_.control},
+                {"channel", options_.channel},
+                {"control_gain", options_.control_gain}};
     }
 
     // --- tuning belongs to radio-controller -------------------------------------
@@ -54,16 +65,17 @@ public:
     void set_sample_rate(double) override { not_here("the sample rate"); }
     void set_rx_bandwidth(double) override { not_here("the RX bandwidth"); }
     void set_tx_bandwidth(double) override { not_here("the TX bandwidth"); }
-    void set_tx_attenuation(double) override { not_here("TX attenuation"); }
+    void set_tx_attenuation(double, unsigned) override { not_here("TX attenuation"); }
 
-    // --- RX2 gain through the control socket ---------------------------------------
+    // --- gain of the channel, through the control socket (if ours to set) ------------
     void set_gain_mode(const std::string& mode, unsigned ch) override {
         check(ch);
-        remote_set("rx2_gain_mode", mode);
+        if (options_.control_gain) remote_set(mode_id_, mode);
     }
     void set_rx_gain(double db, unsigned ch) override {
         check(ch);
-        remote_set("rx2_gain_db", db);
+        if (!options_.control_gain) return;
+        remote_set(gain_id_, db);
         gain_db_ = db;
     }
     double rx_gain(unsigned ch) override {
@@ -78,11 +90,12 @@ public:
         }
         return std::nullopt;
     }
-    unsigned rx_channel_count() const override { return 1; }  // RX2 of the radio, seen as our only channel
+    unsigned rx_channel_count() const override { return 1; }  // the shared channel, seen as our only one
+    unsigned tx_channel_count() const override { return 0; }
 
     // --- data ----------------------------------------------------------------------
     void start_rx(std::size_t, unsigned channels) override {
-        if (channels > 1) throw DeviceError("the radio-controller tap carries RX2 only");
+        if (channels != kRx1) throw DeviceError("the radio-controller tap carries one channel");
         cancelled_ = false;
     }
 
@@ -109,7 +122,7 @@ public:
     }
     bool take_rx_overflow() override { return false; }
 
-    void start_tx(std::size_t, bool) override { not_here("TX"); }
+    void start_tx(std::size_t, bool, unsigned) override { not_here("TX"); }
     void write_tx(const std::int16_t*, std::size_t) override { not_here("TX"); }
     void stop_tx() override {}
     bool take_tx_underflow() override { return false; }
@@ -132,17 +145,17 @@ private:
         throw DeviceError(std::string(what) + " is set in radio-controller (it owns the transceiver)");
     }
     void check(unsigned ch) const {
-        if (ch != 0) throw DeviceError("the radio-controller tap carries RX2 only");
+        if (ch != 0) throw DeviceError("the radio-controller tap carries one channel");
     }
     std::string no_data() const {
-        return "no RX2 data from radio-controller at " + options_.tap + " for " +
-               std::to_string(options_.timeout.count()) + " ms (is RX streaming on?)";
+        return "no RX" + std::to_string(options_.channel) + " data from radio-controller at " + options_.tap +
+               " for " + std::to_string(options_.timeout.count()) + " ms (is RX streaming on?)";
     }
 
     forge::json call(const std::string& cmd, const forge::json& args) { return control_.call(cmd, args); }
 
     template <class T>
-    void remote_set(const char* id, const T& value) {
+    void remote_set(const std::string& id, const T& value) {
         try {
             call("set", {{"id", id}, {"value", value}});
         } catch (const fz::Error& e) {
@@ -169,6 +182,7 @@ private:
     }
 
     RadioTapOptions options_;
+    std::string mode_id_, gain_id_;  ///< radio-controller control ids of the channel's gain
     fz::Client control_;  // engine thread only
     std::unique_ptr<fz::Receiver> receiver_;
 

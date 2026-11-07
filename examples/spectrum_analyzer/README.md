@@ -27,40 +27,50 @@ Open `http://<host>:8081/` (radio-controller has 8080). The simulator has carrie
 1575.42, 2412, 2418.5, 2437 and 5800 MHz over a noise floor, so every
 feature can be tried without hardware.
 
-## Running next to radio-controller (AD9361/AD9363, `backend = "radio"`)
+## Channel roles (`[analyzer]`)
 
-With a 2R2T transceiver both daemons run on the board at the same time:
-radio-controller drives RX1/TX1 (your modem or test traffic) and the analyzer
-looks at RX2.
+```toml
+channel      = 2      # RX channel it listens to (RX2 needs an AD9361/AD9363)
+control_gain = true   # sets that channel's gain; false when someone else uses the channel
+```
+
+Set them to what the transceiver has; a channel it does not have is reported
+with the `analyzer.device` alarm. With `control_gain = false` the gain
+controls show the channel's gain but refuse changes (409).
+
+## Running next to radio-controller (`backend = "radio"`)
+
+On an AD9361/AD9363 both daemons run on the board at the same time, each on
+the channels its configuration gives it, for example:
 
 ```
-                    ad9361-phy, cf-ad9361-lpc (RX1+RX2), TX DMA
-                                     |
-radio-controller  (owner: RX LO, sample rate, bandwidth, RX1/TX1, RX2 gain)
-   [zmq].rx2  tcp://*:5558  RX2 blocks  ------>  spectrum-analyzer (backend = "radio")
-   [zmq].control tcp://*:5557  <------  RX2 gain, rx2_enabled
+radio-controller  rx_channels = [1]  tx_channel = 1  tap_rx = [2]   (owns LO, rate, bandwidth)
+spectrum-analyzer channel = 2        control_gain = true             (RX2 from [zmq].tap)
 ```
 
 - RX1 and RX2 of the AD9361 share the RX LO, the sample rate and the RF
   bandwidth, and arrive in one DMA buffer that only one process can open.
-  So the analyzer does not tune: it shows the band radio-controller is tuned
-  to (LO ± 80 % of the sample rate / 2) and you can zoom inside it (center,
-  span, RBW, markers, everything else works). A window outside the band is
-  replaced by the whole band; when radio-controller retunes, the display
-  follows and the traces restart. The annotation bar shows
-  `RX2 · LO … (radio-controller)`.
-- The analyzer turns `rx2_enabled` on in radio-controller and owns RX2's gain
-  (`gain_mode`, `rx_gain_db` act on RX2). dBm readings use the RX2 gain that
-  comes with every block.
-- The largest FFT is the block size (`rx2_tap_samples`, at most radio-controller's
+  So radio-controller owns the transceiver and shares channels (`tap_rx`);
+  the analyzer listens to one of them (`channel`, which must be in `tap_rx`).
+- The analyzer does not tune: it shows the band radio-controller is tuned to
+  (LO ± 80 % of the sample rate / 2) and you can zoom inside it (center, span,
+  RBW, markers, everything else works). A window outside the band is replaced
+  by the whole band; when radio-controller retunes, the display follows and
+  the traces restart. The annotation bar shows `RX2 · LO … (radio-controller)`.
+- With `control_gain = true` the analyzer sets that channel's gain through
+  radio-controller's control socket. To watch a channel radio-controller
+  uses itself (e.g. RX1, shared with `tap_rx = [1, 2]`), set
+  `control_gain = false`. dBm readings use the gain that comes with every block.
+- The largest FFT is the block size (`tap_samples`, at most radio-controller's
   `buffer_size`; 65536 by default), so the finest RBW is about
   `2 × sample rate / 65536`.
-- radio-controller missing, an AD9364, or no blocks for `radio_timeout_ms`
-  raise `analyzer.device` with the reason; the analyzer retries every 2 s.
+- radio-controller missing, a channel it does not share, or no blocks for
+  `radio_timeout_ms` raise `analyzer.device` with the reason; the analyzer
+  retries every 2 s.
 
-Loopback (TX1 → RX2 cable): put an attenuator in the cable (30 dB or more);
+Loopback (TX → RX cable): put an attenuator in the cable (30 dB or more);
 the TX output must stay well below the RX input's maximum level, and
-`ADC OVERLOAD` on the display means the RX2 gain is too high.
+`ADC OVERLOAD` on the display means the gain is too high.
 
 With `backend = "iio"` the analyzer opens the RX DMA itself and can sweep
 70 MHz – 6 GHz, but then radio-controller must not run (one buffer per
@@ -170,7 +180,7 @@ second per segment.
 |---|---|
 | `src/spectrum.*` | planning (realtime / swept segments, FFT size for an RBW), bin stitching, detectors, traces, peak search, channel power, OBW: pure functions, unit tested |
 | `src/engine.*` | the acquisition thread: owns the radio, retunes per segment, builds `Frame`s; reconnects on errors |
-| `src/radio_tap.*` | `backend = "radio"`: RX2 blocks from radio-controller, RX2 gain over its control socket (fixed tuning) |
+| `src/radio_tap.*` | `backend = "radio"`: blocks of a channel radio-controller shares, its gain over the control socket (fixed tuning) |
 | `src/analyzer.*` | the forgecpp application: controls, markers, alarms, HTTP routes, ZeroMQ, persistence |
 | `web/` | the analyzer page (canvas spectrum and waterfall, no dependencies) |
 | `../common/ad936x` | AD936x access through libiio, the simulator, FFT and windows (shared with radio_controller) |

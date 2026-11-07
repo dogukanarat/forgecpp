@@ -17,7 +17,13 @@ bool structural_change(const Settings& a, const Settings& b) {
 
 }  // namespace
 
-Engine::Engine(BackendFactory factory, HardwareLimits limits) : factory_(std::move(factory)), limits_(limits) {}
+Engine::Engine(BackendFactory factory, HardwareLimits limits, Options options)
+    : factory_(std::move(factory)), limits_(limits), options_(options) {}
+
+std::size_t Engine::read(std::size_t samples) {
+    return options_.rx_channel == 0 ? backend_->read_rx(iq_.data(), nullptr, samples)
+                                    : backend_->read_rx(nullptr, iq_.data(), samples);
+}
 
 Engine::~Engine() { stop(); }
 
@@ -122,10 +128,12 @@ bool Engine::ensure_device() {
 }
 
 void Engine::apply_hardware(const Settings& s, bool force) {
-    if (force || s.gain_mode != applied_.gain_mode) backend_->set_gain_mode(s.gain_mode);
+    if (!options_.control_gain) return;
+    const unsigned ch = options_.rx_channel;
+    if (force || s.gain_mode != applied_.gain_mode) backend_->set_gain_mode(s.gain_mode, ch);
     if (s.gain_mode == "manual" &&
         (force || s.gain_mode != applied_.gain_mode || s.rx_gain_db != applied_.rx_gain_db)) {
-        backend_->set_rx_gain(s.rx_gain_db);
+        backend_->set_rx_gain(s.rx_gain_db, ch);
     }
 }
 
@@ -148,7 +156,7 @@ bool Engine::tune(double lo, double rate, double rf_bw, std::size_t buffer, std:
     }
     if (!streaming_ || buffer != buffer_size_) {
         if (streaming_) backend_->stop_rx();
-        backend_->start_rx(buffer);
+        backend_->start_rx(buffer, 1u << options_.rx_channel);
         buffer_size_ = buffer;
         streaming_ = true;
         iq_.resize(2 * buffer);
@@ -157,7 +165,7 @@ bool Engine::tune(double lo, double rate, double rf_bw, std::size_t buffer, std:
     // Buffers already queued in the DMA were captured with the old settings.
     if (changed) {
         for (std::size_t i = 0; i < settle; ++i) {
-            if (backend_->read_rx(iq_.data(), buffer) == 0) return false;
+            if (read(buffer) == 0) return false;
         }
     }
     return true;
@@ -212,7 +220,7 @@ bool Engine::sweep(const Settings& s, Frame& frame) {
         }
         if (fixed) {
             if (!streaming_ || buffer != buffer_size_) {
-                backend_->start_rx(buffer);
+                backend_->start_rx(buffer);  // the tap's only channel
                 buffer_size_ = buffer;
                 streaming_ = true;
                 iq_.resize(2 * buffer);
@@ -224,7 +232,7 @@ bool Engine::sweep(const Settings& s, Frame& frame) {
         spectrum.assign(plan.fft_size, 0.0);
         std::size_t got = 0;
         while (got < ffts) {
-            const std::size_t n = backend_->read_rx(iq_.data(), buffer);
+            const std::size_t n = fixed ? backend_->read_rx(iq_.data(), buffer) : read(buffer);
             if (n == 0) return false;  // cancelled
             if (fixed && fixed->last_read() != tuning) return false;  // retuned meanwhile: plan again
             const std::size_t k = std::min(n / plan.fft_size, ffts - got);
@@ -268,7 +276,7 @@ void Engine::finish_frame(const Settings& s, Frame& frame, const Bins& bins) {
 
     // Display unit: dBFS, or dBm = dBFS - RX gain + calibration offset.
     try {
-        frame.rx_gain_db = backend_->rx_gain();
+        frame.rx_gain_db = backend_->rx_gain(dynamic_cast<FixedTuning*>(backend_.get()) ? 0 : options_.rx_channel);
     } catch (const radio::DeviceError&) {
         frame.rx_gain_db = s.rx_gain_db;
     }

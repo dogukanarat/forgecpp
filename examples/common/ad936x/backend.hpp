@@ -3,9 +3,11 @@
 // AD9364 (1 RX + 1 TX) and AD9361/AD9363 (2 RX + 2 TX).
 //
 // Both RX channels of an AD9361 share the RX LO, the sample rate and the RF
-// bandwidth, and arrive in one DMA buffer; only gain (and gain control) is per
-// channel. So one process streams both (start_rx with channels = 2) and the
-// gain calls take a channel index (0 = RX1, 1 = RX2). TX uses TX1.
+// bandwidth, and arrive in one DMA buffer; both TX channels share the TX LO.
+// Only gain (RX) and attenuation (TX) are per channel. So one process owns
+// the transceiver: start_rx() takes a mask of the RX channels to stream, the
+// gain / attenuation calls and start_tx() take a channel index (0 = RX1/TX1,
+// 1 = RX2/TX2).
 //
 // Samples cross this interface as "cs16": interleaved I/Q int16 pairs at full
 // scale (+-32767), in both directions. Backends convert to and from the
@@ -65,6 +67,7 @@ struct Settings {
     // RX2 (AD9361/AD9363 only; ignored by apply() on single-RX parts)
     std::string rx2_gain_mode = "slow_attack";
     double rx2_gain_db = 30;
+    unsigned tx_channel = 0;         ///< TX channel tx_attenuation_db applies to (not persisted)
 };
 
 nlohmann::json to_json(const Settings& s);
@@ -88,25 +91,27 @@ public:
     /// Gain control of RX channel `channel` (0 = RX1, 1 = RX2).
     virtual void set_gain_mode(const std::string& mode, unsigned channel = 0) = 0;
     virtual void set_rx_gain(double db, unsigned channel = 0) = 0;  ///< manual gain mode only
-    virtual void set_tx_attenuation(double db) = 0;
+    virtual void set_tx_attenuation(double db, unsigned channel = 0) = 0;
     /// Current RX gain (changes on its own under AGC).
     virtual double rx_gain(unsigned channel = 0) = 0;
     virtual std::optional<double> temperature_c() = 0;
-    /// Number of RX channels: 1 (AD9364) or 2 (AD9361/AD9363).
+    /// Number of RX / TX channels: 1 (AD9364) or 2 (AD9361/AD9363 in 2R2T mode).
     virtual unsigned rx_channel_count() const = 0;
+    virtual unsigned tx_channel_count() const = 0;
 
     /// Apply every setting in a sensible order.
     void apply(const Settings& s);
 
     // --- RX streaming (RX thread) ------------------------------------------
-    /// `channels`: 1 = RX1, 2 = RX1 and RX2 (same buffer, same sample clock).
-    /// Throws DeviceError when the transceiver has fewer channels.
-    virtual void start_rx(std::size_t samples_per_buffer, unsigned channels) = 0;
-    void start_rx(std::size_t samples_per_buffer) { start_rx(samples_per_buffer, 1); }
+    /// `channel_mask`: bit 0 = RX1, bit 1 = RX2 (both: same buffer, same sample
+    /// clock). Throws DeviceError when the transceiver lacks a channel.
+    virtual void start_rx(std::size_t samples_per_buffer, unsigned channel_mask) = 0;
+    void start_rx(std::size_t samples_per_buffer) { start_rx(samples_per_buffer, kRx1); }
+    static constexpr unsigned kRx1 = 1, kRx2 = 2;
     /// Block until a buffer is available and copy up to `max_samples` complex
-    /// samples (cs16) of RX1 into `rx1` and, when started with two channels,
-    /// of RX2 into `rx2` (either may be null). Returns the number of samples
-    /// per channel, 0 when cancelled. Throws DeviceError.
+    /// samples (cs16) of RX1 into `rx1` and of RX2 into `rx2`; a channel that
+    /// is not streamed or a null pointer is skipped. Returns the number of
+    /// samples per channel, 0 when cancelled. Throws DeviceError.
     virtual std::size_t read_rx(std::int16_t* rx1, std::int16_t* rx2, std::size_t max_samples) = 0;
     std::size_t read_rx(std::int16_t* iq, std::size_t max_samples) { return read_rx(iq, nullptr, max_samples); }
     virtual void stop_rx() = 0;
@@ -117,7 +122,9 @@ public:
 
     // --- TX streaming (TX thread) ------------------------------------------
     /// `cyclic`: the next write is repeated by the hardware until stop_tx().
-    virtual void start_tx(std::size_t samples_per_buffer, bool cyclic) = 0;
+    /// `channel`: 0 = TX1, 1 = TX2.
+    virtual void start_tx(std::size_t samples_per_buffer, bool cyclic, unsigned channel) = 0;
+    void start_tx(std::size_t samples_per_buffer, bool cyclic) { start_tx(samples_per_buffer, cyclic, 0); }
     /// Write exactly `samples_per_buffer` complex samples (cs16). Blocks while the queue is full.
     virtual void write_tx(const std::int16_t* iq, std::size_t samples) = 0;
     virtual void stop_tx() = 0;
@@ -126,9 +133,10 @@ public:
 };
 
 struct SimOptions {
-    bool loopback = true;      ///< mix transmitted samples into RX when the LOs are close
-    unsigned loopback_rx = 0;  ///< RX channel the TX output is coupled into (1 = RX2: a TX1 -> RX2 cable)
-    unsigned rx_channels = 1;  ///< 1: AD9364, 2: AD9361 (RX1 and RX2 see the same air, independent noise)
+    bool loopback = true;      ///< couple a TX channel into an RX channel (a cable) when the LOs are close
+    unsigned loopback_tx = 0;  ///< 0 = TX1, 1 = TX2
+    unsigned loopback_rx = 0;  ///< 0 = RX1, 1 = RX2   (e.g. 0 -> 1: a TX1 -> RX2 cable)
+    unsigned channels = 1;     ///< 1: AD9364, 2: AD9361 (RX1/RX2 see the same air, independent noise)
     unsigned seed = 1;
 };
 

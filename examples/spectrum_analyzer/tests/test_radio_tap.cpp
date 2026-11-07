@@ -27,9 +27,9 @@ namespace {
 /// Stand-in for radio-controller: its control socket and the RX2 block stream.
 class FakeRadio {
 public:
-    explicit FakeRadio(int rx_channels = 2) {
-        state_ = {{"rx_channels", rx_channels}, {"rx2_enabled", false}, {"rx2_gain_mode", "slow_attack"},
-                  {"rx2_gain_db", 30.0}, {"temperature_c", 44.5}};
+    explicit FakeRadio(json tap_channels = json::array({2})) {
+        state_ = {{"tap_channels", tap_channels}, {"rx2_gain_mode", "slow_attack"}, {"rx2_gain_db", 30.0},
+                  {"gain_mode", "slow_attack"}, {"rx_gain_db", 30.0}, {"temperature_c", 44.5}};
         control_ = std::make_unique<fz::Server>("tcp://127.0.0.1:*", [this](const json& req) { return handle(req); });
         pub_ = std::make_unique<fz::Sender>(fz::Sender::Kind::pub, "tcp://127.0.0.1:*");
         thread_ = std::thread([this] { publish(); });
@@ -44,6 +44,7 @@ public:
         std::lock_guard lock(m_);
         return state_;
     }
+    std::atomic<int> sets{0};
     std::atomic<double> lo{915e6};
     std::atomic<double> tone_offset{1.5e6};
     static constexpr double kRate = 10e6;
@@ -54,7 +55,10 @@ private:
         std::lock_guard lock(m_);
         const auto id = req.value("id", std::string());
         if (!state_.contains(id)) throw fz::Error("unknown control '" + id + "'", 404);
-        if (req["cmd"] == "set") state_[id] = req["value"];
+        if (req["cmd"] == "set") {
+            state_[id] = req["value"];
+            ++sets;
+        }
         return {{"id", id}, {"value", state_[id]}};
     }
     void publish() {
@@ -72,7 +76,7 @@ private:
                 std::lock_guard lock(m_);
                 gain = state_["rx2_gain_db"];
             }
-            pub_->send("iq",
+            pub_->send("rx2",
                        {{"seq", ++seq}, {"samples", kBlock}, {"format", "cs16"}, {"channel", 2},
                         {"sample_rate", kRate}, {"center_freq", lo.load()}, {"rx_gain_db", gain}},
                        iq.data(), iq.size() * sizeof(std::int16_t));
@@ -126,6 +130,7 @@ TEST_CASE("sa radio tap: the window follows the band radio-controller is tuned t
     e.start(s);
 
     auto f = wait_frame(e, [](const sa::Frame& f) { return f.seq >= 2; });
+    CAPTURE(e.status().error);
     REQUIRE(f);
     CHECK(f->plan.fixed);
     CHECK_FALSE(f->plan.swept);
@@ -134,9 +139,9 @@ TEST_CASE("sa radio tap: the window follows the band radio-controller is tuned t
     CHECK(f->plan.fft_size <= FakeRadio::kBlock);
     REQUIRE_FALSE(f->peaks.empty());
     CHECK(std::abs(f->peaks.front().freq_hz - 916.5e6) < tolerance(*f));
-    // The analyzer turned RX2 on and owns its gain; dBm uses the gain radio-controller reports.
-    CHECK(radio.state()["rx2_enabled"] == true);
+    // The analyzer owns the RX2 gain; dBm uses the gain radio-controller reports.
     CHECK(radio.state()["rx2_gain_mode"] == "manual");
+    CHECK(radio.state()["gain_mode"] == "slow_attack");  // RX1 untouched
     CHECK(radio.state()["rx2_gain_db"] == 33.0);
     REQUIRE(forge::testing::wait_until([&] { auto g = e.latest(); return g && g->rx_gain_db == 33.0; }));
     CHECK(e.latest()->unit_offset_db == doctest::Approx(-33.0));
@@ -162,14 +167,33 @@ TEST_CASE("sa radio tap: the window follows the band radio-controller is tuned t
     e.stop();
 }
 
-TEST_CASE("sa radio tap: an AD9364 radio-controller has no RX2") {
-    FakeRadio radio(1);
+TEST_CASE("sa radio tap: radio-controller must share the channel") {
+    FakeRadio radio(json::array());  // tap_rx = [] in its configuration
     sa::Engine e([o = tap_of(radio)] { return sa::make_radio_tap_backend(o); }, {});
     e.start({});
     REQUIRE(forge::testing::wait_until([&] { return !e.status().error.empty(); }));
     CHECK_FALSE(e.status().connected);
-    CHECK(e.status().error.find("one RX channel") != std::string::npos);
-    CHECK(radio.state()["rx2_enabled"] == false);
+    CHECK(e.status().error.find("does not share RX2") != std::string::npos);
+    CHECK(e.status().error.find("tap_rx") != std::string::npos);
+    e.stop();
+}
+
+TEST_CASE("sa radio tap: control_gain = false leaves the channel's gain alone") {
+    FakeRadio radio;
+    auto o = tap_of(radio);
+    o.control_gain = false;
+    sa::Engine::Options eo;
+    eo.control_gain = false;
+    sa::Engine e([o] { return sa::make_radio_tap_backend(o); }, {}, eo);
+    sa::Settings s;
+    s.gain_mode = "manual";
+    s.rx_gain_db = 10;
+    s.update_hz = 30;
+    e.start(s);
+    REQUIRE(wait_frame(e, [](const sa::Frame& f) { return f.seq >= 2; }));
+    CHECK(radio.sets == 0);
+    CHECK(radio.state()["rx2_gain_db"] == 30.0);
+    CHECK(e.latest()->rx_gain_db == 30.0);  // reported by radio-controller
     e.stop();
 }
 
@@ -194,10 +218,11 @@ public:
     void set_tx_bandwidth(double v) override { inner_->set_tx_bandwidth(v); }
     void set_gain_mode(const std::string& m, unsigned c) override { inner_->set_gain_mode(m, c); }
     void set_rx_gain(double v, unsigned c) override { inner_->set_rx_gain(v, c); }
-    void set_tx_attenuation(double v) override { inner_->set_tx_attenuation(v); }
+    void set_tx_attenuation(double v, unsigned c) override { inner_->set_tx_attenuation(v, c); }
     double rx_gain(unsigned c) override { return inner_->rx_gain(c); }
     std::optional<double> temperature_c() override { return inner_->temperature_c(); }
     unsigned rx_channel_count() const override { return inner_->rx_channel_count(); }
+    unsigned tx_channel_count() const override { return inner_->tx_channel_count(); }
     void start_rx(std::size_t n, unsigned c) override {
         largest_ = std::max(largest_.load(), n);
         inner_->start_rx(n, c);
@@ -206,7 +231,7 @@ public:
     void stop_rx() override { inner_->stop_rx(); }
     void cancel_rx() override { inner_->cancel_rx(); }
     bool take_rx_overflow() override { return inner_->take_rx_overflow(); }
-    void start_tx(std::size_t n, bool c) override { inner_->start_tx(n, c); }
+    void start_tx(std::size_t n, bool c, unsigned ch) override { inner_->start_tx(n, c, ch); }
     void write_tx(const std::int16_t* p, std::size_t n) override { inner_->write_tx(p, n); }
     void stop_tx() override { inner_->stop_tx(); }
     bool take_tx_underflow() override { return inner_->take_tx_underflow(); }
@@ -216,6 +241,28 @@ private:
     std::atomic<std::size_t>& largest_;
 };
 }  // namespace
+
+TEST_CASE("sa engine: listens to RX2 of its own transceiver") {
+    radio::SimOptions so;
+    so.channels = 2;
+    so.loopback = false;
+    sa::Engine::Options eo;
+    eo.rx_channel = 1;
+    sa::Engine e([so] { return radio::make_sim_backend(so); }, {}, eo);
+    sa::Settings s;
+    s.center_hz = 868e6;
+    s.span_hz = 4e6;
+    s.gain_mode = "manual";
+    s.rx_gain_db = 20;
+    s.settle_buffers = 0;
+    s.update_hz = 30;
+    e.start(s);
+    const auto f = wait_frame(e, [](const sa::Frame& f) { return f.seq >= 2; });
+    REQUIRE(f);
+    CHECK(f->rx_gain_db == 20);
+    CHECK(std::abs(f->peaks.front().freq_hz - 868.3e6) < tolerance(*f));
+    e.stop();
+}
 
 TEST_CASE("sa engine: narrow RBW with heavy averaging reads bounded DMA buffers") {
     std::atomic<std::size_t> largest{0};
@@ -245,8 +292,9 @@ TEST_CASE("sa radio tap: with the real radio-controller (simulated AD9361, TX1 -
     std::vector<std::string> args{"radio-controller", "-c", empty, "--backend", "sim",
                                   "-D", "log.console=false", "-D", "http.enabled=false",
                                   "-D", "zmq.rx=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-                                  "-D", "zmq.rx2=tcp://127.0.0.1:*", "-D", "zmq.control=tcp://127.0.0.1:*",
-                                  "-D", "radio.sim.rx_channels=2", "-D", "radio.sim.loopback_rx=2",
+                                  "-D", "zmq.tap=tcp://127.0.0.1:*", "-D", "zmq.control=tcp://127.0.0.1:*",
+                                  "-D", "radio.sim.channels=2", "-D", "radio.sim.loopback_rx=2",
+                                  "-D", "radio.tap_rx=[2]",
                                   "-D", "radio.rx_lo_hz=2410e6", "-D", "radio.tx_lo_hz=2410e6",
                                   "-D", "radio.sample_rate_hz=10e6", "-D", "radio.rx_bandwidth_hz=10e6",
                                   "-D", "radio.tx_enabled=true", "-D", "radio.tx_attenuation_db=10"};
@@ -259,13 +307,13 @@ TEST_CASE("sa radio tap: with the real radio-controller (simulated AD9361, TX1 -
     started.get_future().get();
 
     sa::RadioTapOptions o;
-    o.tap = app.rx2_endpoint();
+    o.tap = app.tap_endpoint();
     o.control = app.control_endpoint();
     sa::Engine e([o] { return sa::make_radio_tap_backend(o); }, {});
     sa::Settings s;
     s.update_hz = 30;
     e.start(s);
-    // RX2 on by the analyzer; the 2412 MHz carrier is in the band
+    // RX2 shared by radio-controller; the 2412 MHz carrier is in the band
     auto f = wait_frame(e, [](const sa::Frame& f) { return f.plan.fixed && f.seq >= 2; }, 15s);
     REQUIRE(f);
     CHECK(f->start_hz == doctest::Approx(2406e6));

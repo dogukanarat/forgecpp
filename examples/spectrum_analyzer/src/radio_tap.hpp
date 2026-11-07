@@ -1,12 +1,13 @@
 #pragma once
-// RX2 of an AD9361/AD9363 shared with radio-controller.
+// An RX channel shared by radio-controller ([radio].tap_rx).
 //
-// radio-controller owns the transceiver: RX1/TX1, the RX LO and the sample
-// rate (both RX channels share them and arrive in one DMA buffer). It
-// publishes contiguous RX2 blocks on its [zmq].rx2 socket; this backend reads
-// them and sets the RX2 gain through radio-controller's control socket.
-// The analyzer cannot retune: its display window stays inside the band
-// radio-controller is tuned to (see FixedTuning).
+// radio-controller owns the transceiver: the RX LO and the sample rate (both
+// RX channels of an AD9361 share them and arrive in one DMA buffer). It
+// publishes blocks of the channels it shares on its [zmq].tap socket (topics
+// "rx1", "rx2"); this backend reads one of them and, if allowed, sets that
+// channel's gain through radio-controller's control socket. The analyzer
+// cannot retune: its display window stays inside the band radio-controller is
+// tuned to (see FixedTuning).
 
 #include "backend.hpp"
 
@@ -39,13 +40,14 @@ public:
 };
 
 struct RadioTapOptions {
-    std::string tap = "tcp://127.0.0.1:5558";      ///< radio-controller [zmq].rx2
+    std::string tap = "tcp://127.0.0.1:5558";      ///< radio-controller [zmq].tap
     std::string control = "tcp://127.0.0.1:5557";  ///< radio-controller [zmq].control
     std::chrono::milliseconds timeout{3000};       ///< no block for this long = device error
-    bool enable_rx2 = true;                        ///< turn rx2_enabled on in radio-controller
+    unsigned channel = 2;                          ///< RX channel to listen to (1 or 2)
+    bool control_gain = true;                      ///< set that channel's gain (else leave it alone)
 };
 
-/// Throws radio::DeviceError when radio-controller cannot be reached or has no RX2.
+/// Throws radio::DeviceError when radio-controller cannot be reached or does not share the channel.
 std::unique_ptr<radio::Backend> make_radio_tap_backend(const RadioTapOptions& options);
 
 }  // namespace sa

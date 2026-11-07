@@ -47,13 +47,16 @@ private:
 
     // marker commands
     MarkerSettings& active();
+    void require_gain_control() const;
     void peak_search();
     void next_peak(int direction);  ///< 0 = next lower, -1 = left, +1 = right
 
     std::string backend_kind_ = "sim";
     std::string uri_;
     std::string cli_backend_, cli_uri_;
-    RadioTapOptions tap_;           ///< backend "radio": RX2 of radio-controller
+    RadioTapOptions tap_;           ///< backend "radio": a channel radio-controller shares
+    unsigned channel_ = 1;          ///< RX channel listened to (1 or 2)
+    bool control_gain_ = true;      ///< the analyzer sets that channel's gain
     unsigned timeout_ms_ = 2000;
     std::string state_file_;
     HardwareLimits limits_;
