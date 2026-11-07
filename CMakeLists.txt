@@ -307,3 +307,15 @@ endif()
 install(FILES LICENSE README.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 install(FILES third_party/thread-pool/LICENSE.txt
         DESTINATION ${CMAKE_INSTALL_DOCDIR}/licenses RENAME BS_thread_pool-LICENSE.txt)
+
+# API reference (Doxygen): cmake --build build --target forgecpp_docs -> build/docs/html
+find_package(Doxygen QUIET)
+if(DOXYGEN_FOUND)
+    set(FORGE_DOCS_OUT "${PROJECT_BINARY_DIR}/docs")
+    configure_file(docs/Doxyfile.in "${PROJECT_BINARY_DIR}/Doxyfile" @ONLY)
+    add_custom_target(forgecpp_docs
+        COMMAND ${DOXYGEN_EXECUTABLE} "${PROJECT_BINARY_DIR}/Doxyfile"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+        COMMENT "API reference -> ${FORGE_DOCS_OUT}/html/index.html"
+        VERBATIM)
+endif()

@@ -1,0 +1,36 @@
+# API reference of forgecpp: cmake --build build --target forgecpp_docs
+PROJECT_NAME           = forgecpp
+PROJECT_NUMBER         = @PROJECT_VERSION@
+PROJECT_BRIEF          = "Batteries-included C++17 framework for Linux daemons"
+OUTPUT_DIRECTORY       = @FORGE_DOCS_OUT@
+INPUT                  = @PROJECT_SOURCE_DIR@/docs/api-mainpage.md \
+                         @PROJECT_SOURCE_DIR@/include/forge \
+                         @PROJECT_SOURCE_DIR@/docs/threading.md \
+                         @PROJECT_SOURCE_DIR@/docs/ROADMAP.md \
+                         @PROJECT_SOURCE_DIR@/docs/tutorials
+FILE_PATTERNS          = *.hpp *.md
+RECURSIVE              = YES
+EXCLUDE_SYMBOLS        = forge::detail::* httplib::* nlohmann::*
+USE_MDFILE_AS_MAINPAGE = @PROJECT_SOURCE_DIR@/docs/api-mainpage.md
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+HIDE_UNDOC_RELATIONS   = YES
+JAVADOC_AUTOBRIEF      = YES
+MARKDOWN_SUPPORT       = YES
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+STRIP_FROM_PATH        = @PROJECT_SOURCE_DIR@/include
+STRIP_FROM_INC_PATH    = @PROJECT_SOURCE_DIR@/include
+INCLUDE_PATH           = @PROJECT_SOURCE_DIR@/include
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+PREDEFINED             = FORGE_APP_INSTALLED_CONFIG=\"\"
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_TREEVIEW      = YES
+HTML_COLORSTYLE        = LIGHT
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_LOGFILE           = @FORGE_DOCS_OUT@/warnings.txt
+HAVE_DOT               = NO

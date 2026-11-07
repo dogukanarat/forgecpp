@@ -173,6 +173,11 @@ Without CMake: `pkg-config --cflags --libs forgecpp`.
 
 ## Framework tour
 
+New to forgecpp? The [tutorials](docs/tutorials/README.md) build a pump
+controller step by step (its code is `examples/pump`, compiled and tested).
+API reference: `docs/build-api.sh` (or `cmake --build build --target
+forgecpp_docs`), then `build/docs/html/index.html`.
+
 Threads in one sentence: the application's state belongs to its main loop;
 other threads reach it with `invoke()` / `post()`, heavy work leaves it with
 `background()`. Where each callback runs and which call to use:

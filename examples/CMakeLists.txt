@@ -26,11 +26,22 @@ forge_add_app(thermostat SOURCES thermostat/main.cpp WEB thermostat/web
     RESTART always MAX_RESTARTS 0                  # always back, however often
     NO_INSTALL)
 
+# pump: the application of the tutorials (docs/tutorials), with its tests.
+forge_add_app(pump SOURCES pump/main.cpp pump/pump.cpp
+    CONFIG pump/pump.toml
+    DESCRIPTION "forgecpp tutorial pump"
+    RESTART on-failure MAX_RESTARTS 3 WATCHDOG 30
+    NO_INSTALL)
+if(BUILD_TESTING OR FORGECPP_BUILD_TESTS)
+    forge_add_test(pump_tests SOURCES pump/test_pump.cpp pump/pump.cpp)
+    target_include_directories(pump_tests PRIVATE pump)
+endif()
+
 add_subdirectory(radio-controller)
 add_subdirectory(spectrum-analyzer)
 
 # Run the examples from the build dir with their config next to them.
-foreach(cfg sensor-service/sensor-service.toml pipeline/pipeline.toml thermostat/thermostat.toml)
+foreach(cfg sensor-service/sensor-service.toml pipeline/pipeline.toml thermostat/thermostat.toml pump/pump.toml)
     get_filename_component(_name "${cfg}" NAME)
     configure_file(${cfg} "${CMAKE_CURRENT_BINARY_DIR}/${_name}" COPYONLY)
 endforeach()

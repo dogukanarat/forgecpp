@@ -171,6 +171,20 @@ jobs:
         run: ./install.sh --uninstall --prefix "$HOME/forgecpp" && test -z "$(find "$HOME/forgecpp" -type f)"
 
   # Everything (the bundled libraries too) built with sanitizers, all tests run.
+  # API reference (Doxygen) of include/forge, the tutorials and the threading guide.
+  docs:
+    name: API reference
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y doxygen
+      - run: docs/build-api.sh "$PWD/build/docs"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forgecpp-api-reference
+          path: build/docs/html
+          retention-days: 14
+
   # Zynq-7000 (Z7020: Cortex-A9, armhf): cross build of everything with a host protoc, then
   # the ARM binaries run under QEMU user emulation.
   cross-armhf:
