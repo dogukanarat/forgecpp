@@ -21,7 +21,9 @@ jobs:
         with:
           submodules: recursive
       - name: Dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libssl-dev zlib1g-dev libxml2-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libssl-dev zlib1g-dev libxml2-dev python3-zmq python3-protobuf python3-numpy
       - name: Install
         env:
           CXX: ${{ matrix.cxx }}
@@ -67,6 +69,30 @@ jobs:
           for _ in $(seq 150); do curl -fs http://127.0.0.1:18109/api/frame -o /tmp/sa.json && grep -q '"fixed":true' /tmp/sa.json && break; sleep 0.1; done
           grep -q '"fixed":true' /tmp/sa.json
           curl -fs http://127.0.0.1:18108/forge/api/controls/tap_channels | grep -q '"value":\[2\]'
+          # forge.v1: forgectl over ZeroMQ and HTTP, the audit trail, streams, telnet, Python clients
+          ctl="$HOME/forgecpp/bin/forgectl"
+          "$ctl" -e tcp://127.0.0.1:5557 info | grep -q radio-controller
+          "$ctl" -e tcp://127.0.0.1:5557 set rx_lo_mhz 2412 | grep -q 2412
+          "$ctl" -e tcp://127.0.0.1:5557 audit | grep -q rx_lo_mhz
+          "$ctl" -e http://127.0.0.1:18108 get rx_lo_mhz | grep -q 2412
+          "$ctl" -e tcp://127.0.0.1:5567 health | grep -q STATE_OK
+          "$ctl" -e tcp://127.0.0.1:5567 streams | grep -q sa.v1.Spectrum
+          curl -fs http://127.0.0.1:18109/metrics | grep -q '^sa_sweeps'
+          python3 - <<'EOF'
+          import socket, time
+          s = socket.create_connection(("127.0.0.1", 2323), timeout=5)
+          time.sleep(0.5); s.sendall(b"status\r\n"); time.sleep(0.5); s.sendall(b"exit\r\n")
+          out = b""
+          try:
+              while chunk := s.recv(4096): out += chunk
+          except socket.timeout:
+              pass
+          assert b"uptime" in out, out
+          EOF
+          export FORGE_PYTHONPATH="$HOME/forgecpp/share/forgecpp/python:$PWD/radio_controller/ad936x/python:$PWD/spectrum_analyzer/python"
+          export PYTHONDONTWRITEBYTECODE=1
+          python3 ../../../examples/radio_controller/clients/rx_capture.py tcp://127.0.0.1:5555 --seconds 0.5 | grep -q "blocks"
+          python3 ../../../examples/spectrum_analyzer/clients/spectrum_watch.py tcp://127.0.0.1:5566 --count 2 | grep -q fixed
           kill -TERM $pid $rc
           wait $pid
           wait $rc

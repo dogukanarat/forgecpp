@@ -3,20 +3,31 @@
 `recipes-support/forgecpp/forgecpp_git.bb` builds forgecpp and all bundled
 libraries with the Yocto toolchain via `install.sh`.
 
-1. Copy `recipes-support/forgecpp` into one of your layers.
+1. Copy `recipes-support/forgecpp` (both recipes: `forgecpp` and
+   `forgecpp-protoc-native`) into one of your layers.
 2. Pin `SRCREV` to a commit or tag (the recipe defaults to `${AUTOREV}`).
 3. Add the runtime library to your image and the SDK:
 
    ```
-   IMAGE_INSTALL:append = " forgecpp"
+   IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl"
    TOOLCHAIN_TARGET_TASK:append = " forgecpp-dev forgecpp-staticdev"
    ```
+
+Packages: `forgecpp` (libraries), `forgecpp-forgectl` (forge.v1 command line
+client on the target), `forgecpp-python` (forge.v1 Python modules; needs
+python3-protobuf and python3-pyzmq from meta-python), `forgecpp-tools`
+(`forgecpp-new`), `forgecpp-iio-tools`, `forgecpp-protoc` (protoc for the
+target, rarely needed), `forgecpp-dev` (headers, CMake packages, `.proto` files).
 
 Extra `install.sh` options can be passed with `FORGECPP_INSTALL_ARGS`,
 e.g. `FORGECPP_INSTALL_ARGS = "--without-ssl"` or `"--static"`.
 
-The recipe builds ZeroMQ (forgecpp::zmq) and libiio as well; it needs
-`libxml2` for libiio's network/XML backends. The libiio command line tools
+The recipe builds ZeroMQ, protobuf and libiio as well; it needs `libxml2`
+for libiio's network/XML backends. `protoc` has to run on the build machine
+and match the target's libprotobuf exactly, so `forgecpp-protoc-native`
+builds it from the same bundled sources (installed as
+`${STAGING_BINDIR_NATIVE}/forgecpp-protoc`); forgecpp and every application
+with its own `.proto` files use it (`-DFORGE_PROTOC=...`, see below). The libiio command line tools
 (`iio_info`, `iio_attr`, ...) are packaged separately in `forgecpp-iio-tools`
 because they are GPL-2.0-or-later.
 
@@ -76,8 +87,11 @@ SRC_URI = "git://git.example.com/pump-ctl.git;protocol=https;branch=main"
 SRCREV = "<commit>"
 S = "${WORKDIR}/git"
 
-DEPENDS = "forgecpp"
+DEPENDS = "forgecpp forgecpp-protoc-native"
 inherit cmake systemd
+
+# the application's .proto files (forge_add_proto) are compiled with this protoc
+EXTRA_OECMAKE += "-DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/forgecpp-protoc"
 
 SYSTEMD_SERVICE:${PN} = "pump-ctl.service"
 ```
@@ -130,5 +144,13 @@ has not yet been run in a full bitbake build.
 - **Init system:** systemd is supported out of the box. With sysvinit the
   daemons run fine (systemd notifications are no-ops), but you have to provide
   the init script.
-- **HTTPS:** the HTTP server is plain HTTP. Configure `[http.auth]` on
+- **HTTPS:** the HTTP server is plain HTTP. Configure `[auth]` users on
   network-facing devices and terminate TLS in a reverse proxy if needed.
+- **Telnet and forge.v1 endpoints are not encrypted.** The example
+  configurations open telnet (`[console].telnet`) and the `[forge]` endpoints
+  on all interfaces for the lab. On a fielded device configure `[auth]`
+  (telnet then asks for a login and every change needs a role), or bind them
+  to `127.0.0.1` / a management interface.
+- **protobuf from meta-oe:** do not mix it with forgecpp's bundled protobuf in
+  one image (same files); applications must use `forgecpp-protoc`, not
+  `protobuf-native` (generated code is tied to the libprotobuf version).

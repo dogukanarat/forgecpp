@@ -1,6 +1,7 @@
 SUMMARY = "AD936x radio controller daemon"
 DESCRIPTION = "Controls an AD936x (AD9364, AD9361/AD9363) transceiver through libiio and streams IQ \
-samples over ZeroMQ. Web UI, console and ZeroMQ control share the same controls. \
+samples as forge.v1 protobuf streams over ZeroMQ. Web UI, forgectl, console and telnet \
+share the same controls. \
 Built on forgecpp."
 HOMEPAGE = "https://github.com/dogukanarat/forgecpp"
 SECTION = "network"
@@ -14,14 +15,16 @@ PV = "1.0.0+git${SRCPV}"
 
 S = "${WORKDIR}/git/examples/radio_controller"
 
-# forgecpp provides forgecpp::zmq and libiio (built from its submodules).
-DEPENDS = "forgecpp"
+# forgecpp provides ZeroMQ, protobuf and libiio (built from its submodules);
+# forgecpp-protoc-native generates the application's messages (radio.v1, sa.v1).
+DEPENDS = "forgecpp forgecpp-protoc-native"
 
 inherit cmake systemd
 
 EXTRA_OECMAKE = " \
     -DBUILD_TESTING=OFF \
     -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir} \
+    -DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/forgecpp-protoc \
 "
 
 # On the board the radio is the local IIO device; keep runtime changes across reboots.
@@ -46,7 +49,8 @@ do_install:append() {
 SYSTEMD_SERVICE:${PN} = "radio-controller.service"
 CONFFILES:${PN} = "${sysconfdir}/radio-controller/radio-controller.toml"
 
-# Python helpers (rx_capture.py, tx_tone.py, radioctl.py) need pyzmq and numpy (meta-python).
+# Python helpers (rx_capture.py, tx_tone.py) and the radio.v1 modules
+# need pyzmq, protobuf and numpy (meta-python).
 PACKAGES =+ "${PN}-clients"
-FILES:${PN}-clients = "${datadir}/radio-controller/clients"
-RDEPENDS:${PN}-clients = "python3-core python3-json python3-pyzmq python3-numpy"
+FILES:${PN}-clients = "${datadir}/radio-controller/clients ${datadir}/radio-controller/python"
+RDEPENDS:${PN}-clients = "python3-core python3-pyzmq python3-protobuf python3-numpy forgecpp-python"

@@ -1,12 +1,13 @@
 SUMMARY = "forgecpp - batteries-included C++17 framework for Linux daemons"
 DESCRIPTION = "spdlog, CLI11, replxx, BS::thread_pool, moodycamel::ConcurrentQueue, \
-nlohmann/json, toml++, cpp-httplib and doctest, bundled and glued together into \
-a small application framework."
+nlohmann/json, toml++, cpp-httplib, doctest, ZeroMQ and protobuf, bundled and glued \
+together into an application framework: web control panel, forge.v1 messages, \
+forgectl, telnet console, metrics, tracing, audit trail."
 HOMEPAGE = "https://github.com/dogukanarat/forgecpp"
 SECTION = "libs"
 # forgecpp (MIT) + bundled: spdlog, nlohmann/json, toml++, cpp-httplib, doctest,
 # BS::thread_pool (MIT), CLI11 (BSD-3-Clause), replxx (BSD-3-Clause),
-# moodycamel::ConcurrentQueue (BSD-2-Clause or BSL-1.0).
+# moodycamel::ConcurrentQueue (BSD-2-Clause or BSL-1.0), protobuf (BSD-3-Clause).
 # libzmq: MPL-2.0. libiio: LGPL-2.1-or-later, its command line tools GPL-2.0-or-later
 # (packaged separately in ${PN}-iio-tools).
 LICENSE = "MIT & BSD-3-Clause & BSD-2-Clause & MPL-2.0 & LGPL-2.1-or-later & GPL-2.0-or-later"
@@ -16,6 +17,7 @@ LIC_FILES_CHKSUM = " \
     file://LICENSE;md5=d651bd6255f4ea85c3b1b170b8dd19c6 \
     file://third_party/CLI11/LICENSE;md5=744e78b25a90f01b35b087d9fb985ed4 \
     file://third_party/libzmq/LICENSE;md5=9741c346eef56131163e13b9db1241b3 \
+    file://third_party/protobuf/LICENSE;md5=37b5762e07f0af8c74ce80a8bda4266b \
     file://third_party/libiio/COPYING.txt;md5=7c13b3376cea0ce68d2d2da0a1b3a72c \
     file://third_party/libiio/COPYING_GPL.txt;md5=b234ee4d69f5fce4486a80fdaf4a4263 \
 "
@@ -27,7 +29,9 @@ PV = "0.2.0+git${SRCPV}"
 
 S = "${WORKDIR}/git"
 
-DEPENDS = "openssl zlib libxml2"
+# protoc runs on the build machine: forgecpp-protoc-native is built from the
+# same protobuf sources (generated code must match libprotobuf exactly).
+DEPENDS = "openssl zlib libxml2 forgecpp-protoc-native"
 
 inherit cmake pkgconfig
 
@@ -51,6 +55,7 @@ do_compile() {
         --no-rpath \
         --no-sudo \
         --quiet \
+        --protoc ${STAGING_BINDIR_NATIVE}/forgecpp-protoc \
         ${FORGECPP_INSTALL_ARGS}
 }
 
@@ -59,11 +64,21 @@ do_install() {
     cp -R --no-dereference --preserve=mode,links ${B}/stage/. ${D}/
 }
 
-# Headers, CMake packages, pkg-config files and the static test helper are
-# development files; libforgecpp, libspdlog and libreplxx are runtime.
-PACKAGES =+ "${PN}-tools ${PN}-iio-tools"
+# Headers, CMake packages, pkg-config files, .proto files and the static test
+# helper are development files; libforgecpp, libprotobuf, libzmq, libspdlog and
+# libreplxx are runtime.
+#   forgecpp-forgectl  forge.v1 command line client (forgectl) for the target
+#   forgecpp-python    forge.v1 Python modules (share/forgecpp/python)
+#   forgecpp-tools     forgecpp-new (scaffolder)
+#   forgecpp-protoc    protoc and libprotoc for the target (rarely needed)
+PACKAGES =+ "${PN}-forgectl ${PN}-python ${PN}-tools ${PN}-iio-tools ${PN}-protoc"
+FILES:${PN}-forgectl = "${bindir}/forgectl"
+FILES:${PN}-python = "${datadir}/forgecpp/python"
+RDEPENDS:${PN}-python = "python3-core python3-protobuf python3-pyzmq"
 FILES:${PN}-tools = "${bindir}/forgecpp-new"
 FILES:${PN}-iio-tools = "${bindir}/iio_*"
+FILES:${PN}-protoc = "${bindir}/protoc* ${libdir}/libprotoc${SOLIBS}"
 RDEPENDS:${PN}-tools = "bash"
-FILES:${PN}-dev += "${datadir}/cmake ${libdir}/cmake ${datadir}/pkgconfig ${datadir}/licenses"
+FILES:${PN}-dev += "${datadir}/cmake ${libdir}/cmake ${datadir}/pkgconfig ${datadir}/licenses \
+                    ${datadir}/forgecpp/proto ${datadir}/forgecpp/install_manifest.txt"
 FILES:${PN}-staticdev += "${libdir}/libforgecpp_testing.a"
