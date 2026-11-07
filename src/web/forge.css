@@ -149,8 +149,11 @@ body.forge {
   border-top: 1px solid var(--forge-border);
 }
 .forge-card > h2 + .forge-actions { border-top: 0; padding-top: 2px; }
-.forge-control { display: flex; align-items: center; gap: 8px; flex: none; }
+.forge-control { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; }
+.forge-row > .forge-label { flex: 0 0 auto; max-width: 60%; }
+/* short values stay on one line; long read-only texts wrap instead of covering the label */
 .forge-value { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 15px; white-space: nowrap; }
+.forge-row .forge-value { white-space: normal; overflow-wrap: anywhere; text-align: right; }
 .forge-unit { color: var(--forge-muted); font-size: 12px; }
 
 /* inputs ------------------------------------------------------------------ */
@@ -182,6 +185,7 @@ body.forge {
   border-radius: 6px;
   padding: 6px 14px;
 }
+a.forge-btn { display: inline-block; text-decoration: none; font-size: 14px; }
 .forge-btn:hover { filter: brightness(0.96); }
 .forge-btn:disabled { opacity: 0.55; cursor: progress; }
 .forge-btn.primary { background: var(--forge-accent); border-color: var(--forge-accent); color: var(--forge-accent-text); }

@@ -25,6 +25,9 @@
 #include <iostream>
 #include <thread>
 
+#include <pwd.h>
+#include <unistd.h>
+
 using forge::json;
 namespace v1 = forge::v1;
 namespace proto = forge::proto;
@@ -78,7 +81,11 @@ private:
         char host[128] = {};
         ::gethostname(host, sizeof(host) - 1);
         const char* user = std::getenv("USER");
-        return std::string("forgectl:") + (user ? user : "?") + "@" + host;
+        std::string name = user && *user ? user : "";
+        if (name.empty()) {
+            if (const passwd* pw = ::getpwuid(::getuid())) name = pw->pw_name;  // services, containers
+        }
+        return "forgectl:" + (name.empty() ? std::to_string(::getuid()) : name) + "@" + host;
     }
     const Target& t_;
     std::unique_ptr<forge::zmq::Client> zmq_;
