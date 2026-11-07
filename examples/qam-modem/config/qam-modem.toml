@@ -27,10 +27,15 @@ sps = 4
 rolloff = 0.35
 tx_level_dbfs = -12         # RMS; 16QAM + RRC peaks ~8 dB higher
 detect_threshold = 0.6
+equalizer = true            # decision feedback equalizer for echoes (multipath); false: less CPU
+eq_ff = 8                   # feed-forward taps, half a symbol apart (4 symbols)
+eq_lead = 3                 # ... of them ahead of the symbol
+eq_fb = 3                   # feedback taps (symbols): echoes up to ~4 us at 750 ksym/s
 max_payload = 1500          # UDP payloads up to this size; larger ones are dropped (counted)
 block_samples = 4096        # TX block to radio-controller
 lead_ms = 25                # TX runs this far ahead of RX
 queue_packets = 64
+max_rx_lag_ms = 200         # RX older than this is skipped: the receiver catches up instead of lagging
 
 udp_listen = "0.0.0.0:6000" # send packets here to put them on the air
 udp_reply = ""              # received packets go here; "" = back to the last sender (echo)

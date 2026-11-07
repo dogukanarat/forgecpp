@@ -49,13 +49,34 @@ Receiver, per packet ([src/qam.cpp](src/qam.cpp)):
    correlation is the frequency offset: ± 11.7 kHz can be corrected, i.e. ± 5.5 ppm at 2.1 GHz.
 2. **Timing**: correlation with the known preamble waveform over ± 24 samples,
    a parabola through the peak gives the sample timing to a fraction of a sample.
-3. **Matched filter at the symbol instants**: the RRC taps are recomputed for
+3. **Matched filter every half symbol**: the RRC taps are recomputed for
    the packet's fractional delay, so no interpolator is needed.
-4. **Gain and phase** from the preamble symbols, then a **decision-directed
-   phase loop** (2nd order) through the header and payload.
-5. Header CRC16 → length; payload 16QAM → descrambler → **CRC32**. Only
+4. **Decision feedback equalizer** (8 feed-forward taps half a symbol apart,
+   3 of them ahead; 3 feedback taps): trained by least squares on the 64
+   known preamble symbols, trained again on 88 once the header's CRC holds.
+   It takes out gain, phase and echoes at once; echoes up to about 4 µs
+   (3 symbols) are removed. The loading of the least-squares problem is
+   relative to each input's scale, so it works the same at any signal level.
+5. **Tracking through the packet**, all decision directed: a phase loop
+   (2nd order: phase and the frequency error left after detection), a gain
+   loop (fading, AGC steps) and the equalizer taps (normalized LMS, every 4th
+   symbol).
+6. Header CRC16 → length; payload 16QAM → descrambler → **CRC32**. Only
    packets with a good CRC are delivered: a weak link loses packets but never
    passes on corrupted ones.
+
+What the equalizer and the tracking buy (`tests/test_qam.cpp`,
+[channel-emulator](../channel-emulator/README.md) presets):
+
+| Channel | Without | With |
+|---|---|---|
+| one echo at −3 dB, 0.5 / 1 / 2 µs later | 0/30 packets | 30/30, EVM < −22 dB |
+| urban (echoes up to 2.7 µs) | 0/60 | 60/60, −27.5 dB |
+| ±40 % gain at 100 Hz and 300 Hz frequency error (no gain loop) | 28/40 | 40/40 |
+| −10 dBc interfering tone, pulsed | 46/60 | 60/60 |
+| clean, through radio-controller's simulator | −35.6 dB EVM | −40.6 dB |
+
+`equalizer = false` keeps gain and phase tracking only (less CPU).
 
 The sample clock must be steady within a packet: true here (TX and RX of one
 AD9361 share the clock). Two separate boards would need a timing loop too.
@@ -169,6 +190,8 @@ The ones you may change:
 | `lead_ms` | 25 | how far TX runs ahead of RX: lower = less latency, more risk of underflows |
 | `radio_buffer` | 16384 | radio-controller's buffer size (5.5 ms): smaller = less latency, more CPU |
 | `configure_radio` | true | false: leave radio-controller's settings alone |
+| `equalizer`, `eq_ff`, `eq_lead`, `eq_fb` | true, 8, 3, 3 | decision feedback equalizer and its size |
+| `max_rx_lag_ms` | 200 | older RX is skipped, the receiver catches up |
 
 ## Threads and CPU
 
@@ -179,10 +202,13 @@ The ones you may change:
 | ZeroMQ receiver | demodulates every RX block and sends the packets out by UDP |
 | main loop | controls, statistics, radio set-up (in the background) |
 
-One second of signal (3 M samples) costs about 60 ms to modulate and 65 ms to
-demodulate on a PC core (release build); expect around ten times that on a
-Zynq-7000 Cortex-A9, i.e. well under one core each at 3 MSPS. Put the `tx`
-thread on its own core with `[threads.tx]` if the board is busy.
+One second of signal (3 M samples, packets back to back) costs about 50 ms to
+modulate and 70-80 ms to demodulate on a PC core (release build; the
+equalizer adds about half). On a Zynq-7000 Cortex-A9 expect many times that;
+it is not measured yet. If the receiver falls behind real time it skips RX
+buffers older than `max_rx_lag_ms` (counted as **Skipped RX buffers**, alarm
+`modem.rx_late`) instead of building up latency; then set `equalizer = false`
+or put the `tx` thread on its own core with `[threads.tx]`.
 
 ## Files
 
@@ -192,7 +218,8 @@ src/modem.hpp/.cpp    the forgecpp application: UDP, radio-controller, controls,
 web/                  page with the constellation, rates and counters
 clients/echo.py       traffic generator and checker for the remote PC (standard library only)
 tests/test_qam.cpp    the DSP through an impaired channel: gain, phase, ±7 kHz frequency error,
-                      fractional delay, noise, random block sizes; low SNR never delivers bad data
+                      fractional delay, noise, random block sizes, echoes, gain changing in a
+                      packet; low SNR never delivers bad data
 tests/test_modem.cpp  end to end: UDP -> modem -> radio-controller (simulated, splitter) -> modem
                       -> UDP at 2.3 Mbit/s, and the test mode
 ```

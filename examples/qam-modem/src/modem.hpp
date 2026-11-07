@@ -120,6 +120,10 @@ private:
     std::atomic<std::uint64_t> queue_dropped_{0}, oversize_{0}, rx_gaps_{0}, tx_busy_{0}, test_lost_{0},
         test_bad_{0}, rx_blocks_{0}, tx_blocks_{0};
     std::atomic<std::int64_t> last_rx_buffer_{-1};
+    std::atomic<std::uint64_t> rx_late_{0};
+    std::uint64_t last_rx_late_ = 0;  // main loop
+    std::int64_t max_lag_ns_ = 200000000;
+    bool skipping_ = false;           // receiver thread
     std::atomic<std::int32_t> test_expect_{-1};
     std::atomic<float> evm_db_{0}, cfo_hz_{0}, level_db_{-200};
     std::atomic<double> rx_rate_hz_{0};

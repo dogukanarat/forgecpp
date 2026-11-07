@@ -343,18 +343,72 @@ void Demodulator::push(const std::int16_t* iq, std::size_t n, const OnPacket& on
     trim();
 }
 
+namespace {
+
+/// Solve (A^H A + loading) x = A^H b by Gaussian elimination (small systems).
+std::vector<std::complex<double>> least_squares(const std::vector<std::vector<std::complex<double>>>& rows,
+                                                const std::vector<std::complex<double>>& b) {
+    const std::size_t n = rows.empty() ? 0 : rows[0].size();
+    std::vector<std::vector<std::complex<double>>> m(n, std::vector<std::complex<double>>(n + 1));
+    for (std::size_t k = 0; k < rows.size(); ++k) {
+        const auto& a = rows[k];
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto ai = std::conj(a[i]);
+            for (std::size_t j = 0; j < n; ++j) m[i][j] += ai * a[j];
+            m[i][n] += ai * b[k];
+        }
+    }
+    // Diagonal loading relative to each unknown's own scale: the feed-forward
+    // inputs are as small as the received signal, the feedback ones are symbols.
+    for (std::size_t i = 0; i < n; ++i) m[i][i] += 1e-3 * m[i][i].real() + 1e-12;
+    for (std::size_t c = 0; c < n; ++c) {
+        std::size_t piv = c;
+        for (std::size_t i = c + 1; i < n; ++i) {
+            if (std::abs(m[i][c]) > std::abs(m[piv][c])) piv = i;
+        }
+        std::swap(m[c], m[piv]);
+        if (std::abs(m[c][c]) < 1e-30) continue;
+        for (std::size_t i = c + 1; i < n; ++i) {
+            const auto f = m[i][c] / m[c][c];
+            for (std::size_t j = c; j <= n; ++j) m[i][j] -= f * m[c][j];
+        }
+    }
+    std::vector<std::complex<double>> x(n);
+    for (std::size_t i = n; i-- > 0;) {
+        auto acc = m[i][n];
+        for (std::size_t j = i + 1; j < n; ++j) acc -= m[i][j] * x[j];
+        x[i] = std::abs(m[i][i]) < 1e-30 ? 0.0 : acc / m[i][i];
+    }
+    return x;
+}
+
+}  // namespace
+
 bool Demodulator::try_decode(const OnPacket& on_packet) {
     const unsigned sps = p_.sps;
+    // Equalizer geometry: os samples per symbol (T/2 when sps is even), nf
+    // feed-forward taps of which `lead` look ahead, nb feedback taps (symbols).
+    const unsigned os = (p_.equalizer && sps % 2 == 0) ? 2u : 1u;
+    const unsigned hstep = sps / os;
+    const int nf = p_.equalizer ? static_cast<int>(std::max(1u, p_.eq_ff)) : 1;
+    const int lead = p_.equalizer ? static_cast<int>(std::min(p_.eq_lead, p_.eq_ff - 1)) : 0;
+    const int nb = p_.equalizer ? static_cast<int>(p_.eq_fb) : 0;
+    const int m_first = -(nf - 1 - lead);  // earliest equalizer sample, relative to symbol 0
+    const std::size_t margin = static_cast<std::size_t>(-m_first) * hstep + 2;  // room before the packet
+    const std::size_t ahead = static_cast<std::size_t>(lead) * hstep;           // and after a symbol
+
     const int W = static_cast<int>(6 * sps);  // timing search, samples either side
     // Where the preamble waveform starts, roughly: the S&C metric has a plateau
     // about 2 * D wide that starts there (the pulse tails spoil its edges).
     const std::int64_t guess = best_n_ - static_cast<std::int64_t>(D_);
-    const std::int64_t z0 = guess - W - 2;  // first sample used
+    const std::int64_t z0 = guess - W - 2 - static_cast<std::int64_t>(margin);  // first sample used
     const double w = std::arg(best_P_) / L_;  // rad / sample
-    const std::size_t hdr_end = (kPreambleSymbols + kHeaderSymbols) * sps + taps_.size() + 2 * W + 8;
-    if (z0 < base_) {  // the start was trimmed (cannot happen in practice): give up on it
+    const std::size_t hdr_end =
+        margin + 2 * W + 8 + (kPreambleSymbols + kHeaderSymbols) * sps + ahead + taps_.size() + 2;
+    if (z0 < base_) {  // the start was trimmed (a packet at the very start of the stream): give up on it
         state_ = State::search;
         sums_ = false;
+        pos_ = std::max(pos_, best_n_ + static_cast<std::int64_t>(L_));
         return true;
     }
     if (z0 + static_cast<std::int64_t>(hdr_end) > end()) return false;
@@ -390,8 +444,9 @@ bool Demodulator::try_decode(const OnPacket& on_packet) {
     for (int d = 0; d <= 2 * W + 2; ++d) {
         // sum conj(wave) * z, written out (std::complex multiplication checks for NaNs)
         float re = 0, im = 0;
+        const cf* in = z.data() + margin + d;
         for (std::size_t m = 0; m < wave_.size(); ++m) {
-            const cf a = wave_[m], b = z[d + m];
+            const cf a = wave_[m], b = in[m];
             re += a.real() * b.real() + a.imag() * b.imag();
             im += a.real() * b.imag() - a.imag() * b.real();
         }
@@ -407,7 +462,7 @@ bool Demodulator::try_decode(const OnPacket& on_packet) {
         const double den = a - 2 * b + c;
         if (den < 0) frac = std::clamp(0.5 * (a - c) / den, -0.5, 0.5);
     }
-    const double start = best_d + frac;  // packet waveform start in z, samples
+    const double start = static_cast<double>(margin) + best_d + frac;  // packet waveform start in z, samples
 
     // Matched filter at a fractional instant: taps shifted by the packet's fraction.
     const double t0 = start + D_;  // centre of symbol 0
@@ -418,21 +473,30 @@ bool Demodulator::try_decode(const OnPacket& on_packet) {
     for (std::size_t q = 0; q < hf.size(); ++q) {
         hf[q] = static_cast<float>(norm * rrc((static_cast<double>(q) - D_ - f) / sps, p_.rolloff));
     }
-    auto symbol = [&](std::size_t k) {
-        const std::int64_t c = i0 + static_cast<std::int64_t>(k * sps) - static_cast<std::int64_t>(D_);
-        const cf* in = z.data() + c;
-        float re = 0, im = 0;
-        for (std::size_t q = 0; q < hf.size(); ++q) {
-            re += hf[q] * in[q].real();
-            im += hf[q] * in[q].imag();
+    // Matched filter outputs every hstep samples: r[m] at symbol 0 + m * hstep (m >= m_first).
+    std::vector<cf> r;
+    auto r_upto = [&](int m_last) {
+        for (int m = m_first + static_cast<int>(r.size()); m <= m_last; ++m) {
+            const std::int64_t c = i0 + static_cast<std::int64_t>(m) * hstep - static_cast<std::int64_t>(D_);
+            const cf* in = z.data() + c;
+            float re = 0, im = 0;
+            for (std::size_t q = 0; q < hf.size(); ++q) {
+                re += hf[q] * in[q].real();
+                im += hf[q] * in[q].imag();
+            }
+            r.emplace_back(re, im);
         }
-        return cf(re, im);
     };
+    auto rv = [&](int m) { return r[static_cast<std::size_t>(m - m_first)]; };
+    const int pre_hdr = static_cast<int>(kPreambleSymbols + kHeaderSymbols);
+    r_upto(static_cast<int>(os) * (pre_hdr - 1) + lead);
 
-    // Gain and phase from the preamble symbols.
+    // Level: the plain symbols correlated with the preamble.
     const auto& pre = preamble();
     std::complex<double> g{};
-    for (std::size_t k = 0; k < pre.size(); ++k) g += std::complex<double>(symbol(k)) * std::conj(std::complex<double>(pre[k]));
+    for (std::size_t k = 0; k < pre.size(); ++k) {
+        g += std::complex<double>(rv(static_cast<int>(os * k))) * std::conj(std::complex<double>(pre[k]));
+    }
     g /= static_cast<double>(pre.size());
     if (std::abs(g) < 1e-9) {
         state_ = State::search;
@@ -440,30 +504,89 @@ bool Demodulator::try_decode(const OnPacket& on_packet) {
         pos_ = best_n_ + L_;
         return true;
     }
-    const cf inv(std::conj(g) / std::norm(g));  // 1 / g
-    // Decision-directed phase loop (second order), seeded on the known preamble.
-    // derot = exp(-j * phase), turned a little each symbol (no sin/cos per symbol).
+
+    // Decided (or known) symbols; feedback taps read the past ones.
+    std::vector<cf> dec;
+    dec.reserve(static_cast<std::size_t>(pre_hdr) + 4096);
+    auto past = [&](int k) { return k >= 0 ? dec[static_cast<std::size_t>(k)] : cf{}; };
+
+    // Equalizer trained by least squares on known symbols: it takes out gain,
+    // phase and echoes at once (with nf = 1, nb = 0 it is just 1 / gain).
+    // `corr[k]` is the loops' correction at symbol k (1 for the first training).
+    std::vector<cf> wf(static_cast<std::size_t>(nf)), wb(static_cast<std::size_t>(nb));
+    std::vector<cf> corr;
+    auto train = [&](int count) {
+        std::vector<std::vector<std::complex<double>>> rows;
+        std::vector<std::complex<double>> want;
+        for (int k = 0; k < count; ++k) {
+            const std::complex<double> c = k < static_cast<int>(corr.size()) ? std::complex<double>(corr[k]) : 1.0;
+            std::vector<std::complex<double>> a;
+            for (int j = 0; j < nf; ++j) a.push_back(c * std::complex<double>(rv(static_cast<int>(os) * k + lead - j)));
+            for (int j = 1; j <= nb; ++j) a.push_back(-std::complex<double>(past(k - j)));
+            rows.push_back(std::move(a));
+            want.emplace_back(dec[k]);
+        }
+        const auto x = least_squares(rows, want);
+        for (int j = 0; j < nf; ++j) wf[j] = cf(x[j]);
+        for (int j = 0; j < nb; ++j) wb[j] = cf(x[nf + j]);
+    };
+    dec.assign(pre.begin(), pre.end());
+    train(static_cast<int>(kPreambleSymbols));
+    dec.clear();
+
+    // After the equalizer: a phase loop (2nd order: phase and residual frequency)
+    // and a gain loop, both decision directed, so fading and drift inside the
+    // packet are followed; the equalizer taps adapt slowly (normalized LMS).
     cf derot(1, 0);
-    float freq = 0;
+    float freq = 0, amp = 1;
     unsigned tracked = 0;
-    const float kp = 0.06f, ki = 0.002f;
-    auto track = [&](cf v, cf decided) {
-        // v ~ decided * exp(j * err): Im(v * conj(decided)) / |decided|^2 ~ sin(err)
-        const float err = (v * std::conj(decided)).imag() / std::norm(decided);
-        freq += ki * err;
-        const float dp = freq + kp * err;
+    const float kp = 0.06f, ki = 0.002f, ka = 0.03f;
+    // Taps adapt every kEvery symbols (fast changes are the loops' job): less CPU.
+    constexpr int kEvery = 4;
+    const float mu_f = p_.equalizer ? 0.003f * kEvery : 0.0f, mu_b = p_.equalizer ? 0.002f * kEvery : 0.0f;
+    // One symbol: equalizer output, then the loops and the taps follow the decision.
+    auto output = [&](int k) {
+        cf ff{};
+        for (int j = 0; j < nf; ++j) ff += wf[j] * rv(static_cast<int>(os) * k + lead - j);
+        cf fb{};
+        for (int j = 1; j <= nb; ++j) fb += wb[j - 1] * past(k - j);
+        return ff * (derot * amp) - fb;
+    };
+    auto adapt = [&](int k, cf v, cf d) {
+        const float e2 = std::norm(d);
+        // phase and gain of v relative to the decision
+        const cf ratio = v * std::conj(d) / e2;  // ~ (1 + gain error) * exp(j phase error)
+        const float pe = ratio.imag(), ae = ratio.real() - 1;
+        const cf e = d - v;
+        if (mu_f > 0 && k % kEvery == 0) {  // taps: before the loops change c
+            const cf c = derot * amp;
+            float power = 1e-6f;
+            for (int j = 0; j < nf; ++j) power += std::norm(rv(static_cast<int>(os) * k + lead - j));
+            const cf g_f = e * std::conj(c) * (mu_f / (power * std::norm(c)));
+            for (int j = 0; j < nf; ++j) wf[j] += g_f * std::conj(rv(static_cast<int>(os) * k + lead - j));
+            for (int j = 1; j <= nb; ++j) wb[j - 1] -= (mu_b / static_cast<float>(nb)) * e * std::conj(past(k - j));
+        }
+        corr.push_back(derot * amp);  // the correction symbol k was given
+        freq += ki * pe;
+        const float dp = freq + kp * pe;
         derot *= cf(1 - 0.5f * dp * dp, -dp);
+        amp *= 1 - ka * std::clamp(ae, -0.5f, 0.5f);
         if ((++tracked & 31) == 0) derot /= std::abs(derot);
     };
-    auto corrected = [&](std::size_t k) { return symbol(k) * inv * derot; };
-    for (std::size_t k = 0; k < pre.size(); ++k) track(corrected(k), pre[k]);
+
+    for (int k = 0; k < static_cast<int>(kPreambleSymbols); ++k) {  // training: decisions are known
+        adapt(k, output(k), pre[k]);
+        dec.push_back(pre[k]);
+    }
 
     // Header
     std::uint8_t h[6] = {};
     for (std::size_t s = 0; s < kHeaderSymbols; ++s) {
-        const cf v = corrected(kPreambleSymbols + s);
+        const int k = static_cast<int>(kPreambleSymbols + s);
+        const cf v = output(k);
         const unsigned bits = qpsk_bits(v);
-        track(v, qpsk(bits));
+        adapt(k, v, qpsk(bits));
+        dec.push_back(qpsk(bits));
         h[s / 4] = static_cast<std::uint8_t>((h[s / 4] << 2) | bits);
     }
     const std::size_t len = (std::size_t(h[0]) << 8) | h[1];
@@ -477,21 +600,30 @@ bool Demodulator::try_decode(const OnPacket& on_packet) {
         return true;
     }
 
+    // The header is known now (its CRC holds): train again on 88 symbols
+    // instead of 64, with the loops' corrections as they were: less noise in
+    // the taps, and the loops carry on from where they are.
+    if (p_.equalizer) train(pre_hdr);
+
     // Payload: wait for all of it.
     const std::size_t nsym = (len + 4) * 2;
-    const std::size_t need = static_cast<std::size_t>(i0) + (kPreambleSymbols + kHeaderSymbols + nsym) * sps + hf.size() + 2;
+    const std::size_t need =
+        static_cast<std::size_t>(i0) + (kPreambleSymbols + kHeaderSymbols + nsym) * sps + ahead + hf.size() + 2;
     if (z0 + static_cast<std::int64_t>(need) > end()) return false;
     take(need);
+    r_upto(static_cast<int>(os) * (pre_hdr + static_cast<int>(nsym) - 1) + lead);
 
     std::vector<std::uint8_t> body(len + 4);
     double err_power = 0;
     std::vector<cf> points;
     points.reserve(nsym);
     for (std::size_t s = 0; s < nsym; ++s) {
-        const cf v = corrected(kPreambleSymbols + kHeaderSymbols + s);
+        const int k = pre_hdr + static_cast<int>(s);
+        const cf v = output(k);
         const unsigned nib = demap16(v);
         const cf d = map16(nib);
-        track(v, d);
+        adapt(k, v, d);
+        dec.push_back(d);
         err_power += std::norm(v - d);
         points.push_back(v);
         body[s / 2] = static_cast<std::uint8_t>((body[s / 2] << 4) | nib);

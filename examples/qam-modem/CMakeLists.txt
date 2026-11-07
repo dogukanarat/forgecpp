@@ -29,9 +29,12 @@ target_compile_definitions(qam_core PUBLIC QAM_VERSION="${PROJECT_VERSION}")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(qam_dsp PRIVATE -Wall -Wextra -Wpedantic)
     # The filters vectorize only with reassociation (and on 32-bit ARM, NEON is not
-    # IEEE exact): about 2x less CPU. The DSP has no NaN/inf/signed-zero logic.
+    # IEEE exact), complex products without the NaN/inf recovery: about 2x less
+    # CPU. The DSP has no NaN/inf/signed-zero logic.
     target_compile_options(qam_dsp PRIVATE
-        $<$<NOT:$<CONFIG:Debug>>:-O3 -funsafe-math-optimizations -fno-math-errno>)
+        $<$<NOT:$<CONFIG:Debug>>:-O3 -funsafe-math-optimizations -fno-math-errno -fcx-limited-range>
+        # real time even in debug builds (CI runs the end-to-end tests in Debug)
+        $<$<CONFIG:Debug>:-O2>)
     target_compile_options(qam_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 

@@ -9,8 +9,10 @@
 //
 // Receiver, per packet: Schmidl & Cox on the two preamble halves (detection and
 // frequency offset) -> correlation with the preamble waveform (sample timing to
-// a fraction of a sample, gain and phase) -> matched filter evaluated at the
-// symbol instants -> decision-directed phase loop -> header -> payload, CRC32.
+// a fraction of a sample) -> matched filter every half symbol -> decision
+// feedback equalizer trained on the preamble by least squares (gain, phase,
+// echoes) -> phase loop and gain loop, the equalizer taps adapting (all
+// decision directed) -> header -> payload, CRC32.
 // The sample clock is assumed to be steady within a packet (one transceiver, or
 // clocks within a few tens of ppm).
 #pragma once
@@ -34,6 +36,12 @@ struct Params {
     double tx_rms = 0.25;             ///< RMS of the TX signal, full scale = 1 (-12 dBFS)
     double detect_threshold = 0.6;    ///< Schmidl & Cox metric (0..1)
     std::size_t max_payload = 1500;   ///< bytes
+    /// Decision feedback equalizer, trained on the preamble (least squares) and
+    /// followed through the packet (LMS): echoes (multipath). Off: gain and phase only.
+    bool equalizer = true;
+    unsigned eq_ff = 8;               ///< feed-forward taps, T/2 spaced (4 symbols)
+    unsigned eq_lead = 3;             ///< ... of them ahead of the symbol (1.5 symbols)
+    unsigned eq_fb = 3;               ///< feedback taps, symbols (echoes up to ~4 us at 750 ksym/s)
     double symbol_rate() const { return sample_rate / sps; }
     /// Occupied bandwidth of the signal, Hz.
     double occupied_bandwidth() const { return symbol_rate() * (1 + rolloff); }

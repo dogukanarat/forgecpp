@@ -77,10 +77,17 @@ void QamModem::setup_config(forge::config::Schema& s) {
     s.number("modem.rolloff", 0.35, "RRC roll-off").range(0.1, 1.0);
     s.number("modem.tx_level_dbfs", -12, "TX signal RMS").range(-40, -6).unit("dBFS");
     s.number("modem.detect_threshold", 0.6, "Preamble detector threshold (Schmidl & Cox metric)").range(0.2, 0.95);
+    s.boolean("modem.equalizer", true, "Decision feedback equalizer for echoes (off: less CPU, gain and phase tracking only)");
+    s.integer("modem.eq_ff", 8, "Equalizer feed-forward taps (half-symbol spaced)").range(1, 32);
+    s.integer("modem.eq_lead", 3, "... of them ahead of the symbol").range(0, 31);
+    s.integer("modem.eq_fb", 3, "Equalizer feedback taps (symbols): echoes up to about eq_fb symbols").range(0, 16);
     s.integer("modem.max_payload", 1500, "Largest packet").range(16, 4000).unit("bytes");
     s.integer("modem.block_samples", 4096, "Samples per TX block sent to radio-controller").range(256, 1 << 18);
     s.integer("modem.lead_ms", 25, "How far TX runs ahead of RX (latency vs. underflows)").range(2, 1000).unit("ms");
     s.integer("modem.queue_packets", 64, "TX queue; more is dropped").range(1, 100000);
+    s.integer("modem.max_rx_lag_ms", 200, "RX blocks older than this are skipped (the receiver catches up)")
+        .range(10, 60000)
+        .unit("ms");
     s.string("modem.udp_listen", "0.0.0.0:6000", "Packets to transmit arrive here (UDP)");
     s.string("modem.udp_reply", "", "Received packets go here (host:port); empty = to the last sender");
     s.boolean("modem.test_mode", false, "Send numbered test packets when the TX queue is empty");
@@ -103,6 +110,9 @@ void QamModem::setup_web(forge::web::Dashboard& ui) {
     link.value("bandwidth", "Occupied bandwidth", [this] { return round_to(params_.occupied_bandwidth() / 1e3, 0.1); })
         .unit("kHz");
     link.value("raw_rate", "16QAM bit rate", [this] { return params_.symbol_rate() * 4 / 1e3; }).unit("kbit/s");
+    link.value("equalizer", "Equalizer", [this] {
+        return params_.equalizer ? fmt::format("DFE {} + {} taps", params_.eq_ff, params_.eq_fb) : std::string("off");
+    });
     link.button("configure_radio", "Configure radio", [this] { configure_radio(); });
     link.button("reset_stats", "Reset statistics", [this] { reset_stats(); });
 
@@ -130,6 +140,7 @@ void QamModem::setup_web(forge::web::Dashboard& ui) {
     rx.value("header_errors", "Header errors", [this] { return demod_ ? demod_->stats().header_errors : 0; });
     rx.value("crc_errors", "CRC errors", [this] { return demod_ ? demod_->stats().crc_errors : 0; });
     rx.value("rx_gaps", "Lost RX buffers", [this] { return rx_gaps_.load(); });
+    rx.value("rx_late", "Skipped RX buffers (late)", [this] { return rx_late_.load(); });
     rx.value("udp_out", "To Ethernet", [this] { return udp_out_.packets.load(); });
 
     auto& test = ui.group("Test");
@@ -167,6 +178,10 @@ void QamModem::on_start() {
     params_.rolloff = cfg.value<double>("modem.rolloff");
     params_.detect_threshold = cfg.value<double>("modem.detect_threshold");
     params_.max_payload = cfg.value<std::size_t>("modem.max_payload");
+    params_.equalizer = cfg.value<bool>("modem.equalizer");
+    params_.eq_ff = cfg.value<unsigned>("modem.eq_ff");
+    params_.eq_lead = std::min(cfg.value<unsigned>("modem.eq_lead"), params_.eq_ff - 1);
+    params_.eq_fb = cfg.value<unsigned>("modem.eq_fb");
     tx_level_dbfs_ = cfg.value<double>("modem.tx_level_dbfs");
     params_.tx_rms = std::pow(10.0, tx_level_dbfs_ / 20);
     radio_control_ = cfg.value<std::string>("modem.radio_control");
@@ -177,6 +192,7 @@ void QamModem::on_start() {
     lead_samples_ = static_cast<std::size_t>(cfg.value<double>("modem.lead_ms") * 1e-3 * params_.sample_rate);
     lead_samples_ = std::max(lead_samples_, 2 * block_samples_);
     queue_max_ = cfg.value<std::size_t>("modem.queue_packets");
+    max_lag_ns_ = cfg.value<std::int64_t>("modem.max_rx_lag_ms") * 1000000;
     test_mode_ = cfg.value<bool>("modem.test_mode");
     test_size_ = std::min(cfg.value<std::size_t>("modem.test_size"), params_.max_payload);
 
@@ -313,6 +329,12 @@ void QamModem::tick() {
         std::lock_guard lock(credit_mutex_);
         last_rx = last_rx_block_;
     }
+    const auto late = rx_late_.load();
+    alarms().set("modem.rx_late", late != last_rx_late_, forge::Severity::warning,
+                 fmt::format("the receiver is behind real time and skips RX buffers ({} so far): too little CPU "
+                             "(equalizer = false saves some)",
+                             late));
+    last_rx_late_ = late;
     const bool rx_missing = now - last_rx > 2s;
     alarms().set(kNoRxAlarm, rx_missing && radio_ok_, forge::Severity::warning,
                  fmt::format("no RX{} samples at {} MSPS from radio-controller ({}): is it streaming, is RX{} in its "
@@ -326,7 +348,7 @@ void QamModem::reset_stats() {
         c->bytes = 0;
         c->last_bytes = 0;
     }
-    queue_dropped_ = oversize_ = rx_gaps_ = tx_busy_ = test_lost_ = test_bad_ = 0;
+    queue_dropped_ = oversize_ = rx_gaps_ = rx_late_ = tx_busy_ = test_lost_ = test_bad_ = 0;
     test_expect_ = -1;
 }
 
@@ -452,14 +474,26 @@ void QamModem::on_iq(forge::zmq::Message&& m) {
     rx_rate_hz_ = b.sample_rate();
     if (std::abs(b.sample_rate() - params_.sample_rate) > 1) return;  // not set up yet (or by someone else)
     ++rx_blocks_;
+    add_credit(b.samples());  // the samples happened, decoded or not: TX keeps its pace
     const auto last = last_rx_buffer_.exchange(static_cast<std::int64_t>(b.buffer()));
-    if (last >= 0 && b.buffer() != static_cast<std::uint64_t>(last) + 1) {
-        ++rx_gaps_;  // samples lost: a packet across the gap cannot be decoded
-        demod_->reset();
+    bool gap = last >= 0 && b.buffer() != static_cast<std::uint64_t>(last) + 1;  // samples lost
+    // Behind real time (a slow CPU, a busy board): skip old blocks rather than let
+    // the queue and the latency grow; the demodulator starts again with fresh ones.
+    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+    if (m.header.time_unix_ns() > 0 && now_ns - m.header.time_unix_ns() > max_lag_ns_) {
+        ++rx_late_;
+        skipping_ = true;
+        return;
+    }
+    if (gap || skipping_) {
+        if (gap) ++rx_gaps_;
+        skipping_ = false;
+        demod_->reset();  // a packet across the gap cannot be decoded
     }
     demod_->push(reinterpret_cast<const std::int16_t*>(m.blob.data()), b.samples(),
                  [this](qam::Packet&& p) { on_packet(std::move(p)); });
-    add_credit(b.samples());
 }
 
 void QamModem::on_packet(qam::Packet&& p) {

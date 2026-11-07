@@ -23,6 +23,13 @@ struct Channel {
     double snr_db = 30;         // signal (while a packet is on the air) to noise, in the signal bandwidth
     double sample_rate = 3e6;
     unsigned seed = 1;
+    // multipath: one echo
+    double echo_delay = 0;      // samples (0 = none)
+    double echo_db = -3;
+    double echo_phase = 2.0;    // rad
+    // a gain and phase that change during the transmission (fading-like)
+    double gain_ramp = 0;       // relative gain change per second (0.3: +30 % per s)
+    double gain_wobble_hz = 0;  // sinusoidal gain change of +-40 % at this rate
 };
 
 /// Applies the channel to a whole cs16 capture.
@@ -51,7 +58,23 @@ std::vector<std::int16_t> through(const std::vector<std::int16_t>& tx, const Cha
             if (j < 0 || j >= static_cast<std::ptrdiff_t>(n)) continue;
             acc += h[k + K] * std::complex<double>(tx[2 * j], tx[2 * j + 1]);
         }
-        acc *= ch.gain * std::polar(1.0, ch.phase + w * static_cast<double>(i));
+        if (ch.echo_delay > 0) {  // the echo, delayed by the same fractional-delay filter
+            std::complex<double> e{};
+            for (int k = -K; k <= K; ++k) {
+                const double t = k - ch.delay - ch.echo_delay;
+                const auto j = static_cast<std::ptrdiff_t>(i) - k;
+                if (j < 0 || j >= static_cast<std::ptrdiff_t>(n)) continue;
+                const double sinc = std::abs(t) < 1e-12 ? 1.0 : std::sin(kPi * t) / (kPi * t);
+                e += sinc * (0.42 + 0.5 * std::cos(kPi * (k - ch.delay) / (K + 1)) +
+                             0.08 * std::cos(2 * kPi * (k - ch.delay) / (K + 1))) *
+                     std::complex<double>(tx[2 * j], tx[2 * j + 1]);
+            }
+            acc += std::pow(10.0, ch.echo_db / 20) * std::polar(1.0, ch.echo_phase) * e;
+        }
+        const double t = static_cast<double>(i) / ch.sample_rate;
+        double g = ch.gain * (1 + ch.gain_ramp * t);
+        if (ch.gain_wobble_hz > 0) g *= 1 + 0.4 * std::sin(2 * kPi * ch.gain_wobble_hz * t);
+        acc *= g * std::polar(1.0, ch.phase + w * static_cast<double>(i));
         acc += std::complex<double>(noise(rng), noise(rng));
         rx[2 * i] = static_cast<std::int16_t>(std::clamp(std::lround(acc.real()), -32768L, 32767L));
         rx[2 * i + 1] = static_cast<std::int16_t>(std::clamp(std::lround(acc.imag()), -32768L, 32767L));
@@ -242,6 +265,62 @@ TEST_CASE("qam: no false packets from noise, reset mid-packet recovers") {
     Channel ch;
     const auto r = run(10, 200, ch);
     CHECK(r.got.size() == 10);
+}
+
+TEST_CASE("qam: equalizer removes echoes the plain receiver cannot handle") {
+    for (double delay : {1.5, 3.0, 6.0}) {  // 0.5, 1, 2 us at 3 MSPS
+        CAPTURE(delay);
+        Channel ch;
+        ch.echo_delay = delay;
+        ch.echo_db = -3;
+        ch.snr_db = 30;
+        ch.seed = static_cast<unsigned>(delay * 10);
+        const auto with = run(30, 1000, ch);
+        qam::Params off;
+        off.equalizer = false;
+        const auto without = run(30, 1000, ch, off);
+        MESSAGE("echo -3 dB after " << delay / 3 << " us: equalizer " << with.got.size() << "/30, without "
+                                    << without.got.size() << "/30");
+        CHECK(with.got.size() == 30);
+        for (const auto& g : with.got) CHECK(g.evm_db < -22);
+        CHECK(without.got.size() < 15);
+    }
+}
+
+TEST_CASE("qam: the equalizer does not depend on the signal level") {
+    // Its training must not shrink the taps of a weak signal (regularization
+    // relative to each input's scale): at any level it is at least as good as
+    // the plain receiver on a clean channel.
+    for (double gain : {0.005, 0.05, 0.8}) {
+        CAPTURE(gain);
+        Channel ch;
+        ch.gain = gain;
+        ch.snr_db = 35;
+        ch.seed = static_cast<unsigned>(gain * 1000);
+        const auto with = run(20, 1000, ch);
+        qam::Params off;
+        off.equalizer = false;
+        const auto without = run(20, 1000, ch, off);
+        REQUIRE(with.got.size() == 20);
+        REQUIRE(without.got.size() == 20);
+        double a = 0, b = 0;
+        for (const auto& g : with.got) a += g.evm_db;
+        for (const auto& g : without.got) b += g.evm_db;
+        MESSAGE("level x" << gain << ": EVM " << a / 20 << " dB with the equalizer, " << b / 20 << " dB without");
+        CHECK(a / 20 < b / 20 + 0.5);
+    }
+}
+
+TEST_CASE("qam: gain and phase followed through a packet") {
+    // +-40 % gain at 100 Hz and a 300 Hz frequency error left after detection
+    // would break 16QAM decisions taken with the preamble's gain and phase.
+    Channel ch;
+    ch.gain_wobble_hz = 100;
+    ch.cfo_hz = 300;
+    ch.snr_db = 30;
+    const auto r = run(40, 1472, ch);
+    CHECK(r.got.size() == 40);
+    for (const auto& g : r.got) CHECK(g.evm_db < -22);
 }
 
 TEST_CASE("qam: CPU cost") {

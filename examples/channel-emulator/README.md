@@ -76,28 +76,31 @@ qam-modem's waveform (1000-byte packets, SNR in the symbol rate), from
 
 | Preset | What | Delivered | EVM |
 |---|---|---|---|
-| clean | nothing | 60/60 | −36.3 dB |
-| awgn-30 / 25 / 20 / 15 / 10 | noise | 60 / 60 / 59 / 0 / 0 | −28.9 / −24.5 / −19.7 dB |
-| offset-5k | 5 kHz offset, 30 dB | 60/60 | −28.9 dB |
-| doppler | ±8 kHz over 20 s, 30 dB | 60/60 | −28.9 dB |
-| oscillators | 1.5 kHz, 20 Hz linewidth, 20 ppm clock, 30 dB | 60/60 | −23.9 dB |
-| indoor | echoes 0.1 µs −6 dB, 0.25 µs −12 dB, 30 dB | 60/60 | −24.7 dB |
-| urban | echoes up to 2.7 µs, 30 dB | 0/60 | |
-| mobile | Rician K 6 dB, 50 Hz fading, 25 dB | 49/60 | −20.8 dB |
-| interference | −10 dBc tone at 400 kHz, 2 ms of 10 | 46/60 | |
-| bad-radio | IQ 1 dB / 3°, DC −25 dBc, 30 dB | 60/60 | −20.8 dB |
+| clean | nothing | 60/60 | −43.7 dB |
+| awgn-30 / 25 / 20 / 15 / 10 | noise | 60 / 60 / 57 / 0 / 0 | −29.3 / −24.5 / −19.5 dB |
+| offset-5k | 5 kHz offset, 30 dB | 60/60 | −29.3 dB |
+| doppler | ±8 kHz over 20 s, 30 dB | 60/60 | −29.4 dB |
+| oscillators | 1.5 kHz, 20 Hz linewidth, 20 ppm clock, 30 dB | 60/60 | −25.2 dB |
+| indoor | echoes 0.1 µs −6 dB, 0.25 µs −12 dB, 30 dB | 60/60 | −28.3 dB |
+| urban | echoes 0.5 µs −3 dB, 1.3 µs −8 dB, 2.7 µs −14 dB, 30 dB | 60/60 | −27.5 dB |
+| mobile | Rician K 6 dB, 50 Hz fading, 25 dB | 56/60 | −24.1 dB |
+| interference | −10 dBc tone at 400 kHz, 2 ms of 10 | 60/60 | −26.5 dB |
+| bad-radio | IQ 1 dB / 3°, DC −25 dBc, 30 dB | 60/60 | −21.5 dB |
 
 Corrupted packets are never delivered (CRC32). What the table says about the
 modem: 16QAM needs about 20 dB Es/N0 for 1000-byte packets; frequency
 offsets up to ±11.7 kHz and clock errors of tens of ppm are fine; phase noise
-is fine up to a linewidth of about 50 Hz (200 Hz breaks it); echoes longer
-than a fraction of a symbol (1.33 µs) need an equalizer, which the modem
-does not have; fast fading needs the gain tracked through the packet.
+is fine up to a linewidth of about 50 Hz (200 Hz breaks it). The decision
+feedback equalizer removes echoes up to about 4 µs (urban, indoor) and the
+interfering tone; the gain and phase loops follow the fading (without noise
+`mobile` delivers 100/100: what it loses at 25 dB are the fades' SNR dips).
+Before the equalizer, urban delivered 0/60, interference 46/60 and mobile 49/60.
 
 Through the whole chain (simulated radio, `tests/test_emulator.cpp`, and by
-hand with `echo.py`): clean 2.20 Mbit/s without loss; awgn-20 5 % lost and an
-EVM of −19.7 dB at the modem; awgn-15 nothing; offset-5k no loss, the modem
-measures 4990 Hz.
+hand with `echo.py` at 2.2 Mbit/s): clean without loss; awgn-20 about 5-10 %
+lost and an EVM of −19.5 dB at the modem; awgn-15 nothing; offset-5k no loss,
+the modem measures 4990 Hz; urban no loss; interference 0.6 % lost; mobile
+11 % lost (fades).
 
 ## CPU
 
