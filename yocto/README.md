@@ -10,7 +10,7 @@ your layers as below.
 ## Try it in QEMU (kas)
 
 `kas/qemuarm64.yml` builds a qemuarm64 image (systemd) with forgecpp, forge-hub,
-radio-controller on its simulator, spectrum-analyzer and qam-modem, from this checkout:
+radio-controller on its simulator, spectrum-analyzer, qam-modem and channel-emulator, from this checkout:
 
 ```sh
 pip install kas
@@ -129,6 +129,17 @@ the spectrum analyzer.
 
 ```
 IMAGE_INSTALL:append = " radio-controller spectrum-analyzer qam-modem"
+```
+
+## channel-emulator
+
+`recipes-connectivity/channel-emulator/channel-emulator_git.bb` builds the
+channel emulator from `examples/channel-emulator` (TX input on port 5586,
+web page on port 8083). Like qam-modem its unit is installed, not enabled.
+To use it, point qam-modem's `radio_tx` at `tcp://127.0.0.1:5586`.
+
+```
+IMAGE_INSTALL:append = " channel-emulator"
 ```
 
 ## Application recipes

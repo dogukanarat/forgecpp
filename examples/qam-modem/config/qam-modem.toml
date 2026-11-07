@@ -12,7 +12,7 @@
 [modem]
 radio_control = "tcp://127.0.0.1:5557"   # radio-controller [forge].control
 radio_data = "tcp://127.0.0.1:5555"      # radio-controller [forge].data ("iq" stream)
-radio_tx = "tcp://127.0.0.1:5556"        # radio-controller [zmq].tx
+radio_tx = "tcp://127.0.0.1:5556"        # radio-controller [zmq].tx; through channel-emulator: "tcp://127.0.0.1:5586"
 rx_channel = 1                            # must be in radio-controller's [radio] rx_channels
 
 configure_radio = true      # set the radio up at start (and retry until it answers)

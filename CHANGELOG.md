@@ -46,7 +46,9 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
 - Examples: spectrum-analyzer (AD936x, web UI) running next to
   radio-controller; sensor-service, pipeline and thermostat declare their
   configuration; qam-modem (16QAM packet modem through radio-controller,
-  UDP in and out, 2.9 Mbit/s at 750 ksym/s) with `echo.py`. radio-controller's
+  UDP in and out, 2.9 Mbit/s at 750 ksym/s) with `echo.py`; channel-emulator
+  (noise, frequency offset/Doppler, phase noise, clock error, multipath,
+  fading, IQ imbalance, DC, interference in the TX path; `common/channel`). radio-controller's
   simulator gained a splitter (TX into every RX), path loss and frequency
   error; the libiio backend finds the FMCOMMS5's RX DMA (`cf-ad9361-A`).
 - Toolchain file for Zynq-7000 (`cmake/toolchains/zynq7000-armhf.cmake`).

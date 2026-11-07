@@ -116,6 +116,16 @@ cd build/forgecpp/examples
 python3 ../../../examples/qam-modem/clients/echo.py 127.0.0.1 --rate 2.2 --seconds 10
 ```
 
+## With the channel emulator
+
+[channel-emulator](../channel-emulator/README.md) goes between the modem's TX
+and radio-controller: noise, frequency offset, Doppler, phase noise, clock
+error, multipath, fading, interference, each on its own switch. Only
+`radio_tx` changes (`tcp://127.0.0.1:5586`); the modem's RX and control and
+the spectrum analyzer stay on radio-controller. Both receivers see the
+impaired signal: EVM and packet loss on this page, the picture on the
+analyzer. Its README has the modem's packet error rate for every preset.
+
 ## RF set-up (FMCOMMS5)
 
 **Never connect TX to RX without attenuation.** The AD9361 RX input is
