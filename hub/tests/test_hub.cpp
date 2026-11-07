@@ -290,9 +290,11 @@ TEST_CASE("hub: systemd units: state, restarts, policy and why it failed come fr
 
     // Too many restarts: the unit failed and stays down.
     f.kill_child(q);
-    f.set_unit("alpha.service", unit("failed", "failed", 0, 3, "start-limit-hit"));
+    // (As on a real system: an automatic restart refused by the start limit
+    // leaves the last run's Result; only a refused manual start says start-limit-hit.)
+    f.set_unit("alpha.service", unit("failed", "failed", 0, 3, "signal"));
     REQUIRE(f.wait_state("alpha", v1::AppStatus::STATE_FAILED));
-    CHECK(f.entry("alpha")->message == "gave up: more than 3 restarts in 600 s (systemd)");
+    CHECK(f.entry("alpha")->message == "gave up after 3 restarts in 600 s (last: killed by a signal)");
     REQUIRE(f.h().alarms().get("app.alpha.failed"));
     CHECK(f.h().alarms().get("app.alpha.failed")->severity == forge::Severity::critical);
 

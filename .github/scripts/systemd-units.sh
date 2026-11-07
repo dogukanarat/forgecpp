@@ -3,8 +3,8 @@
 #
 # forge-hub and radio-controller are installed with the units forge_add_app
 # generates. Checks: radio-controller is restarted after a crash and the hub
-# shows the restarts; too many crashes leave the unit failed (start-limit-hit)
-# and the hub shows it; the hub's restart command brings it back; stopping it
+# shows the restarts; too many crashes leave the unit failed and the hub shows
+# it gave up; the hub's restart command brings it back; stopping it
 # from the hub is not a crash.
 set -euo pipefail
 
@@ -68,10 +68,16 @@ for n in 2 3 4; do
     fi
 done
 wait_for 30 bash -c "[ \"\$(systemctl show -p ActiveState --value $app.service)\" = failed ]" || fail "unit not failed after 4 crashes"
-[ "$(prop Result)" = start-limit-hit ] || fail "Result is $(prop Result), expected start-limit-hit"
+# An automatic restart refused by the start limit keeps the last run's Result.
+[ "$(prop NRestarts)" = 3 ] || fail "NRestarts is $(prop NRestarts), expected 3"
+# (pipefail: read the output first, grep -q would end the pipe early)
+[[ "$(journalctl --no-pager -u $app.service)" == *"Start request repeated too quickly"* ]] || fail "no start limit in the journal"
 wait_for 15 hub_says state STATE_FAILED || fail "the hub does not show the failed unit"
-wait_for 15 hub_says unit_result start-limit-hit || fail "the hub does not show start-limit-hit"
-echo "4 crashes -> unit failed (start-limit-hit), shown by the hub"
+wait_for 15 hub_says unit_result "$(prop Result)" || fail "the hub does not show systemd's Result"
+[[ "$(app_field message)" == "gave up after 3 restarts"* ]] || fail "the hub's message: $(app_field message)"
+[[ "$(journalctl --no-pager -u forge-hub.service)" == *"reception only permitted for main PID"* ]] \
+    && fail "a child of the hub sent systemd notifications"
+echo "4 crashes -> unit failed (start limit), the hub says: $(app_field message)"
 
 # The hub's restart button: reset-failed + restart.
 curl -fs -X POST -H 'Content-Type: application/json' -d "{\"name\":\"$app\"}" $hub/forge/api/commands/restart \

@@ -11,6 +11,9 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
+#include <string>
+#include <string_view>
+#include <vector>
 #include <thread>
 
 namespace forgehub {
@@ -103,6 +106,17 @@ CommandResult run_command(const std::vector<std::string>& args, std::chrono::mil
     std::vector<char*> argv;
     for (const auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
     argv.push_back(nullptr);
+    // The hub's own systemd notification socket and watchdog are not the
+    // child's: systemd rejects (and logs) messages from other processes.
+    std::vector<std::string> env_strings;
+    for (char** e = environ; *e; ++e) {
+        const std::string_view v(*e);
+        if (v.rfind("NOTIFY_SOCKET=", 0) == 0 || v.rfind("WATCHDOG_", 0) == 0) continue;
+        env_strings.emplace_back(v);
+    }
+    std::vector<char*> envp;
+    for (auto& v : env_strings) envp.push_back(v.data());
+    envp.push_back(nullptr);
     int out[2];
     if (::pipe2(out, O_CLOEXEC) != 0) return result;
     const pid_t pid = ::fork();
@@ -117,7 +131,7 @@ CommandResult run_command(const std::vector<std::string>& args, std::chrono::mil
         ::sigprocmask(SIG_SETMASK, &none, nullptr);
         ::dup2(out[1], 1);
         ::dup2(out[1], 2);
-        ::execvp(argv[0], argv.data());
+        ::execvpe(argv[0], argv.data(), envp.data());
         ::_exit(127);
     }
     ::close(out[1]);
