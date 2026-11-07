@@ -849,6 +849,12 @@ and systemd unit; their Yocto recipes in `yocto/recipes-connectivity` build
 them that way. Both use `examples/common/ad936x` (libiio backend, simulator,
 FFT/windows).
 
+Every example has a generated systemd unit next to its binary
+(`build/forgecpp/examples/<name>.service`) with a restart policy that suits it:
+hello on-failure without a watchdog, sensor-service and pipeline on-failure
+with a watchdog, thermostat `always`, radio-controller and spectrum-analyzer
+on-failure (3 in 10 minutes) with a 30 s watchdog.
+
 ## Versions
 
 Semantic versions, changes in [CHANGELOG.md](CHANGELOG.md). Until 1.0 a minor

@@ -4,10 +4,27 @@
 # thermostat:     web-first application with its own multi-page site
 # radio_controller: AD9364 daemon: libiio + IQ streaming over ZeroMQ (needs forgecpp::zmq)
 # spectrum_analyzer: AD9364 spectrum analyzer with a web UI (needs forgecpp::zmq)
-forge_add_app(hello SOURCES hello/main.cpp NO_INSTALL)
-forge_add_app(sensor-service SOURCES sensor_service/main.cpp WEB sensor_service/web NO_INSTALL)
-forge_add_app(pipeline SOURCES pipeline/main.cpp NO_INSTALL)
-forge_add_app(thermostat SOURCES thermostat/main.cpp WEB thermostat/web NO_INSTALL)
+# Each one gets a generated systemd unit (<build>/examples/<name>.service) with
+# the restart policy that suits it; the examples are not installed.
+forge_add_app(hello SOURCES hello/main.cpp
+    DESCRIPTION "forgecpp hello world"
+    RESTART on-failure MAX_RESTARTS 3 WATCHDOG 0   # no watchdog: a demo
+    NO_INSTALL)
+forge_add_app(sensor-service SOURCES sensor_service/main.cpp WEB sensor_service/web
+    CONFIG sensor_service/sensor-service.toml
+    DESCRIPTION "forgecpp sensor service example"
+    RESTART on-failure MAX_RESTARTS 3 RESTART_WINDOW 600 WATCHDOG 30
+    NO_INSTALL)
+forge_add_app(pipeline SOURCES pipeline/main.cpp
+    CONFIG pipeline/pipeline.toml
+    DESCRIPTION "forgecpp processing pipeline example"
+    RESTART on-failure MAX_RESTARTS 5 RESTART_WINDOW 300 RESTART_DELAY 1 WATCHDOG 20
+    NO_INSTALL)
+forge_add_app(thermostat SOURCES thermostat/main.cpp WEB thermostat/web
+    CONFIG thermostat/thermostat.toml
+    DESCRIPTION "forgecpp thermostat example"
+    RESTART always MAX_RESTARTS 0                  # always back, however often
+    NO_INSTALL)
 
 if(TARGET forgecpp::zmq)
     add_subdirectory(radio_controller)
