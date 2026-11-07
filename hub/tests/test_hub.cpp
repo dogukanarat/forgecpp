@@ -9,6 +9,8 @@
 #include <forge/hub.hpp>
 #include <forge/testing.hpp>
 
+#include <httplib.h>
+
 #include <signal.h>
 #include <spawn.h>
 #include <sys/wait.h>
@@ -247,6 +249,44 @@ TEST_CASE("hub: without a unit a crash is reported, not restarted; duplicates ar
     f.children.erase(other);
     f.h().forget("gamma");
     CHECK_FALSE(f.entry("gamma"));
+}
+
+TEST_CASE("hub: the applications' pages through the hub's port (/apps/<name>/)") {
+    HubFixture f({"-D", "http.enabled=true", "-D", "http.host=127.0.0.1", "-D", "http.port=0"});
+    f.application("alpha");
+    REQUIRE(f.wait_state("alpha", v1::AppStatus::STATE_RUNNING));
+    httplib::Client c("127.0.0.1", f.h().http()->port());
+    c.set_read_timeout(5, 0);
+    c.set_decompress(true);  // like a browser: gzip accepted
+
+    auto r = c.Get("/apps/alpha");  // the slash matters for relative URLs
+    REQUIRE(r);
+    CHECK(r->status == 302);
+    CHECK(r->get_header_value("Location") == "/apps/alpha/");
+    r = c.Get("/apps/alpha/health?strict=1");
+    REQUIRE(r);
+    CHECK(r->status == 200);
+    CHECK(forge::json::parse(r->body)["name"] == "alpha");
+    r = c.Get("/apps/alpha/forge/api/info");
+    REQUIRE(r);
+    CHECK(forge::json::parse(r->body)["name"] == "alpha");
+    r = c.Get("/apps/alpha/");  // the application redirects to its panel: under the prefix
+    REQUIRE(r);
+    CHECK(r->status == 302);
+    CHECK(r->get_header_value("Location") == "forge/");
+    r = c.Get("/apps/alpha/forge/forge.js");
+    REQUIRE(r);
+    CHECK(r->status == 200);
+    CHECK(r->body.find("forge/forge.js") != std::string::npos);
+    r = c.Post("/apps/alpha/forge/api/rpc", R"({"info":{}})", "application/json");
+    REQUIRE(r);
+    CHECK(forge::json::parse(r->body)["info"]["name"] == "alpha");
+    r = c.Get("/apps/ghost/");
+    REQUIRE(r);
+    CHECK(r->status == 502);
+    r = c.Get("/api/hub");
+    REQUIRE(r);
+    CHECK(forge::json::parse(r->body)["proxy"] == true);
 }
 
 TEST_CASE("hub: several instances of one application (name@instance)") {

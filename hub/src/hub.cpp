@@ -33,6 +33,11 @@ bool live(v1::AppStatus::State s) {
            s == v1::AppStatus::STATE_STARTING;
 }
 
+std::string lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
 /// "<name>" or "<name>@<instance>".
 bool valid_name(const std::string& n) {
     if (n.empty() || n.size() > 64 || n.front() == '@' || n.back() == '@' || std::count(n.begin(), n.end(), '@') > 1) {
@@ -108,6 +113,13 @@ void Hub::setup_config(forge::config::Schema& s) {
     s.boolean("registry.systemd", true, "Follow the systemd units of the applications (state, restarts, actions)");
     s.string("registry.boot_id_file", "/proc/sys/kernel/random/boot_id", "Boot id (processes of an earlier boot are gone)");
     s.open_section("static", "[static.<name>] url, health_url, title, description, group: applications that do not register");
+    s.section("proxy", "Applications' web pages through the hub's port");
+    s.boolean("proxy.enabled", true,
+              "Serve each application's pages at /apps/<name>/ on the hub's port (one port for the device; "
+              "the dashboard links there)");
+    s.integer("proxy.timeout_ms", 10000, "Timeout of a proxied request (live event streams excepted)")
+        .range(100, 600000)
+        .unit("ms");
 }
 
 void Hub::setup_web(forge::web::Dashboard& ui) {
@@ -145,6 +157,95 @@ void Hub::setup_web(forge::web::Dashboard& ui) {
 
 void Hub::setup_http(forge::http::Server& server) {
     server.get_json("/api/apps", [this](const forge::http::Request&) { return forge::proto::to_json(list()); });
+    const auto cfg = config();
+    proxy_timeout_ms_ = cfg.value<int>("proxy.timeout_ms");
+    const bool proxy = cfg.value<bool>("proxy.enabled");
+    server.get_json("/api/hub", [proxy](const forge::http::Request&) { return json{{"proxy", proxy}}; });
+    if (!proxy) return;
+    // /apps/<name>/<path>: the application's own HTTP server, through this port.
+    const std::string pattern = R"(/apps/([A-Za-z0-9_.@-]+)(/.*)?)";
+    auto handler = [this](const forge::http::Request& req, forge::http::Response& res) { proxy_request(req, res); };
+    server.get(pattern, handler).post(pattern, handler).put(pattern, handler).patch(pattern, handler).del(pattern, handler);
+}
+
+void Hub::proxy_request(const forge::http::Request& req, forge::http::Response& res) {
+    const std::string name = req.matches[1];
+    const std::string prefix = "/apps/" + name;
+    std::string rest = req.matches.size() > 2 ? std::string(req.matches[2]) : std::string();
+    if (rest.empty()) {  // "/apps/x" -> "/apps/x/": relative URLs in its pages need the slash
+        res.set_redirect(prefix + "/");
+        return;
+    }
+    int port = 0;
+    {
+        std::lock_guard lock(mutex_);
+        auto it = apps_.find(name);
+        if (it != apps_.end() && !it->second.static_entry && it->second.state == v1::AppStatus::STATE_RUNNING) {
+            port = static_cast<int>(it->second.app.http_port());
+        }
+    }
+    if (port <= 0) throw forge::Error(502, "'" + name + "' is not running with a web interface");
+    // The original target keeps the query string.
+    const auto q = req.target.find('?');
+    const std::string path = rest + (q == std::string::npos ? "" : req.target.substr(q));
+
+    httplib::Headers headers;
+    for (const auto& [k, v] : req.headers) {
+        const auto key = lower(k);
+        if (key == "host" || key == "connection" || key == "content-length" || key == "accept-encoding" ||
+            key.rfind("remote_", 0) == 0 || key.rfind("local_", 0) == 0) {
+            continue;
+        }
+        headers.emplace(k, v);
+    }
+    headers.emplace("X-Forwarded-Prefix", prefix);
+    headers.emplace("X-Forwarded-For", req.remote_addr);
+
+    // Live events (Server-Sent Events): streamed for as long as the browser listens.
+    if (req.method == "GET" && req.get_header_value("Accept").find("text/event-stream") != std::string::npos) {
+        res.set_header("Cache-Control", "no-cache");
+        res.set_chunked_content_provider(
+            "text/event-stream", [port, path, headers](std::size_t, httplib::DataSink& sink) {
+                httplib::Client up("127.0.0.1", port);
+                up.set_connection_timeout(std::chrono::seconds(2));
+                up.set_read_timeout(std::chrono::hours(24));
+                up.Get(path, headers, [&sink](const char* data, std::size_t n) { return sink.write(data, n); });
+                sink.done();
+                return true;
+            });
+        return;
+    }
+
+    httplib::Client up("127.0.0.1", port);
+    up.set_connection_timeout(std::chrono::seconds(2));
+    up.set_read_timeout(std::chrono::milliseconds(proxy_timeout_ms_.load()));
+    up.set_write_timeout(std::chrono::milliseconds(proxy_timeout_ms_.load()));
+    httplib::Request out;
+    out.method = req.method;
+    out.path = path;
+    out.headers = headers;
+    out.body = req.body;
+    auto result = up.send(out);
+    if (!result) {
+        throw forge::Error(502, "'" + name + "' did not answer: " + httplib::to_string(result.error()));
+    }
+    res.status = result->status;
+    for (const auto& [k, v] : result->headers) {
+        const auto key = lower(k);
+        // The client has decoded the body already (gzip); this server encodes it again
+        // for browsers that accept it.
+        if (key == "content-length" || key == "transfer-encoding" || key == "connection" || key == "content-type" ||
+            key == "content-encoding" || key == "vary" || key == "keep-alive") {
+            continue;
+        }
+        // Absolute redirects of the application stay under its prefix.
+        if (key == "location" && !v.empty() && v.front() == '/') {
+            res.set_header(k, prefix + v);
+            continue;
+        }
+        res.set_header(k, v);
+    }
+    res.set_content(std::move(result->body), result->get_header_value("Content-Type"));
 }
 
 void Hub::setup_console(forge::Console& c) {

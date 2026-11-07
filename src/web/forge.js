@@ -2,7 +2,8 @@
  *
  * Plain HTML pages can be wired to dashboard controls with attributes only:
  *
- *   <script src="/forge/forge.js"></script>
+ *   <script src="forge/forge.js"></script>   (relative: the page also works behind
+ *                                             forge-hub's proxy, /apps/<name>/)
  *   <span data-forge-value="temperature" data-forge-precision="1"></span> °C
  *   <input type="range" min="0" max="3000" data-forge-bind="speed">
  *   <input type="checkbox" data-forge-bind="enabled">
@@ -22,7 +23,8 @@
  *   forge.on('my-event', data => ...);                     // app.publish_web("my-event", ...)
  *   await forge.set('speed', 1200);
  *   await forge.press('start');
- *   const data = await forge.api('/api/my-route');         // your own routes
+ *   const data = await forge.api('/api/my-route');         // your own routes ("/" = the app's root)
+ *   link.href = forge.url('/api/export.csv');              // the same for links
  *
  * The page connects automatically; add data-manual to the script tag to call
  * forge.start() yourself.
@@ -31,7 +33,24 @@
   'use strict';
 
   const script = document.currentScript;
-  const API = (script && script.dataset.api) || '/forge/api';
+  // The application's root: "/" normally, "/apps/<name>/" behind forge-hub's
+  // proxy. Taken from where forge.js itself was loaded (<root>forge/forge.js),
+  // so pages that load it with a relative URL work under any prefix.
+  const ROOT = (function () {
+    try {
+      const p = new URL(script.src, location.href).pathname;
+      const i = p.lastIndexOf('forge/forge.js');
+      return i >= 0 ? p.slice(0, i) : '/';
+    } catch (e) {
+      return '/';
+    }
+  })();
+  const API = (script && script.dataset.api) || ROOT + 'forge/api';
+  /** URL of an application path ("/api/x" -> "<root>api/x"). */
+  function url(path) {
+    if (/^https?:/.test(path)) return path;
+    return path.charAt(0) === '/' ? ROOT + path.slice(1) : API + '/' + path;
+  }
   const listeners = {};
   const state = {};
   let source = null;
@@ -61,8 +80,7 @@
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(options.body);
     }
-    const url = path.charAt(0) === '/' || /^https?:/.test(path) ? path : API + '/' + path;
-    const res = await fetch(url, init);
+    const res = await fetch(url(path), init);
     const text = await res.text();
     let data = null;
     if (text) {
@@ -752,6 +770,8 @@
 
   const forge = {
     api: api,
+    url: url,
+    base: ROOT,
     on: on,
     set: set,
     press: press,

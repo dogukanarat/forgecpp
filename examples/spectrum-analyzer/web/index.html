@@ -4,10 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Spectrum analyzer</title>
-  <link rel="stylesheet" href="/forge/forge.css">
-  <link rel="stylesheet" href="/assets/sa.css">
-  <script src="/forge/forge.js" data-manual></script>
-  <script src="/assets/sa.js" defer></script>
+  <link rel="stylesheet" href="forge/forge.css">
+  <link rel="stylesheet" href="assets/sa.css">
+  <script src="forge/forge.js" data-manual></script>
+  <script src="assets/sa.js" defer></script>
 </head>
 <body class="forge sa">
   <header class="forge-header">
@@ -16,8 +16,8 @@
       <h1>Spectrum analyzer</h1>
     </div>
     <nav>
-      <a href="/" aria-current="page">Analyzer</a>
-      <a href="/forge/">Control panel</a>
+      <a href="./" aria-current="page">Analyzer</a>
+      <a href="forge/">Control panel</a>
     </nav>
     <div class="forge-meta">
       <span data-forge-value="backend"></span>
@@ -248,9 +248,9 @@
         <div class="sa-field"><span>Trace fill</span><label class="forge-switch"><input type="checkbox" id="v-fill"><span></span></label></div>
         <hr>
         <div class="sa-keys grid">
-          <a class="forge-btn" href="/api/trace.csv" download>Traces (CSV)</a>
+          <a class="forge-btn" href="api/trace.csv" download>Traces (CSV)</a>
           <button class="forge-btn" id="save-png">Screenshot (PNG)</button>
-          <a class="forge-btn" href="/api/iq.cs16" download title="Last capture, realtime spans only">IQ capture (cs16)</a>
+          <a class="forge-btn" href="api/iq.cs16" download title="Last capture, realtime spans only">IQ capture (cs16)</a>
         </div>
         <p class="sa-info">Keys: <kbd>P</kbd> peak, <kbd>N</kbd> next, <kbd>←</kbd>/<kbd>→</kbd> peak left/right, <kbd>C</kbd> marker → center, <kbd>Space</kbd> run/hold, <kbd>R</kbd> restart traces, <kbd>A</kbd> auto scale, <kbd>+</kbd>/<kbd>−</kbd> zoom.</p>
       </div>

@@ -20,6 +20,7 @@
 #include <forge/v1/hub.pb.h>
 #include <forge/zmq.hpp>
 
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -92,6 +93,7 @@ protected:
 
 private:
     std::string handle(std::string_view request);  // registration thread
+    void proxy_request(const forge::http::Request& req, forge::http::Response& res);  // HTTP threads
     v1::HubReply on_register(const v1::AppRegistration& app);
     void on_unregister(const v1::Unregister& u);
 
@@ -126,6 +128,7 @@ private:
     std::string state_file_;
     int tick_ms_ = 1000, probe_interval_ms_ = 2000, probe_timeout_ms_ = 1500, unresponsive_after_s_ = 5;
     bool use_systemd_ = true;
+    std::atomic<int> proxy_timeout_ms_{10000};
 };
 
 }  // namespace forgehub

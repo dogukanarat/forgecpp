@@ -798,6 +798,13 @@ browser ──▶ http://<device>/ ──links──▶ http://<device>:<port>/ 
   `--instance rx2` and its own state directory, and the hub lists it as
   `radio-controller@rx2` ("radio-controller (rx2)") next to the others.
   `--instance` (or `$FORGE_INSTANCE`) does the same without systemd.
+- **One port for the device**: each application's pages are also at
+  `http://<device>/apps/<name>/` (`[proxy].enabled`, on by default), and the
+  dashboard links there, so only port 80 has to be reachable. Live updates
+  (Server-Sent Events) are streamed through. Pages work under any prefix when
+  they use relative URLs (`forge/forge.js`, `assets/...`) and `forge.api('/api/x')`
+  / `forge.url('/api/x')` for their own routes: forge.js takes the
+  application's root from where it was loaded.
 - **Other web interfaces** on the device can be listed without registering:
   `[static.camera] url = "http://{host}:8554/"`, `health_url = ...`.
 

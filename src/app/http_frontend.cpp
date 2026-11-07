@@ -302,7 +302,7 @@ void HttpFrontend::create_web(const Config& cfg) {
     http_->events(api + "/events", events_);
 
     // "/" shows the application's own index.html when there is one, else the dashboard.
-    http_->get("/", [](const http::Request&, http::Response& res) { res.set_redirect("/forge/"); });
+    http_->get("/", [](const http::Request&, http::Response& res) { res.set_redirect("forge/"); });  // relative: also behind a proxy
 }
 
 void HttpFrontend::start(const Config& cfg) {

@@ -104,6 +104,13 @@ Server::Server() {
         std::string what = "unknown error";
         try {
             if (ep) std::rethrow_exception(ep);
+        } catch (const forge::Error& e) {  // raw handlers too: the error's own status
+            if (!e.details().is_null()) {
+                reply_json(res, e.details(), e.status());
+            } else {
+                reply_error(res, e.status(), e.what());
+            }
+            return;
         } catch (const std::exception& e) {
             what = e.what();
         } catch (...) {

@@ -32,8 +32,12 @@
     const h = location.hostname;
     return h.indexOf(':') >= 0 ? '[' + h + ']' : h;
   }
+  // With the hub's proxy ([proxy].enabled) an application's pages are at
+  // /apps/<name>/ on this port; otherwise on its own port.
+  let proxied = false;
   function appUrl(a, path) {
     if (a.static_entry) return (a.url || '').replace('{host}', host());
+    if (proxied) return forge.url('/apps/' + encodeURIComponent(a.app.name) + (path || '/'));
     return location.protocol + '//' + host() + ':' + a.app.http_port + (path || '/');
   }
   function port(ep) {
@@ -219,6 +223,10 @@
 
   async function refresh() {
     try {
+      if (refresh.first === undefined) {
+        refresh.first = false;
+        try { proxied = !!(await forge.api('/api/hub')).proxy; } catch (e) { proxied = false; }
+      }
       await render(await forge.api('/api/apps'));
       $('hub-error').hidden = true;
     } catch (e) {
