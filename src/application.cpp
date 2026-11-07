@@ -31,6 +31,55 @@
 #include <unistd.h>
 
 namespace forge {
+
+namespace detail {
+
+namespace {
+enum LoopErrorKind { kNone, kHttp, kConfig, kInvalidArgument, kOutOfRange, kRuntime, kStopped };
+}
+
+void LoopError::capture() noexcept {
+    try {
+        throw;
+    } catch (const http::HttpError& e) {
+        kind = kHttp;
+        status = e.status();
+        message = e.what();
+        body = e.body();
+    } catch (const ConfigError& e) {
+        kind = kConfig;
+        message = e.what();
+    } catch (const std::invalid_argument& e) {
+        kind = kInvalidArgument;
+        message = e.what();
+    } catch (const std::out_of_range& e) {
+        kind = kOutOfRange;
+        message = e.what();
+    } catch (const std::exception& e) {
+        kind = kRuntime;
+        message = e.what();
+    } catch (...) {
+        kind = kRuntime;
+        message = "unknown exception";
+    }
+}
+
+void LoopError::set_stopped() {
+    kind = kStopped;
+    message = "the application stopped before the task ran";
+}
+
+void LoopError::rethrow() const {
+    switch (kind) {
+        case kHttp: throw http::HttpError(status, message, body);
+        case kConfig: throw ConfigError(message);
+        case kInvalidArgument: throw std::invalid_argument(message);
+        case kOutOfRange: throw std::out_of_range(message);
+        default: throw std::runtime_error(message);
+    }
+}
+
+}  // namespace detail
 namespace {
 
 constexpr int kHandledSignals[] = {SIGINT, SIGTERM, SIGHUP, SIGQUIT};

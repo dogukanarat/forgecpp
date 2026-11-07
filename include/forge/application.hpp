@@ -56,12 +56,14 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
 #include <future>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -76,6 +78,22 @@ class App;
 }
 
 namespace forge {
+
+namespace detail {
+/// An exception on its way from the main loop to a thread waiting in
+/// Application::invoke(): described here, thrown anew on the waiting thread.
+struct LoopError {
+    int kind = 0;  ///< 0 = no error
+    int status = 0;
+    std::string message;
+    json body;
+    explicit operator bool() const { return kind != 0; }
+    /// Describe the exception being handled (call inside a catch block).
+    void capture() noexcept;
+    void set_stopped();
+    [[noreturn]] void rethrow() const;
+};
+}  // namespace detail
 
 namespace http {
 class Server;
@@ -141,10 +159,81 @@ public:
     /// Run `fn` on the main loop and wait for its result. Runs inline when
     /// already on the main loop, so it is safe everywhere (HTTP handlers,
     /// worker threads, console commands).
+    /// Exceptions thrown by `fn` are thrown again on the calling thread
+    /// (http::HttpError with its status, ConfigError, std::invalid_argument,
+    /// std::out_of_range, otherwise std::runtime_error with the message): a new
+    /// object is thrown there, none is shared between threads.
     template <class F>
     auto invoke(F&& fn) -> std::invoke_result_t<std::decay_t<F>> {
+        using R = std::invoke_result_t<std::decay_t<F>>;
         if (on_main_loop()) return fn();
-        return call(std::forward<F>(fn)).get();
+        struct Waiter {
+            std::mutex mutex;
+            std::condition_variable cv;
+            bool done = false;
+            // references are kept as pointers
+            using Stored = std::conditional_t<std::is_reference_v<R>, std::remove_reference_t<R>*, R>;
+            std::conditional_t<std::is_void_v<R>, bool, std::optional<Stored>> value{};
+            detail::LoopError error;
+            void finish() {
+                {
+                    std::lock_guard lock(mutex);
+                    done = true;
+                }
+                cv.notify_all();
+            }
+        };
+        // Finishes the wait even when the task is discarded (application stopping).
+        struct Guard {
+            explicit Guard(std::shared_ptr<Waiter> waiter) : w(std::move(waiter)) {}
+            Guard(const Guard&) = delete;
+            Guard& operator=(const Guard&) = delete;
+            std::shared_ptr<Waiter> w;
+            ~Guard() {
+                bool pending;
+                {
+                    std::lock_guard lock(w->mutex);
+                    pending = !w->done;
+                    if (pending) w->error.set_stopped();
+                }
+                if (pending) w->finish();
+            }
+        };
+        auto w = std::make_shared<Waiter>();
+        auto f = std::make_shared<std::decay_t<F>>(std::forward<F>(fn));
+        auto guard = std::make_shared<Guard>(w);
+        post([w, f, guard] {
+            detail::LoopError error;
+            try {
+                if constexpr (std::is_void_v<R>) {
+                    (*f)();
+                } else if constexpr (std::is_reference_v<R>) {
+                    auto* r = &(*f)();
+                    std::lock_guard lock(w->mutex);
+                    w->value.emplace(r);
+                } else {
+                    auto r = (*f)();
+                    std::lock_guard lock(w->mutex);
+                    w->value.emplace(std::move(r));
+                }
+            } catch (...) {
+                error.capture();
+            }
+            {
+                std::lock_guard lock(w->mutex);
+                w->error = std::move(error);
+            }
+            w->finish();
+        });
+        guard.reset();
+        std::unique_lock lock(w->mutex);
+        w->cv.wait(lock, [&] { return w->done; });
+        if (w->error) w->error.rethrow();
+        if constexpr (std::is_reference_v<R>) {
+            return static_cast<R>(**w->value);
+        } else if constexpr (!std::is_void_v<R>) {
+            return std::move(*w->value);
+        }
     }
     /// True on the thread running the main loop.
     bool on_main_loop() const { return std::this_thread::get_id() == main_thread_.load(); }

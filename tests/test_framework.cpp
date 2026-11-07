@@ -470,3 +470,30 @@ TEST_CASE("crash: a fatal signal leaves a report with a backtrace") {
     CHECK(text.find("backtrace:") != std::string::npos);
     CHECK(text.find("last words before the crash") != std::string::npos);
 }
+
+namespace {
+struct InvokeApp : forge::Application {
+    InvokeApp() : Application({"invoke-app", "1.0.0"}) {}
+    int value = 5;
+};
+}  // namespace
+
+TEST_CASE("framework: invoke() runs on the main loop and carries errors back as new exceptions") {
+    forge::testing::AppRunner<InvokeApp> r;
+    CHECK_FALSE(r->on_main_loop());
+    CHECK(r->invoke([&] { return r->on_main_loop(); }));
+    int& ref = r->invoke([&]() -> int& { return r->value; });
+    CHECK(&ref == &r->value);
+    r->invoke([] {});
+    try {
+        r->invoke([]() -> int { throw forge::http::HttpError(409, "busy", forge::json{{"holder", "x"}}); });
+        FAIL("expected HttpError");
+    } catch (const forge::http::HttpError& e) {
+        CHECK(e.status() == 409);
+        CHECK(std::string(e.what()) == "busy");
+        CHECK(e.body()["holder"] == "x");
+    }
+    CHECK_THROWS_AS(r->invoke([] { throw forge::ConfigError("bad key"); }), forge::ConfigError);
+    CHECK_THROWS_AS(r->invoke([] { throw std::out_of_range("x"); }), std::out_of_range);
+    CHECK_THROWS_WITH_AS(r->invoke([] { throw 42; }), "unknown exception", std::runtime_error);
+}
