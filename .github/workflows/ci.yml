@@ -32,6 +32,12 @@ jobs:
         working-directory: build/forgecpp/examples
         run: |
           set -euo pipefail
+          has() {  # has <pattern> <command...>: the command succeeds and prints the pattern
+            local pattern=$1; shift
+            local out
+            out=$("$@")
+            grep -q -- "$pattern" <<<"$out"
+          }
           run_app() {  # run_app <port> <command...>: start, probe over HTTP, stop with SIGTERM
             local port=$1; shift
             "$@" -D http.port=$port -D log.console=false &
@@ -39,7 +45,7 @@ jobs:
             for _ in $(seq 100); do curl -fs "http://127.0.0.1:$port/health" >/dev/null && break; sleep 0.1; done
             curl -fs "http://127.0.0.1:$port/health"; echo
             curl -fs "http://127.0.0.1:$port/forge/api/state" >/dev/null
-            curl -fs "http://127.0.0.1:$port/forge/" | grep -q "forge.js"
+            has "forge.js" curl -fs "http://127.0.0.1:$port/forge/"
             kill -TERM $pid
             wait $pid
           }
@@ -53,7 +59,7 @@ jobs:
           curl -fs http://127.0.0.1:18107/ -o /tmp/sa.html && grep -q "<title>Spectrum analyzer</title>" /tmp/sa.html
           for _ in $(seq 100); do curl -fs http://127.0.0.1:18107/api/frame -o /tmp/sa.json && grep -q '"live"' /tmp/sa.json && break; sleep 0.1; done
           curl -fs -X POST http://127.0.0.1:18107/forge/api/controls/peak_search -d '{}' >/dev/null
-          curl -fs http://127.0.0.1:18107/forge/api/controls/m1_on | grep -q true
+          has true curl -fs http://127.0.0.1:18107/forge/api/controls/m1_on
           curl -fs http://127.0.0.1:18107/api/trace.csv -o /tmp/sa.csv && head -1 /tmp/sa.csv | grep -q frequency_hz
           test "$(wc -l < /tmp/sa.csv)" -eq 1002
           curl -fs http://127.0.0.1:18107/api/iq.cs16 -o /tmp/sa.cs16 && test -s /tmp/sa.cs16
@@ -68,16 +74,16 @@ jobs:
           pid=$!
           for _ in $(seq 150); do curl -fs http://127.0.0.1:18109/api/frame -o /tmp/sa.json && grep -q '"fixed":true' /tmp/sa.json && break; sleep 0.1; done
           grep -q '"fixed":true' /tmp/sa.json
-          curl -fs http://127.0.0.1:18108/forge/api/controls/tap_channels | grep -q '"value":\[2\]'
+          has '"value":\[2\]' curl -fs http://127.0.0.1:18108/forge/api/controls/tap_channels
           # forge.v1: forgectl over ZeroMQ and HTTP, the audit trail, streams, telnet, Python clients
           ctl="$HOME/forgecpp/bin/forgectl"
-          "$ctl" -e tcp://127.0.0.1:5557 info | grep -q radio-controller
-          "$ctl" -e tcp://127.0.0.1:5557 set rx_lo_mhz 2412 | grep -q 2412
-          "$ctl" -e tcp://127.0.0.1:5557 audit | grep -q rx_lo_mhz
-          "$ctl" -e http://127.0.0.1:18108 get rx_lo_mhz | grep -q 2412
-          "$ctl" -e tcp://127.0.0.1:5567 health | grep -q STATE_OK
-          "$ctl" -e tcp://127.0.0.1:5567 streams | grep -q sa.v1.Spectrum
-          curl -fs http://127.0.0.1:18109/metrics | grep -q '^sa_sweeps'
+          has radio-controller "$ctl" -e tcp://127.0.0.1:5557 info
+          has 2412 "$ctl" -e tcp://127.0.0.1:5557 set rx_lo_mhz 2412
+          has rx_lo_mhz "$ctl" -e tcp://127.0.0.1:5557 audit
+          has 2412 "$ctl" -e http://127.0.0.1:18108 get rx_lo_mhz
+          has STATE_OK "$ctl" -e tcp://127.0.0.1:5567 health
+          has sa.v1.Spectrum "$ctl" -e tcp://127.0.0.1:5567 streams
+          has '^sa_sweeps' curl -fs http://127.0.0.1:18109/metrics
           python3 - <<'EOF'
           import socket, time
           s = socket.create_connection(("127.0.0.1", 2323), timeout=5)
@@ -104,8 +110,8 @@ jobs:
           ./thermostat -c thermostat.toml -D http.port=18104 -D log.console=false &
           pid=$!
           for _ in $(seq 100); do curl -fs http://127.0.0.1:18104/health >/dev/null && break; sleep 0.1; done
-          curl -fs http://127.0.0.1:18104/ | grep -q "<title>Thermostat</title>"
-          curl -fs -X PUT http://127.0.0.1:18104/api/settings -d '{"hysteresis": 0.5}' | grep -q '"hysteresis":0.5'
+          has "<title>Thermostat</title>" curl -fs http://127.0.0.1:18104/
+          has '"hysteresis":0.5' curl -fs -X PUT http://127.0.0.1:18104/api/settings -d '{"hysteresis": 0.5}'
           test "$(curl -s -o /dev/null -w '%{http_code}' -X PUT http://127.0.0.1:18104/api/settings -d '{"hysteresis": 9}')" = 422
           kill -TERM $pid
           wait $pid
