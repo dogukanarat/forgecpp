@@ -47,6 +47,24 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
   radio-controller; sensor-service, pipeline and thermostat declare their
   configuration.
 - Toolchain file for Zynq-7000 (`cmake/toolchains/zynq7000-armhf.cmake`).
+- Deterministic time for tests: `Application::use_manual_clock()` /
+  `advance_time()`, `AppRunner(args, {.manual_time = true})` + `r.advance(d)`,
+  `Application::now()`.
+- Threading: `background(work, then)`; `[forge].slow_task_ms` warns about
+  long main loop tasks (`forge.loop.slow_tasks`); `web::Dashboard` refuses
+  use outside the main loop; `call()` on the main loop runs at once.
+  [docs/threading.md](docs/threading.md).
+- Tutorials ([docs/tutorials](docs/tutorials/README.md)) around a tested
+  example (`examples/pump`); Doxygen API reference (`forgecpp_docs`,
+  `docs/build-api.sh`).
+- API policy ([docs/API.md](docs/API.md)) and `tools/api-check.py`:
+  exported symbols and configuration keys of a minor series are kept.
+- `FORGE_PCH` / `forge_add_app(... PCH)`: precompiled `<forge/forge.hpp>`
+  for faster edit-compile cycles (off by default: clean builds of small
+  projects get slower).
+- Several instances of an application (`--instance`, `<name>@.service` with
+  `forge_add_app(... TEMPLATE)`); forge-hub's proxy `/apps/<name>/`; card
+  layouts per user with `[auth]`.
 - Yocto: `yocto/` is a layer; `yocto/kas/qemuarm64.yml` builds and boots an
   image with runtime tests.
 - CI: sanitizers (ASan+UBSan, TSan), the applications as real systemd units,
@@ -54,6 +72,10 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
 
 ### Changed
 
+- cpp-httplib is built as a library (`libcpp-httplib`) instead of
+  header-only: a file including `<forge/forge.hpp>` compiles in 8.1 s
+  instead of 17.6 s (-O2; -O0: 5.8 instead of 9.7 s). pkg-config users link
+  `-lcpp-httplib` (in `forgecpp.pc`).
 - `zmq::Server` is a ROUTER socket with worker threads (REQ clients and
   messages unchanged); `serve_control(service, endpoint, workers)`.
 - `ControlService`, `web::Dashboard`, forge-hub and `invoke_for` throw

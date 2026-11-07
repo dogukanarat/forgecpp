@@ -35,7 +35,8 @@ S = "${WORKDIR}/git"
 # same protobuf sources (generated code must match libprotobuf exactly).
 DEPENDS = "openssl zlib libxml2 forgecpp-protoc-native"
 
-inherit cmake pkgconfig systemd python3-dir
+# python3native: cpp-httplib is split into a header and a source file at build time
+inherit cmake pkgconfig systemd python3-dir python3native
 
 # forge-hub, the dashboard of the device's applications (port 80): built with the
 # "hub" PACKAGECONFIG, installed only when the image asks for it:

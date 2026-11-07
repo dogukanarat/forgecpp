@@ -903,6 +903,17 @@ hello on-failure without a watchdog, sensor-service and pipeline on-failure
 with a watchdog, thermostat `always`, radio-controller and spectrum-analyzer
 on-failure (3 in 10 minutes) with a 30 s watchdog.
 
+## Build times
+
+A source file including `<forge/forge.hpp>` takes about 8 s to compile (-O2;
+cpp-httplib is a compiled library, spdlog and protobuf too). For quicker
+edit-compile cycles while developing, `-DFORGE_PCH=ON` precompiles the header
+for every `forge_add_app` / `forge_add_test` target (one file edited in the
+pump example: 17.8 -> 11.9 s); it makes clean builds of small projects slower,
+so it is off by default. Include only the headers you need
+(`<forge/application.hpp>`, `<forge/web.hpp>`, ...) in files that do not need
+everything.
+
 ## Versions
 
 Semantic versions, changes in [CHANGELOG.md](CHANGELOG.md). Until 1.0 a minor

@@ -377,7 +377,10 @@ dep_args() {
         tomlplusplus)
             echo "-DBUILD_EXAMPLES=OFF" ;;
         cpp-httplib)
-            echo "-DHTTPLIB_COMPILE=OFF -DHTTPLIB_TEST=OFF -DHTTPLIB_INSTALL=ON"
+            # Compiled, not header-only: its function bodies are built once into
+            # libcpp-httplib instead of in every file that includes forge/http.hpp
+            # (a file including forge/forge.hpp: 17.6 -> 8.1 s at -O2).
+            echo "-DHTTPLIB_COMPILE=ON -DHTTPLIB_SHARED=${SHARED} -DHTTPLIB_TEST=OFF -DHTTPLIB_INSTALL=ON"
             echo "-DHTTPLIB_USE_BROTLI_IF_AVAILABLE=OFF -DHTTPLIB_USE_ZSTD_IF_AVAILABLE=OFF"
             case "${WITH_SSL}" in
                 ON)  echo "-DHTTPLIB_REQUIRE_OPENSSL=ON" ;;
