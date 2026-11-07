@@ -66,7 +66,9 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
 - Python modules are installed into site-packages instead of
   `share/<name>/python`; `clients/forge_msg.py` is now `forge.v1.framing`.
 - Yocto: `forgecpp-python` is now `python3-forge-v1` (RPROVIDES the old name).
-- `sensor_service` is `sensor-service` (binary, configuration file).
+- `sensor_service` is `sensor-service` (binary, configuration file); the
+  example directories use the daemons' names (`examples/radio-controller`,
+  `examples/spectrum-analyzer`, `examples/sensor-service`).
 - Hub restart policies moved from forge-hub to the units.
 
 ### Deprecated

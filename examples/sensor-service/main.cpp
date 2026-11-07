@@ -9,7 +9,7 @@
 //   * a JSON REST API with forge::http::Server
 //   * interactive console commands with completion (-i) as a backup
 //
-//   ./sensor_service -c sensor_service.toml -i
+//   ./sensor-service -c sensor-service.toml -i
 //   curl localhost:8080/api/stats
 //   curl -X POST localhost:8080/forge/api/controls/rate_hz -d '{"value": 50}'
 

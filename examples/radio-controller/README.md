@@ -195,7 +195,7 @@ As a forgecpp example (not installed):
 
 ```sh
 ./install.sh --examples
-cd build/forgecpp/examples/radio_controller
+cd build/forgecpp/examples/radio-controller
 ./radio-controller -c radio-controller.toml
 ```
 
@@ -203,7 +203,7 @@ Standalone against an installed forgecpp; this installs the daemon, its
 config, the systemd unit and the clients (the Yocto recipe builds it this way):
 
 ```sh
-cmake -S examples/radio_controller -B build -DCMAKE_PREFIX_PATH=<forgecpp prefix>
+cmake -S examples/radio-controller -B build -DCMAKE_PREFIX_PATH=<forgecpp prefix>
 cmake --build build && ctest --test-dir build && sudo cmake --install build
 ```
 

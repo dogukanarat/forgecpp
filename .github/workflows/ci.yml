@@ -64,9 +64,9 @@ jobs:
             wait $pid
           }
           ./hello --version
-          run_app 18105 ./radio_controller/radio-controller --backend sim -D http.enabled=true -D radio.sample_rate_hz=5e6
-          run_app 18106 ./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml --backend sim
-          ./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml --backend sim \
+          run_app 18105 ./radio-controller/radio-controller --backend sim -D http.enabled=true -D radio.sample_rate_hz=5e6
+          run_app 18106 ./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml --backend sim
+          ./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml --backend sim \
             -D http.port=18107 -D log.console=false -D analyzer.span_hz=20e6 &
           pid=$!
           for _ in $(seq 100); do curl -fs http://127.0.0.1:18107/health >/dev/null && break; sleep 0.1; done
@@ -86,10 +86,10 @@ jobs:
           hub=$!
           for _ in $(seq 100); do curl -fs http://127.0.0.1:18110/health >/dev/null && break; sleep 0.1; done
           # both on one board: the analyzer on RX2 of radio-controller (simulated AD9361)
-          ./radio_controller/radio-controller -c radio_controller/radio-controller.toml --backend sim \
+          ./radio-controller/radio-controller -c radio-controller/radio-controller.toml --backend sim \
             -D http.port=18108 -D log.console=false -D radio.sample_rate_hz=5e6 &
           rc=$!
-          ./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml --backend radio \
+          ./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml --backend radio \
             -D http.port=18109 -D log.console=false &
           pid=$!
           for _ in $(seq 150); do curl -fs http://127.0.0.1:18109/api/frame -o /tmp/sa.json && grep -q '"fixed":true' /tmp/sa.json && break; sleep 0.1; done
@@ -117,11 +117,11 @@ jobs:
           EOF
           # forge-v1 from the install (site-packages), the examples' messages from the build
           site=$(dirname "$(dirname "$(dirname "$(find "$HOME/forgecpp" -path '*/forge/v1/framing.py')")")")
-          export PYTHONPATH="$site:$PWD/radio_controller/ad936x/python:$PWD/spectrum_analyzer/python"
+          export PYTHONPATH="$site:$PWD/radio-controller/ad936x/python:$PWD/spectrum-analyzer/python"
           export PYTHONDONTWRITEBYTECODE=1
-          python3 ../../../examples/radio_controller/clients/rx_capture.py tcp://127.0.0.1:5555 --seconds 0.5 > /tmp/rx.txt
+          python3 ../../../examples/radio-controller/clients/rx_capture.py tcp://127.0.0.1:5555 --seconds 0.5 > /tmp/rx.txt
           grep -q "blocks" /tmp/rx.txt
-          python3 ../../../examples/spectrum_analyzer/clients/spectrum_watch.py tcp://127.0.0.1:5566 --count 2 > /tmp/sw.txt
+          python3 ../../../examples/spectrum-analyzer/clients/spectrum_watch.py tcp://127.0.0.1:5566 --count 2 > /tmp/sw.txt
           grep -q fixed /tmp/sw.txt
           # forge-hub: both registered with their ports; a crash is reported (no systemd unit
           # here, so nothing restarts it), a stop request is not a crash
@@ -195,7 +195,7 @@ jobs:
         run: |
           ./install.sh --prefix /usr/local --without-iio \
             --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          cmake -S examples/radio_controller -B build/radio-controller -G Ninja -DCMAKE_PREFIX_PATH=/usr/local \
+          cmake -S examples/radio-controller -B build/radio-controller -G Ninja -DCMAKE_PREFIX_PATH=/usr/local \
             -DBUILD_TESTING=OFF -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           ninja -C build/radio-controller
           sudo cmake --install build/radio-controller

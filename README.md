@@ -81,7 +81,7 @@ kill -HUP $(pidof pump)            # reload the configuration
 | [doctest](https://github.com/doctest/doctest) | v2.5.3 | Unit testing | `forge/testing.hpp`, `forge_add_test()` |
 | [libzmq](https://github.com/zeromq/libzmq) + [cppzmq](https://github.com/zeromq/cppzmq) | v4.3.5 / v4.11.0 | ZeroMQ messaging (pub/sub, push/pull, request/reply) | `forge/zmq.hpp`, forge.v1 endpoints |
 | [protobuf](https://github.com/protocolbuffers/protobuf) | v21.12 | Message standard (binary + JSON mapping), `protoc` | `proto/forge/v1`, `forge_add_proto()`, `forgectl` |
-| [libiio](https://github.com/analogdevicesinc/libiio) | v0.26 | Industrial I/O devices (ADI transceivers, ADCs, ...) | `examples/radio_controller`, `examples/spectrum_analyzer` |
+| [libiio](https://github.com/analogdevicesinc/libiio) | v0.26 | Industrial I/O devices (ADI transceivers, ADCs, ...) | `examples/radio-controller`, `examples/spectrum-analyzer` |
 
 ## Installation
 
@@ -823,10 +823,10 @@ without extra files.
 | Example | What it shows |
 |---|---|
 | `examples/hello` | The smallest daemon (lambda style), a console command |
-| `examples/sensor_service` (`sensor-service`) | Every building block: channel, thread pool, events, control panel, own page, alarm with hysteresis |
+| `examples/sensor-service` (`sensor-service`) | Every building block: channel, thread pool, events, control panel, own page, alarm with hysteresis |
 | `examples/pipeline` | **Multi-threaded application:** N producer threads → lock-free `Channel` → dispatcher thread → `ThreadPool` workers → result channel → main loop. Bounded in-flight work (backpressure), atomic counters, alarms raised from worker threads, clean shutdown |
-| [`examples/radio_controller`](examples/radio_controller/README.md) | **AD936x radio daemon (libiio + forge.v1):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.v1.IqBlock` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.v1.TxBlock`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe. Built when forgecpp has ZeroMQ |
-| [`examples/spectrum_analyzer`](examples/spectrum_analyzer/README.md) | **AD936x spectrum analyzer with a web UI** (on its own RX path, or on RX2 next to the radio controller): realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, `sa.v1.Spectrum` stream. Shares the AD936x backend with the radio controller |
+| [`examples/radio-controller`](examples/radio-controller/README.md) | **AD936x radio daemon (libiio + forge.v1):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.v1.IqBlock` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.v1.TxBlock`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe. Built when forgecpp has ZeroMQ |
+| [`examples/spectrum-analyzer`](examples/spectrum-analyzer/README.md) | **AD936x spectrum analyzer with a web UI** (on its own RX path, or on RX2 next to the radio controller): realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, `sa.v1.Spectrum` stream. Shares the AD936x backend with the radio controller |
 | `forgecpp-new` | Scaffolds an application with all of the above: its own proto + stream, commands, schema, `[forge]` endpoints, telnet, an `AppRunner` test and a Python client |
 | `examples/thermostat` | **Web-first application:** its own multi-page site (overview, live SVG chart, settings form), custom REST API with per-field validation, live data via `publish_web`, radio/segmented controls, alarms, settings persisted with `save_json` |
 
@@ -836,14 +836,14 @@ cd build/forgecpp/examples
 ./pipeline -c pipeline.toml --producers 4 -i      # http://localhost:8080/forge/
 ./thermostat -c thermostat.toml                    # http://localhost:8080/
 ./sensor-service -c sensor-service.toml -i --simulate-spikes
-./radio_controller/radio-controller -c radio_controller/radio-controller.toml   # simulated AD9364
-./radio_controller/radio-controller --backend iio --uri ip:192.168.2.1         # real AD936x via iiod
-./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml  # http://localhost:8081/
-./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml --backend radio  # RX2 of the radio controller
+./radio-controller/radio-controller -c radio-controller/radio-controller.toml   # simulated AD9364
+./radio-controller/radio-controller --backend iio --uri ip:192.168.2.1         # real AD936x via iiod
+./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml  # http://localhost:8081/
+./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml --backend radio  # RX2 of the radio controller
 ```
 
 The radio controller and the spectrum analyzer are also standalone CMake
-projects (`cmake -S examples/radio_controller -B build
+projects (`cmake -S examples/radio-controller -B build
 -DCMAKE_PREFIX_PATH=<forgecpp prefix>`) that install the daemon, its config
 and systemd unit; their Yocto recipes in `yocto/recipes-connectivity` build
 them that way. Both use `examples/common/ad936x` (libiio backend, simulator,
@@ -882,9 +882,9 @@ third_party/       submodules
 cmake/             package config, pkg-config, forge_add_app/forge_add_web/forge_add_test
 tools/             forgecpp-new (project scaffolder), forgectl (forge.v1 client)
 hub/               forge-hub: device dashboard and supervisor (a product, not an example)
-examples/          hello, sensor_service, pipeline (multi-threaded), thermostat (web site),
-                   radio_controller (AD9364 over libiio + ZeroMQ),
-                   spectrum_analyzer (AD936x spectrum analyzer), common/ad936x
+examples/          hello, sensor-service, pipeline (multi-threaded), thermostat (web site),
+                   radio-controller (AD9364 over libiio + ZeroMQ),
+                   spectrum-analyzer (AD936x spectrum analyzer), common/ad936x
 tests/             doctest unit tests
 yocto/             bitbake recipes (forgecpp, radio-controller, spectrum-analyzer)
 install.sh, get.sh installation

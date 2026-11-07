@@ -1,7 +1,7 @@
 # spectrum-analyzer: swept/realtime spectrum analyzer on the AD9364 RX path, web UI first.
 #
 # In-tree:     one of the forgecpp examples (install.sh --examples); not installed.
-# Standalone:  cmake -S examples/spectrum_analyzer -B build -DCMAKE_PREFIX_PATH=<forgecpp prefix>
+# Standalone:  cmake -S examples/spectrum-analyzer -B build -DCMAKE_PREFIX_PATH=<forgecpp prefix>
 #              installs the daemon, its config and systemd unit (used by Yocto).
 cmake_minimum_required(VERSION 3.16)
 project(spectrum-analyzer VERSION 1.0.0 LANGUAGES CXX)
@@ -15,7 +15,7 @@ if(NOT TARGET forgecpp::forgecpp)
     find_package(forgecpp 0.3 REQUIRED)
 endif()
 
-# AD936x access (libiio backend + simulator) and DSP, shared with radio_controller.
+# AD936x access (libiio backend + simulator) and DSP, shared with radio-controller.
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/ad936x ${CMAKE_CURRENT_BINARY_DIR}/ad936x)
 
 # Everything except main() lives in a static library so the tests can use it.

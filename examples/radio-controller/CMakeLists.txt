@@ -1,7 +1,7 @@
 # radio-controller: AD9364 (AD936x) control and IQ streaming over ZeroMQ.
 #
 # In-tree:     one of the forgecpp examples (install.sh --examples); not installed.
-# Standalone:  cmake -S examples/radio_controller -B build -DCMAKE_PREFIX_PATH=<forgecpp prefix>
+# Standalone:  cmake -S examples/radio-controller -B build -DCMAKE_PREFIX_PATH=<forgecpp prefix>
 #              installs the daemon, its config, systemd unit and clients (used by Yocto).
 cmake_minimum_required(VERSION 3.16)
 project(radio-controller VERSION 1.0.0 LANGUAGES CXX)
@@ -15,7 +15,7 @@ if(NOT TARGET forgecpp::forgecpp)
     find_package(forgecpp 0.3 REQUIRED)
 endif()
 
-# AD936x access (libiio backend + simulator) and DSP, shared with spectrum_analyzer.
+# AD936x access (libiio backend + simulator) and DSP, shared with spectrum-analyzer.
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/ad936x ${CMAKE_CURRENT_BINARY_DIR}/ad936x)
 
 # Everything except main() lives in a static library so the tests can use it.

@@ -193,7 +193,7 @@ second per segment.
 | `proto/sa/v1` | `sa.v1.Spectrum` |
 | `clients/` | `spectrum_watch.py` |
 | `web/` | the analyzer page (canvas spectrum and waterfall, no dependencies) |
-| `../common/ad936x` | AD936x access through libiio, the simulator, FFT and windows (shared with radio_controller) |
+| `../common/ad936x` | AD936x access through libiio, the simulator, FFT and windows (shared with radio-controller) |
 
 Tests (`tests/`) cover the DSP scaling, plans, detectors, traces, peaks and
 measurements, the engine on the simulator (realtime and swept spans, markers,

@@ -13,7 +13,7 @@ SRC_URI = "git://github.com/dogukanarat/forgecpp.git;protocol=https;branch=maste
 SRCREV ?= "${AUTOREV}"
 PV = "1.0.0+git${SRCPV}"
 
-S = "${WORKDIR}/git/examples/radio_controller"
+S = "${WORKDIR}/git/examples/radio-controller"
 
 # forgecpp provides ZeroMQ, protobuf and libiio (built from its submodules);
 # forgecpp-protoc-native generates the application's messages (radio.v1, sa.v1).

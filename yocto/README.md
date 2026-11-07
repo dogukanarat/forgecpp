@@ -74,7 +74,7 @@ drop-in (`<unit>.d/override.conf`) instead of patching the unit.
 ## radio-controller
 
 `recipes-connectivity/radio-controller/radio-controller_git.bb` builds the
-AD9364 daemon from `examples/radio_controller` and configures it for the on-board
+AD9364 daemon from `examples/radio-controller` and configures it for the on-board
 radio (`backend = "iio"`, `uri = "local:"`) with its state kept in
 `/var/lib/radio-controller`. Override with `RADIO_URI = "ip:192.168.2.1"` etc.
 
@@ -89,7 +89,7 @@ HDL cores), so that the kernel exposes `ad9361-phy`, `cf-ad9361-lpc` and
 ## spectrum-analyzer
 
 `recipes-connectivity/spectrum-analyzer/spectrum-analyzer_git.bb` builds the
-spectrum analyzer from `examples/spectrum_analyzer` (web UI on port 8081, state
+spectrum analyzer from `examples/spectrum-analyzer` (web UI on port 8081, state
 in `/var/lib/spectrum-analyzer`). By default (`SA_BACKEND = "radio"`) it
 analyzes RX2 of an AD9361/AD9363 through radio-controller, so both daemons
 run together; the unit starts after radio-controller.
