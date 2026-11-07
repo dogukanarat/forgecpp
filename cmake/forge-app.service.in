@@ -17,7 +17,7 @@ Restart=@FORGE_UNIT_RESTART@
 RestartSec=@FORGE_UNIT_RESTART_DELAY@
 # A main loop that stops feeding the watchdog this long is hung: killed and restarted.
 WatchdogSec=@FORGE_UNIT_WATCHDOG@
-StateDirectory=@FORGE_UNIT_NAME@
+StateDirectory=@FORGE_UNIT_STATE_DIR@
 @FORGE_UNIT_EXTRA@
 [Install]
 WantedBy=multi-user.target

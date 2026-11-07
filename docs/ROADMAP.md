@@ -23,6 +23,7 @@ pre-production security work: forgecpp is used in the lab for now.
 | Restarts, start limits and the hub's view only tested against a fake systemd | CI job `systemd`: forge-hub and radio-controller installed as real units; crash -> restart -> the hub counts it, the start limit -> failed -> the hub says it gave up, the hub's restart and stop buttons. It found two bugs (the Result after an automatic restart is refused, NOTIFY_SOCKET leaking into the hub's children). |
 | No Yocto build in CI | `yocto/` is a layer; `yocto/kas/qemuarm64.yml` builds an image from the checkout and boots it with runtime tests; nightly workflow `yocto`. |
 | Zynq-7000 (armhf) build not verified | `cmake/toolchains/zynq7000-armhf.cmake`; CI job `cross-armhf` cross-builds everything (host protoc), packages it and runs radio-controller and forgectl under QEMU user emulation. |
+| One application could run only once per device in forge-hub | `name@instance`: `--instance` / `$FORGE_INSTANCE` / the template unit's instance; `forge_add_app(... TEMPLATE)` generates `<name>@.service` (config `<instance>.toml`, own StateDirectory); `AppRegistration.instance`; the hub keeps instances apart. |
 
 ## Plan
 
@@ -36,8 +37,6 @@ logic (alarms with hysteresis, rate limits) is tested without sleeping.
 
 ### 10. forge-hub follow-ups
 
-- Several instances of one application (`name@instance`, matching systemd
-  template units).
 - One port for everything: a reverse proxy under `/apps/<name>/` (needs the
   pages to use relative URLs; forge.js gets a base path).
 

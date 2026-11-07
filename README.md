@@ -777,8 +777,8 @@ browser ──▶ http://<device>/ ──links──▶ http://<device>:<port>/ 
   A crash or a hang is restarted by systemd with or without the hub; after too
   many restarts the unit is `failed` and stays down. The hub reads it all from
   systemd (`systemctl show`: state, `NRestarts`, `Result`, the policy) and
-  shows it: "killed by a signal; systemd restarts it in 2 s", "gave up: more
-  than 3 restarts in 600 s". Crashes and failed units are alarms on the hub
+  shows it: "killed by a signal; systemd restarts it in 2 s", "gave up after
+  3 restarts in 600 s (last: killed by a signal)". Crashes and failed units are alarms on the hub
   (`[hub] critical = true` makes a failed unit a critical one).
 - **Operators** restart, stop and start units from the page,
   `forgectl -e tcp://<device>:5551 call restart name=radio-controller` or the
@@ -789,6 +789,12 @@ browser ──▶ http://<device>/ ──links──▶ http://<device>:<port>/ 
   and checked too; the hub reports when they end ("ended without
   unregistering", "exited with code 3") but cannot restart them. A stop request
   (`SIGTERM`, Ctrl-C) unregisters with that reason and is never reported as a crash.
+- **Several instances** of one application (two radios): `forge_add_app(...
+  TEMPLATE)` also generates `<name>@.service`; `systemctl start
+  radio-controller@rx2` runs it with `/etc/radio-controller/rx2.toml`,
+  `--instance rx2` and its own state directory, and the hub lists it as
+  `radio-controller@rx2` ("radio-controller (rx2)") next to the others.
+  `--instance` (or `$FORGE_INSTANCE`) does the same without systemd.
 - **Other web interfaces** on the device can be listed without registering:
   `[static.camera] url = "http://{host}:8554/"`, `health_url = ...`.
 
@@ -825,7 +831,7 @@ without extra files.
 | `examples/hello` | The smallest daemon (lambda style), a console command |
 | `examples/sensor-service` (`sensor-service`) | Every building block: channel, thread pool, events, control panel, own page, alarm with hysteresis |
 | `examples/pipeline` | **Multi-threaded application:** N producer threads → lock-free `Channel` → dispatcher thread → `ThreadPool` workers → result channel → main loop. Bounded in-flight work (backpressure), atomic counters, alarms raised from worker threads, clean shutdown |
-| [`examples/radio-controller`](examples/radio-controller/README.md) | **AD936x radio daemon (libiio + forge.v1):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.v1.IqBlock` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.v1.TxBlock`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe. Built when forgecpp has ZeroMQ |
+| [`examples/radio-controller`](examples/radio-controller/README.md) | **AD936x radio daemon (libiio + forge.v1):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.v1.IqBlock` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.v1.TxBlock`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe |
 | [`examples/spectrum-analyzer`](examples/spectrum-analyzer/README.md) | **AD936x spectrum analyzer with a web UI** (on its own RX path, or on RX2 next to the radio controller): realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, `sa.v1.Spectrum` stream. Shares the AD936x backend with the radio controller |
 | `forgecpp-new` | Scaffolds an application with all of the above: its own proto + stream, commands, schema, `[forge]` endpoints, telnet, an `AppRunner` test and a Python client |
 | `examples/thermostat` | **Web-first application:** its own multi-page site (overview, live SVG chart, settings form), custom REST API with per-field validation, live data via `publish_web`, radio/segmented controls, alarms, settings persisted with `save_json` |

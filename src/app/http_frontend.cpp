@@ -161,6 +161,7 @@ void HttpFrontend::create_web(const Config& cfg) {
     http_->get_json(api + "/info", [this](const http::Request&) {
         const auto& info = app_.info();
         return json{{"name", info.name},
+                    {"instance", app_.instance()},
                     {"version", info.version},
                     {"description", info.description},
                     {"forgecpp", version_string},
@@ -223,7 +224,7 @@ void HttpFrontend::create_web(const Config& cfg) {
 
     // Card layouts of the pages (forge.layout in forge.js): kept on the device, so
     // every browser shows the same arrangement.
-    layouts_.load(cfg.value<std::string>("web.layout_file"), app_.info().name, logger);
+    layouts_.load(cfg.value<std::string>("web.layout_file"), app_.id(), logger);
     const auto page_of = [](const http::Request& req) {
         auto page = req.path_params.at("page");
         if (!LayoutStore::valid_page(page)) throw Error(400, "invalid page name");

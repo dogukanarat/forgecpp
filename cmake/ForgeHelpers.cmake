@@ -14,6 +14,10 @@
 #       [RESTART_DELAY <s>]          default 2
 #       [WATCHDOG <s>]               hung main loop -> killed and restarted (default 30; 0 = off)
 #       [DESCRIPTION <text>] [AFTER <units...>] [USER <user>]
+#       [TEMPLATE]                   also <name>@.service: several instances on one device,
+#                                    <name>@<instance> reads <sysconfdir>/<name>/<instance>.toml,
+#                                    runs with --instance <instance> and its own StateDirectory;
+#                                    forge-hub lists each as <name>@<instance>
 #       [WEB <dir>]                  embed <dir> as the app's web pages (see forge_add_web)
 #       [NO_INSTALL])
 #
@@ -173,7 +177,7 @@ function(forge_install_python)
 endfunction()
 
 function(forge_add_app name)
-    cmake_parse_arguments(ARG "NO_INSTALL;SYSTEMD"
+    cmake_parse_arguments(ARG "NO_INSTALL;SYSTEMD;TEMPLATE"
         "CONFIG;SERVICE;WEB;RESTART;MAX_RESTARTS;RESTART_WINDOW;RESTART_DELAY;WATCHDOG;DESCRIPTION;USER"
         "SOURCES;LIBS;AFTER" ${ARGN})
     if(NOT ARG_SOURCES)
@@ -202,6 +206,13 @@ function(forge_add_app name)
             RESTART_DELAY "${ARG_RESTART_DELAY}" WATCHDOG "${ARG_WATCHDOG}" DESCRIPTION "${ARG_DESCRIPTION}"
             USER "${ARG_USER}" AFTER ${ARG_AFTER})
         set(ARG_SERVICE "${CMAKE_CURRENT_BINARY_DIR}/${name}.service")
+        if(ARG_TEMPLATE)
+            forge_generate_unit(${name} "${CMAKE_CURRENT_BINARY_DIR}/${name}@.service" INSTANCE
+                RESTART "${ARG_RESTART}" MAX_RESTARTS "${ARG_MAX_RESTARTS}" RESTART_WINDOW "${ARG_RESTART_WINDOW}"
+                RESTART_DELAY "${ARG_RESTART_DELAY}" WATCHDOG "${ARG_WATCHDOG}" DESCRIPTION "${ARG_DESCRIPTION}"
+                USER "${ARG_USER}" AFTER ${ARG_AFTER})
+            list(APPEND ARG_SERVICE "${CMAKE_CURRENT_BINARY_DIR}/${name}@.service")
+        endif()
     endif()
 
     if(ARG_NO_INSTALL)
@@ -297,7 +308,7 @@ endfunction()
 # Writes a systemd unit for the application <name> (see forge_add_app).
 set(_FORGE_HELPERS_DIR "${CMAKE_CURRENT_LIST_DIR}")
 function(forge_generate_unit name output)
-    cmake_parse_arguments(ARG "" "RESTART;MAX_RESTARTS;RESTART_WINDOW;RESTART_DELAY;WATCHDOG;DESCRIPTION;USER" "AFTER" ${ARGN})
+    cmake_parse_arguments(ARG "INSTANCE" "RESTART;MAX_RESTARTS;RESTART_WINDOW;RESTART_DELAY;WATCHDOG;DESCRIPTION;USER" "AFTER" ${ARGN})
     foreach(pair "RESTART;on-failure" "MAX_RESTARTS;3" "RESTART_WINDOW;600" "RESTART_DELAY;2" "WATCHDOG;30")
         list(GET pair 0 key)
         list(GET pair 1 def)
@@ -332,6 +343,14 @@ function(forge_generate_unit name output)
     set(FORGE_UNIT_RESTART_DELAY "${ARG_RESTART_DELAY}")
     set(FORGE_UNIT_WATCHDOG "${ARG_WATCHDOG}")
     set(FORGE_UNIT_EXEC "${CMAKE_INSTALL_FULL_BINDIR}/${name} --config ${CMAKE_INSTALL_FULL_SYSCONFDIR}/${name}/${name}.toml")
+    set(FORGE_UNIT_STATE_DIR "${name}")
+    if(ARG_INSTANCE)
+        # Template unit <name>@.service: <name>@<instance> reads <sysconfdir>/<name>/<instance>.toml.
+        set(FORGE_UNIT_NAME "${name}@")
+        set(FORGE_UNIT_DESCRIPTION "${FORGE_UNIT_DESCRIPTION} (%i)")
+        set(FORGE_UNIT_EXEC "${CMAKE_INSTALL_FULL_BINDIR}/${name} --config ${CMAKE_INSTALL_FULL_SYSCONFDIR}/${name}/%i.toml --instance %i")
+        set(FORGE_UNIT_STATE_DIR "${name}/%i")
+    endif()
     set(FORGE_UNIT_EXTRA "")
     if(ARG_USER)
         set(FORGE_UNIT_EXTRA "User=${ARG_USER}\n")

@@ -41,6 +41,8 @@ forge_add_app(radio-controller
     # restarted, at most 3 times in 10 minutes, then the unit fails (forge-hub shows it).
     DESCRIPTION "AD936x radio controller (forgecpp)"
     RESTART on-failure MAX_RESTARTS 3 RESTART_WINDOW 600 RESTART_DELAY 2 WATCHDOG 30
+    # radio-controller@<radio>.service for several transceivers: /etc/radio-controller/<radio>.toml
+    TEMPLATE
     ${_install_mode})
 
 # Run it from the build dir with its config next to it.

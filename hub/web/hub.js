@@ -76,7 +76,8 @@
     else if (a.state === 'STATE_RUNNING' && (a.health === 'degraded' || a.alarms_active > 0)) tone = 'hub-warn';
     const running = ['STATE_RUNNING', 'STATE_UNRESPONSIVE', 'STATE_STARTING'].indexOf(a.state) >= 0;
     const hasPage = a.static_entry ? !!a.url : running && app.http_port > 0;
-    const title = app.title || app.name;
+    const base = app.title || app.name.split('@')[0];
+    const title = app.instance ? base + ' (' + app.instance + ')' : base;
 
     // The header is the drag handle of the card (forge.layout).
     const head = el('header', { title: 'Drag to move' }, [

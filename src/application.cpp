@@ -121,6 +121,10 @@ Application::Application(AppInfo info, std::string installed_config)
     cli.add_flag("--syslog", syslog_, "Also log to syslog");
     cli.add_flag("-i,--interactive", interactive_, "Start the interactive console");
     cli.add_option("--http", http_listen_, "Enable the HTTP server on [HOST:]PORT")->type_name("[HOST:]PORT");
+    cli.add_option("--instance", instance_,
+                   "Instance name when the application runs several times (default: the instance of its "
+                   "systemd template unit <name>@<instance>, or $FORGE_INSTANCE)")
+        ->type_name("NAME");
     cli.add_flag("--print-config", print_config_, "Print the effective configuration as JSON and exit");
     cli.add_flag("--help-config", help_config_, "Describe every configuration key and exit");
     cli.add_flag("--check-config", check_config_, "Validate the configuration and exit (status 0 = valid)");
@@ -333,7 +337,7 @@ int Application::run(int argc, char** argv) {
         scheduler_ = std::make_unique<Scheduler>([this](Scheduler::Task t) { post(std::move(t)); });
         start_signal_thread();
 
-        logger_->info("{} {} starting (forgecpp {}, pid {}, {} worker threads)", info_.name, info_.version,
+        logger_->info("{} {} starting (forgecpp {}, pid {}, {} worker threads)", id(), info_.version,
                       version_string, ::getpid(), pool_->get_thread_count());
         if (!is_standard_name(info_.name)) {
             logger_->warn("'{}' does not follow the daemon naming standard: lowercase words separated by '-' "
@@ -415,6 +419,18 @@ int Application::parse_command_line(int argc, char** argv) {
         cli_->parse(argc, argv);
     } catch (const CLI::ParseError& e) {
         return cli_->exit(e);
+    }
+    if (instance_.empty()) {
+        if (const char* env = std::getenv("FORGE_INSTANCE"); env && *env) {
+            instance_ = env;
+        } else {
+            instance_ = hub::instance_of(hub::unit_of(::getpid()));  // radio-controller@rx2.service
+        }
+    }
+    if (instance_.size() > 32 ||
+        instance_.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.") != std::string::npos) {
+        std::cerr << info_.name << ": invalid instance name '" << instance_ << "'\n";
+        return 2;
     }
     return -1;
 }

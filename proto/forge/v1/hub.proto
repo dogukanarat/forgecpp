@@ -44,6 +44,9 @@ message AppRegistration {
   string unit = 10;                   // systemd unit the application says it runs in (informational)
   string forgecpp = 11;               // framework version
   bool critical = 12;                 // its unit failing is a critical alarm on the hub
+  // Instance of an application that runs several times (systemd template unit
+  // <name>@<instance>.service); then `name` is "<name>@<instance>".
+  string instance = 13;
 }
 
 message Unregister {

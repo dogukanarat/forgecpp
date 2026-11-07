@@ -229,6 +229,12 @@ public:
 
     // --- services ---------------------------------------------------------
     const AppInfo& info() const { return info_; }
+    /// Instance name when the application runs several times on a device
+    /// (--instance, or the instance of its systemd template unit <name>@<instance>);
+    /// "" otherwise. Valid from run() on.
+    const std::string& instance() const { return instance_; }
+    /// "<name>" or "<name>@<instance>": how forge-hub, the logs and /forge/api/info name it.
+    std::string id() const { return instance_.empty() ? info_.name : info_.name + "@" + instance_; }
     /// Snapshot of the effective configuration (file + overrides + flags).
     Config config() const;
     Logger logger() const;
@@ -449,6 +455,7 @@ private:
     bool syslog_ = false;
     bool interactive_ = false;
     std::string http_listen_;
+    std::string instance_;
     bool print_config_ = false;
     bool help_config_ = false;
     bool check_config_ = false;

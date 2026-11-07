@@ -101,7 +101,8 @@ void HubRegistration::start(const Config& cfg) {
         const auto c = app_.config();
         const auto& info = app_.info();
         v1::AppRegistration r;
-        r.set_name(info.name);
+        r.set_name(app_.id());
+        r.set_instance(app_.instance());
         r.set_version(info.version);
         r.set_description(info.description);
         r.set_pid(static_cast<std::uint32_t>(::getpid()));

@@ -35,6 +35,8 @@ inline constexpr const char* default_endpoint = "tcp://127.0.0.1:5550";
 
 /// systemd unit (".service") the process runs in, from /proc/<pid>/cgroup ("" if none).
 std::string unit_of(int pid);
+/// Instance of a template unit: "radio-controller@rx2.service" -> "rx2" ("" otherwise).
+std::string instance_of(const std::string& unit);
 
 /// One request/reply exchange with a hub; nullopt when it does not answer in time.
 std::optional<v1::HubReply> exchange(const std::string& endpoint, const v1::HubRequest& request,

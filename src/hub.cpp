@@ -26,6 +26,13 @@ std::string unit_of(int pid) {
     return unit;
 }
 
+std::string instance_of(const std::string& unit) {
+    const auto at = unit.find('@');
+    const auto dot = unit.rfind('.');
+    if (at == std::string::npos || dot == std::string::npos || dot <= at + 1) return {};
+    return unit.substr(at + 1, dot - at - 1);
+}
+
 std::optional<v1::HubReply> exchange(const std::string& endpoint, const v1::HubRequest& request,
                                      std::chrono::milliseconds timeout) {
     try {

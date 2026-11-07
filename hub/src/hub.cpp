@@ -33,9 +33,13 @@ bool live(v1::AppStatus::State s) {
            s == v1::AppStatus::STATE_STARTING;
 }
 
+/// "<name>" or "<name>@<instance>".
 bool valid_name(const std::string& n) {
-    if (n.empty() || n.size() > 64) return false;
-    return std::all_of(n.begin(), n.end(), [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_' || c == '.'; });
+    if (n.empty() || n.size() > 64 || n.front() == '@' || n.back() == '@' || std::count(n.begin(), n.end(), '@') > 1) {
+        return false;
+    }
+    return std::all_of(n.begin(), n.end(),
+                       [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '@'; });
 }
 
 /// Address to reach a listening endpoint from this machine ("tcp://*:5557" -> tcp://127.0.0.1:5557).
@@ -305,7 +309,11 @@ void Hub::on_unregister(const v1::Unregister& u) {
 // ---------------------------------------------------------------------------
 // monitoring (main loop)
 
-std::string Hub::title_of(const Entry& e) const { return e.app.title().empty() ? e.app.name() : e.app.title(); }
+std::string Hub::title_of(const Entry& e) const {
+    const auto& a = e.app;
+    const auto base = a.title().empty() ? a.name().substr(0, a.name().find('@')) : a.title();
+    return a.instance().empty() ? base : base + " (" + a.instance() + ")";
+}
 
 void Hub::raise(const Entry& e, const std::string& kind, forge::Severity severity, const std::string& text) {
     alarms().raise("app." + e.app.name() + "." + kind, severity, title_of(e) + ": " + text);

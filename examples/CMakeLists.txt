@@ -2,8 +2,8 @@
 # sensor-service: every building block in one service
 # pipeline:       multi-threaded processing (threads, channels, thread pool, atomics)
 # thermostat:     web-first application with its own multi-page site
-# radio-controller: AD9364 daemon: libiio + IQ streaming over ZeroMQ (needs forgecpp::zmq)
-# spectrum-analyzer: AD9364 spectrum analyzer with a web UI (needs forgecpp::zmq)
+# radio-controller: AD9364 daemon: libiio + IQ streaming over forge.v1 (ZeroMQ)
+# spectrum-analyzer: AD9364 spectrum analyzer with a web UI
 # Each one gets a generated systemd unit (<build>/examples/<name>.service) with
 # the restart policy that suits it; the examples are not installed.
 forge_add_app(hello SOURCES hello/main.cpp
@@ -26,12 +26,8 @@ forge_add_app(thermostat SOURCES thermostat/main.cpp WEB thermostat/web
     RESTART always MAX_RESTARTS 0                  # always back, however often
     NO_INSTALL)
 
-if(TARGET forgecpp::zmq)
-    add_subdirectory(radio-controller)
-    add_subdirectory(spectrum-analyzer)
-else()
-    message(STATUS "examples: radio-controller and spectrum-analyzer skipped (forgecpp built without ZeroMQ)")
-endif()
+add_subdirectory(radio-controller)
+add_subdirectory(spectrum-analyzer)
 
 # Run the examples from the build dir with their config next to them.
 foreach(cfg sensor-service/sensor-service.toml pipeline/pipeline.toml thermostat/thermostat.toml)

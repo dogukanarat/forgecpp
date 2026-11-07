@@ -603,6 +603,17 @@ TEST_CASE("web: card layouts are stored on the device and survive a restart") {
     CHECK(http.Get("/forge/vendor/gridstack/gridstack.min.css")->status == 200);
 }
 
+TEST_CASE("instances: --instance names the application <name>@<instance>") {
+    {
+        forge::testing::AppRunner<InvokeApp> r({"--instance", "rx2"});
+        CHECK(r->instance() == "rx2");
+        CHECK(r->id() == "invoke-app@rx2");
+    }
+    forge::testing::AppRunner<InvokeApp> plain;
+    CHECK(plain->instance().empty());
+    CHECK(plain->id() == "invoke-app");
+}
+
 TEST_CASE("daemon naming standard: lowercase words separated by '-'") {
     for (const char* ok : {"radio-controller", "forge-hub", "pipeline", "sensor-service", "app2", "a-b-c"}) {
         CHECK_MESSAGE(forge::is_standard_name(ok), ok);

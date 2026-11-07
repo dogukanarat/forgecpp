@@ -249,6 +249,28 @@ TEST_CASE("hub: without a unit a crash is reported, not restarted; duplicates ar
     CHECK_FALSE(f.entry("gamma"));
 }
 
+TEST_CASE("hub: several instances of one application (name@instance)") {
+    HubFixture f;
+    const int one = f.sleeper(), two = f.sleeper();
+    REQUIRE(f.reg("delta@one", one).ok());
+    REQUIRE(f.reg("delta@two", two).ok());
+    REQUIRE(f.wait_state("delta@one", v1::AppStatus::STATE_RUNNING));
+    REQUIRE(f.wait_state("delta@two", v1::AppStatus::STATE_RUNNING));
+    CHECK(f.entry("delta@one")->pid == one);
+    CHECK(f.entry("delta@two")->pid == two);
+    for (const auto* bad : {"@one", "delta@", "a@b@c"}) CHECK_FALSE(f.reg(bad, one).ok());
+    // One instance ending does not touch the other.
+    f.kill_child(one);
+    REQUIRE(f.wait_state("delta@one", v1::AppStatus::STATE_CRASHED));
+    CHECK(f.entry("delta@two")->state == v1::AppStatus::STATE_RUNNING);
+    CHECK(f.h().alarms().active("app.delta@one.ended"));
+    CHECK_FALSE(f.h().alarms().active("app.delta@two.ended"));
+
+    CHECK(forge::hub::instance_of("radio-controller@rx2.service") == "rx2");
+    CHECK(forge::hub::instance_of("radio-controller.service").empty());
+    CHECK(forge::hub::instance_of("radio-controller@.service").empty());
+}
+
 TEST_CASE("hub: systemd units: state, restarts, policy and why it failed come from systemd") {
     HubFixture f;
     const int p = f.sleeper();
