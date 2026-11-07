@@ -1,13 +1,18 @@
-// forge-hub against real processes: registration, health, crashes and the
-// restart policy, clean stops, hangs, exits, persistence across hub restarts
-// and boots, static entries.
+// forge-hub: registration, health, crash / stop / exit reporting, systemd
+// units (state, restarts, policy, actions) through a fake systemd,
+// persistence across hub restarts and boots, static entries.
+//
+// Fast by design: the hub ticks every 20 ms, "applications" are mostly sleep
+// processes registered by hand; one test runs a real forgecpp application.
 #include "hub.hpp"
 
+#include <forge/hub.hpp>
 #include <forge/testing.hpp>
 
 #include <signal.h>
 #include <spawn.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include <fstream>
 #include <set>
@@ -17,295 +22,362 @@ extern char** environ;
 using namespace std::chrono_literals;
 using forge::json;
 namespace v1 = forge::v1;
+using forgehub::UnitState;
 
 namespace {
 
-/// A hub on free ports, with its own state file and boot id.
+/// systemd as the tests want it: units, their main pids and the actions asked for.
+struct FakeState {
+    std::mutex m;
+    std::map<int, std::string> unit_by_pid;
+    std::map<std::string, UnitState> units;
+    std::vector<std::string> actions;
+};
+
+class FakeSystemd final : public forgehub::Systemd {
+public:
+    explicit FakeSystemd(std::shared_ptr<FakeState> s) : s_(std::move(s)) {}
+    std::string unit_of(int pid) override {
+        std::lock_guard lock(s_->m);
+        auto it = s_->unit_by_pid.find(pid);
+        return it == s_->unit_by_pid.end() ? std::string() : it->second;
+    }
+    std::map<std::string, UnitState> show(const std::vector<std::string>& units) override {
+        std::lock_guard lock(s_->m);
+        std::map<std::string, UnitState> out;
+        for (const auto& u : units) {
+            if (s_->units.count(u)) out[u] = s_->units[u];
+        }
+        return out;
+    }
+    bool action(const std::string& verb, const std::string& unit, std::string*) override {
+        std::lock_guard lock(s_->m);
+        s_->actions.push_back(verb + " " + unit);
+        auto& u = s_->units[unit];
+        if (verb == "stop") {
+            u.active = "inactive";
+            u.sub = "dead";
+        } else if (verb == "reset-failed" && u.active == "failed") {
+            u.active = "inactive";
+        } else if (verb == "start" || verb == "restart") {
+            u.active = "activating";
+            u.sub = "start";
+        }
+        return true;
+    }
+
+private:
+    std::shared_ptr<FakeState> s_;
+};
+
+UnitState unit(const std::string& active, const std::string& sub, int main_pid, std::uint32_t restarts = 0,
+               const std::string& result = "success") {
+    UnitState u;
+    u.loaded = true;
+    u.active = active;
+    u.sub = sub;
+    u.main_pid = main_pid;
+    u.n_restarts = restarts;
+    u.result = result;
+    u.restart = "on-failure";
+    u.start_limit_burst = 4;
+    u.start_limit_interval_us = 600'000'000;
+    u.restart_us = 2'000'000;
+    u.watchdog_us = 30'000'000;
+    return u;
+}
+
 struct HubFixture {
     forge::testing::TempDir dir;
     std::string boot_file = (dir / "boot_id").string();
     std::string state_file = (dir / "registry.json").string();
-    std::string empty = (dir / "app.toml").string();
-    std::set<int> spawned;
+    std::string app_config = (dir / "app.toml").string();
+    std::shared_ptr<FakeState> sd = std::make_shared<FakeState>();
+    std::set<int> children;
     std::unique_ptr<forge::testing::AppRunner<forgehub::Hub>> hub;
 
-    HubFixture() {
+    HubFixture(std::vector<std::string> extra = {}) {
         set_boot("boot-1");
-        std::ofstream(empty) << "# test application\n";
-        start_hub();
+        std::ofstream(app_config) << "# test application\n";
+        start_hub(std::move(extra));
     }
     ~HubFixture() {
-        // Stop every process of the test, including those the hub started.
-        std::set<int> pids = spawned;
-        if (hub) {
-            const auto list = (*hub)->list();
-            for (const auto& a : list.apps()) {
-                if (a.app().pid()) pids.insert(static_cast<int>(a.app().pid()));
-            }
-            hub->stop();
-        }
-        for (int p : pids) ::kill(p, SIGKILL);
-        for (int p : pids) ::waitpid(p, nullptr, WNOHANG);
+        if (hub) hub->stop();
+        for (int p : children) ::kill(p, SIGKILL);
+        for (int p : children) ::waitpid(p, nullptr, 0);
     }
     void set_boot(const std::string& id) { std::ofstream(boot_file) << id << "\n"; }
     void start_hub(std::vector<std::string> extra = {}) {
         std::vector<std::string> args{"-D", "registry.listen=tcp://127.0.0.1:*",
                                       "-D", "registry.state_file=" + state_file,
                                       "-D", "registry.boot_id_file=" + boot_file,
-                                      "-D", "registry.probe_interval_ms=200",
-                                      "-D", "registry.probe_timeout_ms=500",
-                                      "-D", "registry.unresponsive_after_s=1",
-                                      "-D", "registry.start_timeout_s=10",
-                                      "-D", "registry.systemd=false",
-                                      "-D", "registry.log_dir=" + (dir / "logs").string(),
-                                      "-D", "http.enabled=true",
-                                      "-D", "http.host=127.0.0.1",
-                                      "-D", "http.port=0"};
+                                      "-D", "registry.tick_ms=20",
+                                      "-D", "registry.probe_interval_ms=50",
+                                      "-D", "registry.probe_timeout_ms=300",
+                                      "-D", "registry.unresponsive_after_s=0",
+                                      "-D", "http.enabled=false"};
         args.insert(args.end(), extra.begin(), extra.end());
-        hub = std::make_unique<forge::testing::AppRunner<forgehub::Hub>>(args);
+        hub = std::make_unique<forge::testing::AppRunner<forgehub::Hub>>(
+            args, std::make_unique<forgehub::Hub>(std::make_unique<FakeSystemd>(sd)));
+    }
+    void stop_hub() {
+        hub->stop();
+        hub.reset();
     }
     forgehub::Hub& h() { return hub->app(); }
 
-    /// Start the test application, registering with this hub.
-    int launch(const std::string& name, std::vector<std::string> extra = {}) {
-        std::vector<std::string> args{HUB_TEST_APP, "--name", name, "-c", empty,
-                                      "-D", "log.console=false", "-D", "http.enabled=true",
-                                      "-D", "http.host=127.0.0.1", "-D", "http.port=0",
-                                      "-D", "hub.endpoint=" + h().registry_endpoint(), "-D", "hub.retry_s=1"};
-        args.insert(args.end(), extra.begin(), extra.end());
+    int spawn(std::vector<std::string> args) {
         std::vector<char*> argv;
         for (auto& a : args) argv.push_back(a.data());
         argv.push_back(nullptr);
         pid_t pid = 0;
-        REQUIRE(::posix_spawn(&pid, HUB_TEST_APP, nullptr, nullptr, argv.data(), environ) == 0);
-        spawned.insert(pid);
+        REQUIRE(::posix_spawn(&pid, args[0].c_str(), nullptr, nullptr, argv.data(), environ) == 0);
+        children.insert(pid);
         return pid;
+    }
+    /// A process that only exists (registered by hand).
+    int sleeper() { return spawn({"/bin/sleep", "60"}); }
+    void kill_child(int pid) {
+        ::kill(pid, SIGKILL);
+        ::waitpid(pid, nullptr, 0);
+        children.erase(pid);
+    }
+    /// The real thing: a forgecpp application registering by itself.
+    int application(const std::string& name, std::vector<std::string> extra = {}) {
+        std::vector<std::string> args{HUB_TEST_APP, "--name", name, "-c", app_config, "-D", "log.console=false",
+                                      "-D", "http.enabled=true", "-D", "http.host=127.0.0.1", "-D", "http.port=0",
+                                      "-D", "hub.endpoint=" + h().registry_endpoint(), "-D", "hub.retry_s=1"};
+        args.insert(args.end(), extra.begin(), extra.end());
+        return spawn(args);
+    }
+
+    v1::HubReply reg(const std::string& name, int pid, bool critical = false) {
+        v1::HubRequest r;
+        auto* a = r.mutable_register_();
+        a->set_name(name);
+        a->set_version("1.0");
+        a->set_pid(static_cast<std::uint32_t>(pid));
+        a->set_critical(critical);
+        const auto reply = forge::hub::exchange(h().registry_endpoint(), r, 2s);
+        REQUIRE(reply);
+        return *reply;
+    }
+    void set_unit(const std::string& name, const UnitState& u) {
+        std::lock_guard lock(sd->m);
+        sd->units[name] = u;
+    }
+    std::vector<std::string> actions() {
+        std::lock_guard lock(sd->m);
+        return sd->actions;
     }
 
     std::optional<forgehub::Entry> entry(const std::string& name) { return h().entry(name); }
-    bool wait_state(const std::string& name, v1::AppStatus::State s, std::chrono::milliseconds t = 15s) {
+    bool wait_state(const std::string& name, v1::AppStatus::State s, std::chrono::milliseconds t = 5s) {
         return forge::testing::wait_until([&] {
             const auto e = entry(name);
             return e && e->state == s;
         }, t);
     }
-    bool wait_running(const std::string& name, int not_pid = 0, std::chrono::milliseconds t = 15s) {
-        return forge::testing::wait_until([&] {
-            const auto e = entry(name);
-            return e && e->state == v1::AppStatus::STATE_RUNNING && e->pid > 0 && e->pid != not_pid;
-        }, t);
-    }
-    void reap_spawned() {
-        for (int p : spawned) ::waitpid(p, nullptr, WNOHANG);
+    v1::AppStatus status(const std::string& name) {
+        const auto l = h().list();
+        for (const auto& a : l.apps()) {
+            if (a.app().name() == name) return a;
+        }
+        FAIL("no status for " << name);
+        return {};
     }
 };
 
-std::string state_name(const std::optional<forgehub::Entry>& e) {
-    return e ? v1::AppStatus::State_Name(e->state) + " (" + e->message + ")" : "none";
-}
-
 }  // namespace
 
-TEST_CASE("hub: an application registers with its ports, policy and launch information; health is checked") {
+TEST_CASE("hub: a forgecpp application registers by itself; health; stop request and exit code") {
     HubFixture f;
-    const int pid = f.launch("alpha", {"-D", "hub.restart=on-failure", "-D", "hub.max_restarts=2",
-                                       "-D", "hub.critical=true", "-D", "hub.group=Radio", "-D", "hub.title=Alpha"});
-    REQUIRE(f.wait_running("alpha"));
-    REQUIRE(forge::testing::wait_until([&] { return f.entry("alpha")->health == "ok"; }, 10s));
+    const int a = f.application("alpha", {"-D", "hub.critical=true", "-D", "hub.group=Radio", "-D", "hub.title=Alpha"});
+    REQUIRE(f.wait_state("alpha", v1::AppStatus::STATE_RUNNING));
+    REQUIRE(forge::testing::wait_until([&] { return f.entry("alpha")->health == "ok"; }));
     const auto e = *f.entry("alpha");
-    CHECK(e.pid == pid);
+    CHECK(e.pid == a);
     CHECK(e.app.version() == "1.2.3");
     CHECK(e.app.http_port() > 0);
     CHECK(e.app.group() == "Radio");
     CHECK(e.app.title() == "Alpha");
-    CHECK(e.app.policy().mode() == v1::RestartPolicy::MODE_ON_FAILURE);
-    CHECK(e.app.policy().max_restarts() == 2);
-    CHECK(e.app.policy().critical());
-    REQUIRE(e.launch);
-    CHECK(e.launch->exe == std::string(HUB_TEST_APP));
-    CHECK(std::find(e.launch->argv.begin(), e.launch->argv.end(), "alpha") != e.launch->argv.end());
-    CHECK(e.unit.empty());
+    CHECK(e.app.critical());
+    CHECK(f.status("alpha").supervision() == "none");
+    CHECK(forge::testing::wait_until([&] { return f.status("alpha").rss_bytes() > 0; }));
 
-    const auto list = f.h().list();
-    REQUIRE(list.apps_size() == 1);
-    CHECK(list.apps(0).supervision() == "exec");
-    CHECK(list.apps(0).state() == v1::AppStatus::STATE_RUNNING);
-    CHECK(list.apps(0).rss_bytes() > 0);
+    // SIGTERM (systemctl stop, Ctrl-C): the application unregisters as stopped.
+    ::kill(a, SIGTERM);
+    REQUIRE(f.wait_state("alpha", v1::AppStatus::STATE_STOPPED));
+    CHECK(f.entry("alpha")->message == "stopped");
+    CHECK_FALSE(f.h().alarms().active("app.alpha.ended"));
 
-    // A second process with the same name is refused while the first one runs.
-    const int dup = f.launch("alpha");
-    std::this_thread::sleep_for(1500ms);
-    CHECK(f.entry("alpha")->pid == pid);
-    ::kill(dup, SIGKILL);
+    // An error exit is a failure (reported; without a unit nothing restarts it).
+    f.application("beta", {"--exit-after-ms", "300", "--exit-code", "3"});
+    REQUIRE(f.wait_state("beta", v1::AppStatus::STATE_CRASHED));
+    CHECK(f.entry("beta")->message == "exited with code 3 (not a systemd unit: not restarted)");
+    CHECK(f.h().alarms().active("app.beta.ended"));
 }
 
-TEST_CASE("hub: a crash is restarted with the same arguments; too many crashes and it gives up") {
+TEST_CASE("hub: without a unit a crash is reported, not restarted; duplicates are refused") {
     HubFixture f;
-    // Restarted once by SIGKILL...
-    const int pid = f.launch("beta", {"-D", "hub.restart=on-failure", "-D", "hub.max_restarts=2",
-                                      "-D", "hub.restart_delay_s=0"});
-    REQUIRE(f.wait_running("beta"));
-    ::kill(pid, SIGKILL);
-    REQUIRE(f.wait_running("beta", pid, 6s));  // registers again long before start_timeout_s (10 s)
-    auto e = *f.entry("beta");
-    CHECK(e.restarts_total == 1);
-    CHECK(e.child == e.pid);  // started by the hub
-    CHECK(forgehub::read_launch(e.pid)->argv == f.entry("beta")->launch->argv);
-    CHECK_FALSE(f.h().alarms().active("app.beta"));
+    const int p = f.sleeper();
+    REQUIRE(f.reg("gamma", p).ok());
+    REQUIRE(f.wait_state("gamma", v1::AppStatus::STATE_RUNNING));
+    const int other = f.sleeper();
+    const auto dup = f.reg("gamma", other);
+    CHECK_FALSE(dup.ok());
+    CHECK(dup.error().find("already registered by pid") != std::string::npos);
+    CHECK_FALSE(f.reg("bad name!", p).ok());
+    CHECK_FALSE(f.reg("ghost", 999999).ok());
 
-    // ...killed again: the second restart...
-    const int second = e.pid;
-    ::kill(second, SIGKILL);
-    REQUIRE(f.wait_running("beta", second));
-    CHECK(f.entry("beta")->restarts_total == 2);
+    f.kill_child(p);
+    REQUIRE(f.wait_state("gamma", v1::AppStatus::STATE_CRASHED));
+    CHECK(f.entry("gamma")->message == "ended without unregistering (not a systemd unit: not restarted)");
+    CHECK(f.h().alarms().active("app.gamma.ended"));
+    CHECK_THROWS_AS(f.h().restart("gamma"), forge::http::HttpError);  // no unit: nothing to restart with
+    CHECK_THROWS_AS(f.h().start("gamma"), forge::http::HttpError);
 
-    // ...and the third crash within the window is one too many.
-    ::kill(f.entry("beta")->pid, SIGKILL);
-    REQUIRE(f.wait_state("beta", v1::AppStatus::STATE_FAILED));
-    e = *f.entry("beta");
-    CAPTURE(e.message);
-    CHECK(e.message.find("gave up after 2 restart(s)") != std::string::npos);
-    CHECK(f.h().alarms().active("app.beta"));
-    std::this_thread::sleep_for(1500ms);
-    CHECK(f.entry("beta")->state == v1::AppStatus::STATE_FAILED);  // not started again
-
-    // An operator starts it again (with a fresh count; the alarm is cleared).
-    f.h().start("beta");
-    REQUIRE(f.wait_running("beta"));
-    CHECK(f.entry("beta")->restarts.empty());
-    CHECK_FALSE(f.h().alarms().active("app.beta"));
-}
-
-TEST_CASE("hub: an application that crashes by itself is given up after max_restarts") {
-    HubFixture f;
-    f.launch("crashy", {"-D", "hub.restart=on-failure", "-D", "hub.max_restarts=2", "-D", "hub.restart_delay_s=0",
-                        "--crash-after-ms", "1200"});
-    REQUIRE(f.wait_state("crashy", v1::AppStatus::STATE_FAILED, 30s));
-    const auto e = *f.entry("crashy");
-    CHECK(e.restarts_total == 2);
-    CHECK(e.message.find("killed by") != std::string::npos);
-    CHECK(f.h().alarms().get("app.crashy")->severity == forge::Severity::error);  // critical = false
-}
-
-TEST_CASE("hub: a stop request is not a crash; start brings the application back") {
-    HubFixture f;
-    const int pid = f.launch("gamma", {"-D", "hub.restart=always"});
-    REQUIRE(f.wait_running("gamma"));
-    ::kill(pid, SIGTERM);  // like systemctl stop: the application unregisters with REASON_SIGNAL
-    REQUIRE(f.wait_state("gamma", v1::AppStatus::STATE_STOPPED));
-    std::this_thread::sleep_for(2500ms);
-    CHECK_MESSAGE(f.entry("gamma")->state == v1::AppStatus::STATE_STOPPED, state_name(f.entry("gamma")));
-    CHECK_FALSE(f.h().alarms().active("app.gamma"));
-    f.reap_spawned();
-
-    f.h().start("gamma");
-    REQUIRE(f.wait_running("gamma", pid));
-    // The dashboard's stop: SIGTERM, stopped, not restarted although the policy is "always".
+    // Registering again (started by someone) clears it.
+    REQUIRE(f.reg("gamma", other).ok());
+    REQUIRE(f.wait_state("gamma", v1::AppStatus::STATE_RUNNING));
+    CHECK_FALSE(f.h().alarms().active("app.gamma.ended"));
+    // The dashboard's stop for a process without a unit: SIGTERM.
     f.h().stop_app("gamma");
-    REQUIRE(f.wait_state("gamma", v1::AppStatus::STATE_STOPPED));
-    std::this_thread::sleep_for(2500ms);
-    CHECK(f.entry("gamma")->state == v1::AppStatus::STATE_STOPPED);
-    CHECK_THROWS_AS(f.h().stop_app("gamma"), forge::http::HttpError);
+    REQUIRE(forge::testing::wait_until([&] { return ::waitpid(other, nullptr, WNOHANG) == other; }, 3s));
+    f.children.erase(other);
+    f.h().forget("gamma");
+    CHECK_FALSE(f.entry("gamma"));
 }
 
-TEST_CASE("hub: restart from the dashboard; policy never only reports a crash") {
+TEST_CASE("hub: systemd units: state, restarts, policy and why it failed come from systemd") {
     HubFixture f;
-    const int pid = f.launch("delta");  // default policy: never
-    REQUIRE(f.wait_running("delta"));
-    f.h().restart("delta");
-    REQUIRE(f.wait_running("delta", pid));
-    const int second = f.entry("delta")->pid;
-    f.reap_spawned();
+    const int p = f.sleeper();
+    {
+        std::lock_guard lock(f.sd->m);
+        f.sd->unit_by_pid[p] = "alpha.service";
+    }
+    f.set_unit("alpha.service", unit("active", "running", p));
+    REQUIRE(f.reg("alpha", p, /*critical=*/true).ok());
+    REQUIRE(forge::testing::wait_until([&] { return f.status("alpha").unit_state() == "active/running"; }));
+    auto s = f.status("alpha");
+    CHECK(s.state() == v1::AppStatus::STATE_RUNNING);
+    CHECK(s.supervision() == "systemd alpha.service");
+    CHECK(s.policy().mode() == v1::RestartPolicy::MODE_ON_FAILURE);
+    CHECK(s.policy().max_restarts() == 3);  // StartLimitBurst 4 = first start + 3 restarts
+    CHECK(s.policy().window_s() == 600);
+    CHECK(s.policy().delay_s() == 2);
+    CHECK(s.policy().watchdog_s() == 30);
 
-    ::kill(second, SIGKILL);
-    REQUIRE(f.wait_state("delta", v1::AppStatus::STATE_CRASHED));
-    std::this_thread::sleep_for(2500ms);
-    CHECK(f.entry("delta")->state == v1::AppStatus::STATE_CRASHED);
-    CHECK(f.h().alarms().active("app.delta"));
-    CHECK_THROWS_AS(f.h().restart("nobody"), forge::http::HttpError);
-    f.h().forget("delta");
-    CHECK_FALSE(f.entry("delta"));
+    // It crashes; systemd schedules a restart.
+    f.kill_child(p);
+    f.set_unit("alpha.service", unit("activating", "auto-restart", 0, 1, "signal"));
+    REQUIRE(f.wait_state("alpha", v1::AppStatus::STATE_STARTING));
+    REQUIRE(forge::testing::wait_until([&] { return f.status("alpha").restarts() == 1; }));
+    CHECK(f.entry("alpha")->message == "killed by a signal; systemd restarts it in 2 s");
+    CHECK(f.h().alarms().active("app.alpha.ended"));
+
+    // systemd started it again: waiting for it, then it registers.
+    const int q = f.sleeper();
+    f.set_unit("alpha.service", unit("active", "running", q, 1, "signal"));
+    REQUIRE(forge::testing::wait_until([&] { return f.entry("alpha")->message.find("waiting for it to register") != std::string::npos; }));
+    {
+        std::lock_guard lock(f.sd->m);
+        f.sd->unit_by_pid[q] = "alpha.service";
+    }
+    REQUIRE(f.reg("alpha", q, true).ok());
+    REQUIRE(f.wait_state("alpha", v1::AppStatus::STATE_RUNNING));
+    CHECK_FALSE(f.h().alarms().active("app.alpha.ended"));
+
+    // Too many restarts: the unit failed and stays down.
+    f.kill_child(q);
+    f.set_unit("alpha.service", unit("failed", "failed", 0, 3, "start-limit-hit"));
+    REQUIRE(f.wait_state("alpha", v1::AppStatus::STATE_FAILED));
+    CHECK(f.entry("alpha")->message == "gave up: more than 3 restarts in 600 s (systemd)");
+    REQUIRE(f.h().alarms().get("app.alpha.failed"));
+    CHECK(f.h().alarms().get("app.alpha.failed")->severity == forge::Severity::critical);
+
+    // Operator actions go to systemctl.
+    f.h().restart("alpha");
+    REQUIRE(forge::testing::wait_until([&] { return f.actions().size() >= 2; }));
+    CHECK(f.actions() == std::vector<std::string>{"reset-failed alpha.service", "restart alpha.service"});
+    REQUIRE(forge::testing::wait_until([&] { return f.status("alpha").unit_state() == "activating/start"; }));
+    CHECK_FALSE(f.h().alarms().active("app.alpha.failed"));
+    f.h().stop_app("alpha");
+    REQUIRE(f.wait_state("alpha", v1::AppStatus::STATE_STOPPED));
+    CHECK(f.actions().back() == "stop alpha.service");
+    f.h().start("alpha");
+    REQUIRE(forge::testing::wait_until([&] { return f.actions().back() == "start alpha.service"; }));
 }
 
-TEST_CASE("hub: a hung application is killed and restarted") {
+TEST_CASE("hub: the registry survives hub restarts; processes of an earlier boot are gone") {
     HubFixture f;
-    const int pid = f.launch("hung", {"-D", "hub.restart=on-failure", "-D", "hub.max_restarts=5",
-                                      "-D", "hub.restart_delay_s=0", "-D", "hub.hang_timeout_s=2",
-                                      "--hang-after-ms", "1500"});
-    REQUIRE(f.wait_running("hung"));
-    REQUIRE(f.wait_state("hung", v1::AppStatus::STATE_UNRESPONSIVE, 15s));
-    CHECK(f.entry("hung")->message.find("main loop stalled") != std::string::npos);
-    REQUIRE(forge::testing::wait_until([&] { return f.entry("hung")->restarts_total >= 1; }, 20s));
-    REQUIRE(f.wait_running("hung", pid));
-}
+    const int p = f.sleeper();
+    const int u = f.sleeper();
+    {
+        std::lock_guard lock(f.sd->m);
+        f.sd->unit_by_pid[u] = "unit.service";
+    }
+    f.set_unit("unit.service", unit("active", "running", u));
+    REQUIRE(f.reg("plain", p).ok());
+    REQUIRE(f.reg("unit", u).ok());
+    REQUIRE(f.wait_state("unit", v1::AppStatus::STATE_RUNNING));
+    f.stop_hub();
 
-TEST_CASE("hub: an exit with an error code is a failure, a clean exit is not") {
-    HubFixture f;
-    f.launch("epsilon", {"-D", "hub.restart=on-failure", "-D", "hub.max_restarts=1", "-D", "hub.restart_delay_s=0",
-                         "--exit-after-ms", "800", "--exit-code", "3"});
-    REQUIRE(f.wait_state("epsilon", v1::AppStatus::STATE_FAILED, 20s));
-    CHECK(f.entry("epsilon")->restarts_total == 1);
-    CHECK(f.entry("epsilon")->message.find("exited with code 3") != std::string::npos);
-
-    f.launch("zeta", {"-D", "hub.restart=on-failure", "--exit-after-ms", "800"});
-    REQUIRE(f.wait_state("zeta", v1::AppStatus::STATE_STOPPED, 15s));
-    std::this_thread::sleep_for(2000ms);
-    CHECK(f.entry("zeta")->state == v1::AppStatus::STATE_STOPPED);
-    CHECK(f.entry("zeta")->restarts_total == 0);
-}
-
-TEST_CASE("hub: the registry survives a hub restart; nothing is restarted after a reboot") {
-    HubFixture f;
-    const int pid = f.launch("eta", {"-D", "hub.restart=on-failure", "-D", "hub.restart_delay_s=0"});
-    REQUIRE(f.wait_running("eta"));
-    f.hub->stop();
-    f.hub.reset();
-
-    // Same boot: known and still running.
+    // Same boot: both known; the unit's state comes from systemd.
     f.start_hub();
-    REQUIRE(f.entry("eta"));
-    CHECK(f.entry("eta")->state == v1::AppStatus::STATE_RUNNING);
-    CHECK(f.entry("eta")->pid == pid);
-    REQUIRE(forge::testing::wait_until([&] { return f.entry("eta")->health == "ok"; }, 10s));
-    f.hub->stop();
-    f.hub.reset();
+    REQUIRE(f.entry("plain"));
+    CHECK(f.entry("plain")->state == v1::AppStatus::STATE_RUNNING);
+    CHECK(f.entry("plain")->pid == p);
+    REQUIRE(forge::testing::wait_until([&] { return f.status("unit").unit_state() == "active/running"; }));
+    f.set_unit("unit.service", unit("inactive", "dead", 0));
+    REQUIRE(f.wait_state("unit", v1::AppStatus::STATE_STOPPED));
+    f.stop_hub();
 
-    // It crashes while the hub is down: restarted when the hub comes back.
-    ::kill(pid, SIGKILL);
-    ::waitpid(pid, nullptr, 0);
-    f.start_hub();
-    // Started again with its old arguments (they name the old hub's port, so it
-    // runs without registering: the hub watches the process it started).
-    REQUIRE(f.wait_running("eta", pid, 25s));
-    const int restarted = f.entry("eta")->pid;
-    f.hub->stop();
-    f.hub.reset();
-    ::kill(restarted, SIGKILL);
-    ::waitpid(restarted, nullptr, 0);
-
-    // Another boot: shown as not running, never restarted from the old registry.
+    // Another boot: the processes are gone.
     f.set_boot("boot-2");
     f.start_hub();
-    REQUIRE(f.entry("eta"));
-    CHECK(f.entry("eta")->state == v1::AppStatus::STATE_UNKNOWN);
-    std::this_thread::sleep_for(2000ms);
-    CHECK(f.entry("eta")->state == v1::AppStatus::STATE_UNKNOWN);
+    CHECK(f.entry("plain")->state == v1::AppStatus::STATE_UNKNOWN);
+    CHECK(f.entry("plain")->message == "not running");
+    REQUIRE(f.wait_state("unit", v1::AppStatus::STATE_STOPPED));  // systemd knows
 }
 
 TEST_CASE("hub: static entries are listed and checked") {
-    HubFixture f;
-    f.hub->stop();
-    f.hub.reset();
-    f.start_hub({"-D", "static.docs.title=Docs", "-D", "static.docs.url=http://{host}:9000/",
-                 "-D", "static.dead.health_url=http://127.0.0.1:1/health"});
+    HubFixture f({"-D", "static.docs.title=Docs", "-D", "static.docs.url=http://{host}:9000/",
+                  "-D", "static.dead.health_url=http://127.0.0.1:1/health"});
     REQUIRE(f.entry("docs"));
     CHECK(f.entry("docs")->static_entry);
     CHECK(f.entry("docs")->state == v1::AppStatus::STATE_UNKNOWN);
-    REQUIRE(f.wait_state("dead", v1::AppStatus::STATE_UNRESPONSIVE, 10s));
+    REQUIRE(f.wait_state("dead", v1::AppStatus::STATE_UNRESPONSIVE));
     CHECK_THROWS_AS(f.h().restart("docs"), forge::http::HttpError);
-    const auto list = f.h().list();
-    REQUIRE(list.apps_size() == 2);  // sorted by name: dead, docs
-    CHECK(list.apps(1).app().name() == "docs");
-    CHECK(list.apps(1).url() == "http://{host}:9000/");
-    CHECK(list.apps(1).static_entry());
+    CHECK(f.status("docs").url() == "http://{host}:9000/");
+    CHECK(f.status("docs").static_entry());
+}
+
+TEST_CASE("hub: systemctl show output and timespans") {
+    CHECK(forgehub::timespan_us("2s") == 2'000'000);
+    CHECK(forgehub::timespan_us("100ms") == 100'000);
+    CHECK(forgehub::timespan_us("10min") == 600'000'000);
+    CHECK(forgehub::timespan_us("1min 30s") == 90'000'000);
+    CHECK(forgehub::timespan_us("1h 2min 3.5s") == 3'723'500'000ULL);
+    CHECK(forgehub::timespan_us("infinity") == 0);
+    CHECK(forgehub::timespan_us("0") == 0);
+    CHECK(forgehub::timespan_us("123") == 123);
+    CHECK(forgehub::timespan_us("bogus") == 0);
+
+    const auto units = forgehub::parse_show(
+        "Id=radio-controller.service\nLoadState=loaded\nActiveState=active\nSubState=running\nResult=success\n"
+        "MainPID=1234\nNRestarts=2\nRestart=on-failure\nStartLimitBurst=4\nStartLimitIntervalUSec=10min\n"
+        "RestartUSec=2s\nWatchdogUSec=30s\n\n"
+        "Id=gone.service\nLoadState=not-found\nActiveState=inactive\n");
+    REQUIRE(units.size() == 2);
+    const auto& r = units.at("radio-controller.service");
+    CHECK(r.loaded);
+    CHECK(r.active == "active");
+    CHECK(r.main_pid == 1234);
+    CHECK(r.n_restarts == 2);
+    CHECK(r.start_limit_burst == 4);
+    CHECK(r.start_limit_interval_us == 600'000'000);
+    CHECK(r.restart_us == 2'000'000);
+    CHECK(r.watchdog_us == 30'000'000);
+    CHECK_FALSE(units.at("gone.service").loaded);
 }

@@ -1184,15 +1184,7 @@ void Application::declare_framework_config(config::Schema& s) {
     s.boolean("hub.register", true, "Try to register with the hub at start-up");
     s.string("hub.endpoint", hub::default_endpoint, "The hub's registration endpoint");
     s.integer("hub.retry_s", 30, "Register again every N s in the background (0 = try once)").range(0, 86400).unit("s");
-    s.string("hub.restart", "never", "Restart policy the hub applies").choices({"never", "on-failure", "always"});
-    s.integer("hub.max_restarts", 3, "Restarts allowed within restart_window_s, then the hub gives up (0 = unlimited)")
-        .range(0, 1000);
-    s.integer("hub.restart_window_s", 600, "Window for max_restarts").range(1, 86400 * 7).unit("s");
-    s.integer("hub.restart_delay_s", 2, "Wait before restarting").range(0, 3600).unit("s");
-    s.boolean("hub.critical", false, "Giving up raises a critical alarm on the hub");
-    s.integer("hub.hang_timeout_s", 0, "Unresponsive (health checks failing) this long: killed and restarted (0 = off)")
-        .range(0, 86400)
-        .unit("s");
+    s.boolean("hub.critical", false, "Its systemd unit failing is a critical alarm on the hub");
     s.string("hub.group", "", "Group on the hub's dashboard");
     s.string("hub.title", "", "Name on the hub's dashboard (default: the application name)");
 
@@ -1487,9 +1479,8 @@ void Application::start_hub_client(const Config& cfg) {
     if (!hub_registration_ || !cfg.get_or<bool>("hub.register", true)) return;
     const auto endpoint = cfg.get_or<std::string>("hub.endpoint", hub::default_endpoint);
     if (endpoint.empty()) return;
-    const auto policy = hub::policy_from_config(cfg);  // validated by the schema
     const auto retry = std::chrono::seconds(std::max(cfg.get_or<int>("hub.retry_s", 30), 0));
-    hub_client_ = std::make_unique<hub::Client>(endpoint, retry, [this, policy] {
+    hub_client_ = std::make_unique<hub::Client>(endpoint, retry, [this] {
         const auto c = config();
         v1::AppRegistration r;
         r.set_name(info_.name);
@@ -1500,7 +1491,7 @@ void Application::start_hub_client(const Config& cfg) {
         for (const auto& [k, v] : endpoints()) {
             if (k != "http") (*r.mutable_endpoints())[k] = v;
         }
-        *r.mutable_policy() = policy;
+        r.set_critical(c.get_or<bool>("hub.critical", false));
         r.set_group(c.get_or<std::string>("hub.group", ""));
         r.set_title(c.get_or<std::string>("hub.title", ""));
         r.set_unit(hub::unit_of(::getpid()));

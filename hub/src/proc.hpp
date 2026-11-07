@@ -1,6 +1,6 @@
 #pragma once
-// Linux process helpers for forge-hub: what a process is (/proc), whether it
-// still lives, its CPU and memory use, and starting it again.
+// Linux process helpers for forge-hub: whether a process still lives, its CPU
+// and memory use, and running systemctl.
 
 #include <sys/types.h>
 
@@ -11,20 +11,6 @@
 #include <vector>
 
 namespace forgehub {
-
-/// Everything needed to start a process again, as the kernel reports it.
-struct LaunchInfo {
-    std::string exe;                ///< /proc/<pid>/exe
-    std::vector<std::string> argv;  ///< /proc/<pid>/cmdline
-    std::string cwd;                ///< /proc/<pid>/cwd
-    std::vector<std::string> env;   ///< /proc/<pid>/environ ("KEY=value")
-    uid_t uid = 0;
-    gid_t gid = 0;
-};
-
-/// Read a running process' launch information; nullopt (and *error) when it is
-/// gone or not readable (other user without privileges).
-std::optional<LaunchInfo> read_launch(int pid, std::string* error = nullptr);
 
 /// Start time of the process in clock ticks since boot (0 = no such process).
 /// Together with the pid it identifies a process even after pid reuse.
@@ -42,14 +28,6 @@ long ticks_per_second();
 
 /// Current boot id (changes on every boot); the file can be replaced in tests.
 std::string boot_id(const std::string& file = "/proc/sys/kernel/random/boot_id");
-
-/// Start `info` again: same executable, arguments, directory, environment and
-/// user (privileges are dropped when the hub runs as root); output goes to
-/// `log_file` ("" = /dev/null). Returns the pid, or -1 with *error.
-int spawn(const LaunchInfo& info, const std::string& log_file, std::string* error = nullptr);
-
-/// Reap a child started by spawn() if it ended (non-blocking).
-bool reap(int pid, int* status = nullptr);
 
 /// Run a helper program (systemctl) and wait at most `timeout`.
 struct CommandResult {

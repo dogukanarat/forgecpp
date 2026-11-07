@@ -95,10 +95,14 @@
       stat('Uptime', running ? duration(a.uptime_s) : '–');
       stat('CPU', running ? (Number(a.cpu_percent || 0).toFixed(1) + ' %') : '–');
       stat('Memory', running ? bytes(a.rss_bytes) : '–');
-      const policy = app.policy || {};
-      const mode = (policy.mode || 'MODE_NEVER').replace('MODE_', '').replace('_', '-').toLowerCase();
-      stat('Restarts', mode === 'never' ? String(a.restarts || 0)
-        : (a.restarts_in_window || 0) + ' / ' + (policy.max_restarts || '∞') + ' (' + mode + ')');
+      // The restart policy is the systemd unit's; without a unit nothing restarts it.
+      const policy = a.policy;
+      if (policy) {
+        const max = policy.max_restarts ? ' · max ' + policy.max_restarts + ' in ' + duration(policy.window_s) : '';
+        stat('Restarts', (a.restarts || 0) + ' (' + (policy.restart || 'no') + max + ')');
+      } else {
+        stat('Restarts', a.supervision === 'none' ? 'no unit' : '–');
+      }
     } else {
       stat('Health', a.state === 'STATE_RUNNING' ? 'ok' : (a.state === 'STATE_UNKNOWN' ? 'not checked' : 'no answer'));
     }
@@ -109,7 +113,7 @@
     if (ep.control) ports.push('forge.v1 ' + port(ep.control));
     if (ep.telnet) ports.push('telnet ' + port(ep.telnet));
     if (running && app.pid) ports.push('pid ' + app.pid);
-    if (a.supervision && a.supervision !== 'none') ports.push(a.supervision);
+    if (a.supervision && a.supervision !== 'none') ports.push(a.supervision + (a.unit_state ? ' (' + a.unit_state + ')' : ''));
 
     const actions = el('div', { class: 'hub-actions' });
     if (hasPage) {
@@ -123,11 +127,12 @@
         b.addEventListener('click', function () { act(cmd, a, question); });
         right.appendChild(b);
       }
+      const unit = a.supervision && a.supervision !== 'none';
       if (running) {
-        button('Restart', 'restart', 'Restart ' + title + '?');
-        button('Stop', 'stop', 'Stop ' + title + '? It is not restarted until it is started again.', 'danger');
-      } else if (a.supervision && a.supervision !== 'none') {
-        button('Start', 'start');
+        if (unit) button('Restart', 'restart', 'Restart ' + title + '?');
+        button('Stop', 'stop', 'Stop ' + title + '?' + (unit ? ' systemd does not restart it until it is started again.' : ''), 'danger');
+      } else if (unit) {
+        button(a.state === 'STATE_FAILED' ? 'Start again' : 'Start', 'start');
       }
       if (!running) button('Forget', 'forget', 'Remove ' + title + ' from the list?');
       actions.appendChild(right);

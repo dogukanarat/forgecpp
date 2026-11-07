@@ -306,16 +306,11 @@ watchdog_grace_s = 0     # stop systemd watchdog pings when a critical component
 [process]
 mlockall = false         # lock memory (real-time)
 
-[hub]                    # forge-hub (optional): dashboard entry and restart policy, see below
+[hub]                    # forge-hub (optional): dashboard entry, see below
 register = true
 endpoint = "tcp://127.0.0.1:5550"
 retry_s = 30             # 0 = try once
-restart = "never"        # never | on-failure | always
-max_restarts = 3
-restart_window_s = 600
-restart_delay_s = 2
-critical = false
-hang_timeout_s = 0
+critical = false         # a failed unit is a critical alarm on the hub
 group = ""
 title = ""
 
@@ -706,14 +701,16 @@ Sanitizers: `-DFORGECPP_SANITIZE=address;undefined` (or `thread`), or
 ## forge-hub: every application on the device in one place
 
 `forge-hub` (in `hub/`, installed with forgecpp, optional) is the device's
-front page and supervisor: open `http://<device>/` and see every application,
-its state, health, alarms, uptime, CPU and memory, with **Open** / **Control
-panel** buttons, so nobody has to remember ports.
+front page: open `http://<device>/` and see every application, its state,
+health, alarms, uptime, CPU and memory, its systemd restart policy and
+restarts, with **Open** / **Control panel** buttons, so nobody has to remember
+ports.
 
 ```
-application ──register (pid, ports, restart policy)──▶ forge-hub  tcp://127.0.0.1:5550
-            ◀──GET /health every 2 s───────────────────           (localhost only)
-browser ──▶ http://<device>/  ──links──▶ http://<device>:<port>/ of each application
+application ──register (pid, ports)──▶ forge-hub  tcp://127.0.0.1:5550 (localhost)
+            ◀──GET /health────────────
+systemd ◀──systemctl show / restart / stop / start── forge-hub
+browser ──▶ http://<device>/ ──links──▶ http://<device>:<port>/ of each application
 ```
 
 - **Optional for the applications.** Every forgecpp application tries to
@@ -721,39 +718,33 @@ browser ──▶ http://<device>/  ──links──▶ http://<device>:<port>/
   hub answers. It registers again every `retry_s` (30 s), so a hub started
   later, or restarted, finds everyone. `hub.retry_s = 0` = one attempt only;
   `hub.register = false` = never.
-- **The application declares its restart policy** in its own configuration:
+- **Restarts are systemd's job.** The application declares its policy where it
+  is built; `forge_add_app` turns it into the unit:
 
-  ```toml
-  [hub]
-  restart = "on-failure"   # never | on-failure | always
-  max_restarts = 3         # within restart_window_s; then: failed, alarm, not started again
-  restart_window_s = 600
-  restart_delay_s = 2
-  critical = true          # giving up raises a critical alarm on the hub
-  hang_timeout_s = 30      # /health not answering (or the main loop stalled) this long: killed and restarted
-  group = "Radio"          # dashboard grouping
+  ```cmake
+  forge_add_app(radio-controller SOURCES src/main.cpp CONFIG config/radio-controller.toml
+      RESTART on-failure     # never | on-failure | always            -> Restart=
+      MAX_RESTARTS 3         # within RESTART_WINDOW, then the unit fails -> StartLimitBurst=4
+      RESTART_WINDOW 600     #                                          -> StartLimitIntervalSec=
+      RESTART_DELAY 2        #                                          -> RestartSec=
+      WATCHDOG 30)           # hung main loop: killed and restarted      -> WatchdogSec=
   ```
 
-- **Crash vs. stop.** An application that ends on a stop request
-  (`systemctl stop`, SIGTERM, Ctrl-C) unregisters with that reason and is never
-  restarted; one that ends without unregistering crashed. A non-zero exit code
-  is a failure for `on-failure`; `always` also restarts after a clean exit.
-- **How it restarts.** If the application is the main process of a systemd
-  unit, through systemd: when systemd already restarted it (`Restart=` in the
-  unit), the hub only counts it; when the limit is reached, `systemctl stop`
-  ends systemd's own restarts too. Otherwise the hub starts the same executable
-  with the same arguments, directory, environment and user, which it read from
-  `/proc/<pid>` when the application registered. Registrations carry no
-  commands, so registering cannot make the hub run anything else.
-- **Safe across reboots.** The registry is kept in
-  `/var/lib/forge-hub/registry.json` (mode 0600); entries from an earlier boot
-  are shown as "not running" and never restarted by the hub (whatever starts
-  them at boot does). Process start times protect against pid reuse.
-- **Operators** can restart, stop, start and forget applications from the page,
+  A crash or a hang is restarted by systemd with or without the hub; after too
+  many restarts the unit is `failed` and stays down. The hub reads it all from
+  systemd (`systemctl show`: state, `NRestarts`, `Result`, the policy) and
+  shows it: "killed by a signal; systemd restarts it in 2 s", "gave up: more
+  than 3 restarts in 600 s". Crashes and failed units are alarms on the hub
+  (`[hub] critical = true` makes a failed unit a critical one).
+- **Operators** restart, stop and start units from the page,
   `forgectl -e tcp://<device>:5551 call restart name=radio-controller` or the
-  hub's own `/forge/` panel, with roles and the audit trail of every forgecpp
-  application. Crashes and give-ups are alarms on the hub. Remote panels get
+  hub's own `/forge/` panel (`systemctl reset-failed` + `restart`), with roles
+  and the audit trail of every forgecpp application. Remote panels get
   `forge.v1.AppList` on the hub's `apps` stream.
+- **Applications without a unit** (started by hand, in development) are listed
+  and checked too; the hub reports when they end ("ended without
+  unregistering", "exited with code 3") but cannot restart them. A stop request
+  (`SIGTERM`, Ctrl-C) unregisters with that reason and is never reported as a crash.
 - **Other web interfaces** on the device can be listed without registering:
   `[static.camera] url = "http://{host}:8554/"`, `health_url = ...`.
 
@@ -761,10 +752,7 @@ browser ──▶ http://<device>/  ──links──▶ http://<device>:<port>/
 sudo forge-hub -c /etc/forge-hub/forge-hub.toml     # or: systemctl enable --now forge-hub
 ```
 
-The hub needs root (port 80, `systemctl`, starting applications as their own
-users); without root it still lists and checks everything and restarts the
-applications of its own user. Restarts by the hub need nothing in the
-applications beyond `[hub]`.
+The hub needs root for port 80 and `systemctl`; it starts no processes itself.
 
 ## Yocto / embedded deployment
 

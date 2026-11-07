@@ -27,8 +27,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(radio_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-configure_file(systemd/radio-controller.service.in
-               "${CMAKE_CURRENT_BINARY_DIR}/radio-controller.service" @ONLY)
 
 set(_install_mode)
 if(NOT RADIO_STANDALONE)
@@ -39,7 +37,10 @@ forge_add_app(radio-controller
     LIBS    radio_core
     CONFIG  config/radio-controller.toml
     WEB     web
-    SERVICE "${CMAKE_CURRENT_BINARY_DIR}/radio-controller.service"
+    # systemd unit with the restart policy: crashes and hangs (watchdog) are
+    # restarted, at most 3 times in 10 minutes, then the unit fails (forge-hub shows it).
+    DESCRIPTION "AD936x radio controller (forgecpp)"
+    RESTART on-failure MAX_RESTARTS 3 RESTART_WINDOW 600 RESTART_DELAY 2 WATCHDOG 30
     ${_install_mode})
 
 # Run it from the build dir with its config next to it.

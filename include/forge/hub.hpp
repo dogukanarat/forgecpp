@@ -1,5 +1,5 @@
 #pragma once
-// Registration with forge-hub, the optional registry and supervisor of the
+// Registration with forge-hub, the optional registry and dashboard of the
 // applications on a device (see proto/forge/v1/hub.proto and hub/).
 //
 // forge::Application does this by itself, configured by [hub]:
@@ -8,12 +8,11 @@
 //   register = true                    # try to register (nothing happens without a hub)
 //   endpoint = "tcp://127.0.0.1:5550"
 //   retry_s = 30                       # register again in the background (0 = try once)
-//   restart = "on-failure"             # never | on-failure | always
-//   max_restarts = 3                   # within restart_window_s, then give up
-//   restart_window_s = 600
-//   restart_delay_s = 2
-//   critical = true                    # giving up raises a critical alarm on the hub
-//   hang_timeout_s = 0                 # unresponsive this long: killed and restarted
+//   critical = true                    # its unit failing is a critical alarm on the hub
+//   group = "Radio"                    # dashboard grouping
+//
+// Restarting is systemd's job: the restart policy is in the application's unit
+// (forge_add_app RESTART / MAX_RESTARTS / RESTART_WINDOW / WATCHDOG).
 //
 // Registration never blocks or fails the application: it runs on its own
 // thread, and without a hub the application simply carries on.
@@ -33,11 +32,6 @@
 namespace forge::hub {
 
 inline constexpr const char* default_endpoint = "tcp://127.0.0.1:5550";
-
-/// The restart policy declared in [hub].
-v1::RestartPolicy policy_from_config(const Config& cfg);
-v1::RestartPolicy::Mode parse_mode(const std::string& text);
-std::string mode_name(v1::RestartPolicy::Mode mode);
 
 /// systemd unit (".service") the process runs in, from /proc/<pid>/cgroup ("" if none).
 std::string unit_of(int pid);

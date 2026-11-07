@@ -274,6 +274,7 @@ install(FILES
         "${PROJECT_BINARY_DIR}/forgecppConfigVersion.cmake"
         cmake/ForgeHelpers.cmake
         cmake/ForgeEmbed.cmake
+        cmake/forge-app.service.in
     DESTINATION ${FORGECPP_CMAKE_DIR})
 
 # pkg-config for non-CMake consumers (plain Makefiles, autotools, meson).

@@ -61,14 +61,11 @@ policy = "other"              # fifo + priority 80 on the board (needs CAP_SYS_N
 # cpus = [1]                  # keep it on its own core (Zynq-7000: 0 and 1)
 
 # forge-hub (optional): if the device runs one, this application appears on
-# its dashboard (http://<device>/) and the hub applies this policy.
+# its dashboard (http://<device>/). Restarts are systemd's: the unit generated
+# by forge_add_app (CMakeLists.txt) restarts it after a crash or a hang (watchdog),
+# at most 3 times in 10 minutes.
 [hub]
-restart = "on-failure"        # never | on-failure | always
-max_restarts = 3              # within restart_window_s; then the hub gives up and raises an alarm
-restart_window_s = 600
-restart_delay_s = 2
-critical = true               # giving up is a critical alarm on the hub
-hang_timeout_s = 0            # unresponsive this long: killed and restarted (0 = off)
+critical = true               # its unit failing is a critical alarm on the hub
 group = "Radio"
 
 [http]

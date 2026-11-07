@@ -30,8 +30,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(sa_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-configure_file(systemd/spectrum-analyzer.service.in
-               "${CMAKE_CURRENT_BINARY_DIR}/spectrum-analyzer.service" @ONLY)
 
 set(_install_mode)
 if(NOT SA_STANDALONE)
@@ -42,7 +40,9 @@ forge_add_app(spectrum-analyzer
     LIBS    sa_core
     CONFIG  config/spectrum-analyzer.toml
     WEB     web
-    SERVICE "${CMAKE_CURRENT_BINARY_DIR}/spectrum-analyzer.service"
+    DESCRIPTION "AD936x spectrum analyzer (forgecpp)"
+    AFTER radio-controller.service
+    RESTART on-failure MAX_RESTARTS 3 RESTART_WINDOW 600 RESTART_DELAY 2 WATCHDOG 30
     ${_install_mode})
 
 if(SA_STANDALONE)

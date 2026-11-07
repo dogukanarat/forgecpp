@@ -3,40 +3,9 @@
 #include "forge/log.hpp"
 #include "forge/zmq.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <fstream>
 
 namespace forge::hub {
-
-v1::RestartPolicy::Mode parse_mode(const std::string& text) {
-    std::string t = text;
-    std::transform(t.begin(), t.end(), t.begin(), [](unsigned char c) { return std::tolower(c); });
-    std::replace(t.begin(), t.end(), '_', '-');
-    if (t == "never" || t == "no") return v1::RestartPolicy::MODE_NEVER;
-    if (t == "on-failure") return v1::RestartPolicy::MODE_ON_FAILURE;
-    if (t == "always") return v1::RestartPolicy::MODE_ALWAYS;
-    throw ConfigError("hub.restart must be never, on-failure or always (not '" + text + "')");
-}
-
-std::string mode_name(v1::RestartPolicy::Mode mode) {
-    switch (mode) {
-        case v1::RestartPolicy::MODE_ON_FAILURE: return "on-failure";
-        case v1::RestartPolicy::MODE_ALWAYS: return "always";
-        default: return "never";
-    }
-}
-
-v1::RestartPolicy policy_from_config(const Config& cfg) {
-    v1::RestartPolicy p;
-    p.set_mode(parse_mode(cfg.get_or<std::string>("hub.restart", "never")));
-    p.set_max_restarts(static_cast<std::uint32_t>(std::max(cfg.get_or<int>("hub.max_restarts", 3), 0)));
-    p.set_window_s(static_cast<std::uint32_t>(std::max(cfg.get_or<int>("hub.restart_window_s", 600), 1)));
-    p.set_delay_s(static_cast<std::uint32_t>(std::max(cfg.get_or<int>("hub.restart_delay_s", 2), 0)));
-    p.set_critical(cfg.get_or<bool>("hub.critical", false));
-    p.set_hang_timeout_s(static_cast<std::uint32_t>(std::max(cfg.get_or<int>("hub.hang_timeout_s", 0), 0)));
-    return p;
-}
 
 std::string unit_of(int pid) {
     std::ifstream in("/proc/" + std::to_string(pid) + "/cgroup");

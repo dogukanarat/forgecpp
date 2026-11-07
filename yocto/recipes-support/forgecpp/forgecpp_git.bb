@@ -82,7 +82,7 @@ do_install() {
 #   forgecpp-tools     forgecpp-new (scaffolder)
 #   forgecpp-protoc    protoc and libprotoc for the target (rarely needed)
 PACKAGES =+ "${PN}-hub ${PN}-forgectl ${PN}-python ${PN}-tools ${PN}-iio-tools ${PN}-protoc"
-#   forgecpp-hub       forge-hub: dashboard of the device's applications, restarts them by their policy
+#   forgecpp-hub       forge-hub: dashboard of the device's applications (state, health, systemd restarts)
 FILES:${PN}-hub = "${bindir}/forge-hub ${sysconfdir}/forge-hub ${systemd_system_unitdir}/forge-hub.service"
 CONFFILES:${PN}-hub = "${sysconfdir}/forge-hub/forge-hub.toml"
 RDEPENDS:${PN}-hub = "${PN}"

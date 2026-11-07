@@ -5,7 +5,15 @@
 #       [LIBS <targets...>]          extra libraries to link
 #       [CONFIG <file.toml>]         installed as <sysconfdir>/<name>/<name>.toml
 #                                    (and searched there at runtime)
-#       [SERVICE <file.service>]     installed as a systemd unit
+#       [SERVICE <file.service>]     installed as a systemd unit (your own), or generated:
+#       [SYSTEMD]                    generate <name>.service (any of the options below implies it)
+#       [RESTART never|on-failure|always]   restart policy (default on-failure)
+#       [MAX_RESTARTS <n>]           restarts allowed within RESTART_WINDOW, then the unit
+#                                    fails and stays down (default 3; 0 = unlimited)
+#       [RESTART_WINDOW <s>]         default 600
+#       [RESTART_DELAY <s>]          default 2
+#       [WATCHDOG <s>]               hung main loop -> killed and restarted (default 30; 0 = off)
+#       [DESCRIPTION <text>] [AFTER <units...>] [USER <user>]
 #       [WEB <dir>]                  embed <dir> as the app's web pages (see forge_add_web)
 #       [NO_INSTALL])
 #
@@ -123,7 +131,9 @@ function(forge_add_proto target)
 endfunction()
 
 function(forge_add_app name)
-    cmake_parse_arguments(ARG "NO_INSTALL" "CONFIG;SERVICE;WEB" "SOURCES;LIBS" ${ARGN})
+    cmake_parse_arguments(ARG "NO_INSTALL;SYSTEMD"
+        "CONFIG;SERVICE;WEB;RESTART;MAX_RESTARTS;RESTART_WINDOW;RESTART_DELAY;WATCHDOG;DESCRIPTION;USER"
+        "SOURCES;LIBS;AFTER" ${ARGN})
     if(NOT ARG_SOURCES)
         message(FATAL_ERROR "forge_add_app(${name}): SOURCES is required")
     endif()
@@ -136,6 +146,20 @@ function(forge_add_app name)
         FORGE_APP_INSTALLED_CONFIG="${CMAKE_INSTALL_FULL_SYSCONFDIR}/${name}/${name}.toml")
     if(ARG_WEB)
         forge_add_web(${name} DIR "${ARG_WEB}")
+    endif()
+
+    # Generated systemd unit: the restart policy lives in systemd.
+    foreach(opt RESTART MAX_RESTARTS RESTART_WINDOW RESTART_DELAY WATCHDOG)
+        if(DEFINED ARG_${opt})
+            set(ARG_SYSTEMD ON)
+        endif()
+    endforeach()
+    if(ARG_SYSTEMD AND NOT ARG_SERVICE)
+        forge_generate_unit(${name} "${CMAKE_CURRENT_BINARY_DIR}/${name}.service"
+            RESTART "${ARG_RESTART}" MAX_RESTARTS "${ARG_MAX_RESTARTS}" RESTART_WINDOW "${ARG_RESTART_WINDOW}"
+            RESTART_DELAY "${ARG_RESTART_DELAY}" WATCHDOG "${ARG_WATCHDOG}" DESCRIPTION "${ARG_DESCRIPTION}"
+            USER "${ARG_USER}" AFTER ${ARG_AFTER})
+        set(ARG_SERVICE "${CMAKE_CURRENT_BINARY_DIR}/${name}.service")
     endif()
 
     if(ARG_NO_INSTALL)
@@ -224,4 +248,51 @@ function(forge_add_web target)
         COMMENT "Embedding web assets from ${ARG_DIR} into ${target}"
         VERBATIM)
     target_sources(${target} PRIVATE "${_out}/${ARG_SYMBOL}.cpp")
+endfunction()
+
+# forge_generate_unit(<name> <output> [RESTART ..] [MAX_RESTARTS ..] [RESTART_WINDOW ..]
+#                     [RESTART_DELAY ..] [WATCHDOG ..] [DESCRIPTION ..] [USER ..] [AFTER ..])
+# Writes a systemd unit for the application <name> (see forge_add_app).
+set(_FORGE_HELPERS_DIR "${CMAKE_CURRENT_LIST_DIR}")
+function(forge_generate_unit name output)
+    cmake_parse_arguments(ARG "" "RESTART;MAX_RESTARTS;RESTART_WINDOW;RESTART_DELAY;WATCHDOG;DESCRIPTION;USER" "AFTER" ${ARGN})
+    foreach(pair "RESTART;on-failure" "MAX_RESTARTS;3" "RESTART_WINDOW;600" "RESTART_DELAY;2" "WATCHDOG;30")
+        list(GET pair 0 key)
+        list(GET pair 1 def)
+        if("${ARG_${key}}" STREQUAL "")
+            set(ARG_${key} "${def}")
+        endif()
+    endforeach()
+    if(ARG_RESTART STREQUAL "never")
+        set(ARG_RESTART "no")
+    endif()
+    if(NOT ARG_RESTART MATCHES "^(no|on-failure|always|on-abnormal|on-watchdog|on-abort|on-success)$")
+        message(FATAL_ERROR "forge_add_app(${name}): RESTART must be never, on-failure or always (not ${ARG_RESTART})")
+    endif()
+    set(FORGE_UNIT_NAME "${name}")
+    set(FORGE_UNIT_DESCRIPTION "${ARG_DESCRIPTION}")
+    if(NOT FORGE_UNIT_DESCRIPTION)
+        set(FORGE_UNIT_DESCRIPTION "${name} (forgecpp)")
+    endif()
+    set(FORGE_UNIT_AFTER "")
+    set(FORGE_UNIT_WANTS "")
+    foreach(u IN LISTS ARG_AFTER)
+        string(APPEND FORGE_UNIT_AFTER " ${u}")
+    endforeach()
+    if(ARG_MAX_RESTARTS EQUAL 0)
+        set(FORGE_UNIT_START_LIMIT_INTERVAL 0)  # no limit
+        set(FORGE_UNIT_START_LIMIT_BURST 5)
+    else()
+        set(FORGE_UNIT_START_LIMIT_INTERVAL "${ARG_RESTART_WINDOW}")
+        math(EXPR FORGE_UNIT_START_LIMIT_BURST "${ARG_MAX_RESTARTS} + 1")  # the first start counts too
+    endif()
+    set(FORGE_UNIT_RESTART "${ARG_RESTART}")
+    set(FORGE_UNIT_RESTART_DELAY "${ARG_RESTART_DELAY}")
+    set(FORGE_UNIT_WATCHDOG "${ARG_WATCHDOG}")
+    set(FORGE_UNIT_EXEC "${CMAKE_INSTALL_FULL_BINDIR}/${name} --config ${CMAKE_INSTALL_FULL_SYSCONFDIR}/${name}/${name}.toml")
+    set(FORGE_UNIT_EXTRA "")
+    if(ARG_USER)
+        set(FORGE_UNIT_EXTRA "User=${ARG_USER}\n")
+    endif()
+    configure_file("${_FORGE_HELPERS_DIR}/forge-app.service.in" "${output}" @ONLY)
 endfunction()

@@ -23,11 +23,23 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libssl-dev zlib1g-dev libxml2-dev python3-zmq python3-protobuf python3-numpy
+          sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev python3-zmq python3-protobuf python3-numpy
+      # The bundled libraries (protobuf, libzmq, ...) take most of the build time: ccache keeps
+      # them between runs (install.sh still builds and installs everything, so nothing else changes).
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ matrix.cxx }}-${{ matrix.flags }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.cxx }}-${{ matrix.flags }}-
       - name: Install
         env:
           CXX: ${{ matrix.cxx }}
-        run: ./install.sh --prefix "$HOME/forgecpp" --tests --examples ${{ matrix.flags }}
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 400M
+        run: |
+          ./install.sh --prefix "$HOME/forgecpp" --tests --examples ${{ matrix.flags }} \
+            --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          ccache --show-stats
       - name: Smoke-test the example applications
         working-directory: build/forgecpp/examples
         run: |
@@ -107,7 +119,8 @@ jobs:
           grep -q "blocks" /tmp/rx.txt
           python3 ../../../examples/spectrum_analyzer/clients/spectrum_watch.py tcp://127.0.0.1:5566 --count 2 > /tmp/sw.txt
           grep -q fixed /tmp/sw.txt
-          # forge-hub: both registered, with their ports; a crash is restarted by the policy in [hub]
+          # forge-hub: both registered with their ports; a crash is reported (no systemd unit
+          # here, so nothing restarts it), a stop request is not a crash
           for _ in $(seq 100); do
             curl -fs http://127.0.0.1:18110/api/apps -o /tmp/apps.json && grep -q spectrum-analyzer /tmp/apps.json \
               && grep -q radio-controller /tmp/apps.json && break
@@ -117,25 +130,21 @@ jobs:
           has '<title>Device</title>' curl -fs http://127.0.0.1:18110/
           kill -KILL $rc
           wait $rc || true
-          python3 - "$rc" <<'EOF'
+          kill -TERM $pid
+          wait $pid
+          python3 - <<'EOF'
           import json, sys, time, urllib.request
-          old = int(sys.argv[1])
-          for _ in range(150):
-              apps = json.load(urllib.request.urlopen("http://127.0.0.1:18110/api/apps"))["apps"]
-              rc = next(a for a in apps if a["app"]["name"] == "radio-controller")
-              if rc["state"] == "STATE_RUNNING" and int(rc["app"].get("pid", 0)) not in (0, old):
-                  assert rc.get("restarts") == 1, rc
-                  open("/tmp/rc2.pid", "w").write(str(rc["app"]["pid"]))
+          want = {"radio-controller": "STATE_CRASHED", "spectrum-analyzer": "STATE_STOPPED"}
+          for _ in range(100):
+              apps = {a["app"]["name"]: a for a in json.load(urllib.request.urlopen("http://127.0.0.1:18110/api/apps"))["apps"]}
+              if all(apps[n]["state"] == s for n, s in want.items()):
                   break
               time.sleep(0.1)
           else:
-              sys.exit("radio-controller was not restarted: %s" % rc)
+              sys.exit("unexpected states: %s" % {n: (a["state"], a.get("message")) for n, a in apps.items()})
           EOF
-          rc2=$(cat /tmp/rc2.pid)
-          kill -TERM $pid $rc2 $hub
-          wait $pid
+          kill -TERM $hub
           wait $hub
-          for _ in $(seq 100); do kill -0 $rc2 2>/dev/null || break; sleep 0.1; done
           run_app 18101 ./sensor_service -c sensor_service.toml
           run_app 18102 ./pipeline -c pipeline.toml --producers 2
           run_app 18103 ./thermostat -c thermostat.toml -D thermostat.settings_file=/tmp/thermostat.json
@@ -156,3 +165,42 @@ jobs:
           /tmp/demo/build/demo -c /tmp/demo/config/demo.toml --print-config
       - name: Uninstall
         run: ./install.sh --uninstall --prefix "$HOME/forgecpp" && test -z "$(find "$HOME/forgecpp" -type f)"
+
+  # Everything (the bundled libraries too) built with sanitizers, all tests run.
+  sanitizers:
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitize: ["address,undefined", "thread"]
+    name: sanitize (${{ matrix.sanitize }})
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev
+      # Newer runner kernels randomize mmap more than ThreadSanitizer/AddressSanitizer accept.
+      - name: Sanitizer-compatible address space layout
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-sanitize-${{ matrix.sanitize }}-${{ github.sha }}
+          restore-keys: ccache-sanitize-${{ matrix.sanitize }}-
+      - name: Build and test with ${{ matrix.sanitize }}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 400M
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+        run: |
+          ./install.sh --prefix "$HOME/forgecpp-san" --build-type Debug --sanitize ${{ matrix.sanitize }} \
+            --tests --examples --without-iio \
+            --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Test log
+        if: failure()
+        run: cat build/logs/forgecpp-test.log || true

@@ -4,7 +4,7 @@
 # (-DFORGECPP_BUILD_HUB=OFF / install.sh --without-hub to leave it out).
 set(FORGE_HUB_VERSION ${PROJECT_VERSION})
 
-add_library(forge_hub_core STATIC src/proc.cpp src/hub.cpp)
+add_library(forge_hub_core STATIC src/proc.cpp src/systemd.cpp src/hub.cpp)
 target_include_directories(forge_hub_core PUBLIC src)
 target_link_libraries(forge_hub_core PUBLIC forgecpp::forgecpp)
 target_compile_definitions(forge_hub_core PUBLIC FORGE_HUB_VERSION="${FORGE_HUB_VERSION}")
@@ -12,13 +12,13 @@ if(FORGECPP_WARNINGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(forge_hub_core PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-configure_file(systemd/forge-hub.service.in "${CMAKE_CURRENT_BINARY_DIR}/forge-hub.service" @ONLY)
 forge_add_app(forge-hub
     SOURCES src/main.cpp
     LIBS    forge_hub_core
     CONFIG  config/forge-hub.toml
     WEB     web
-    SERVICE "${CMAKE_CURRENT_BINARY_DIR}/forge-hub.service")
+    DESCRIPTION "forge-hub: applications on this device"
+    RESTART always MAX_RESTARTS 0 RESTART_DELAY 2 WATCHDOG 30)
 
 if(FORGECPP_BUILD_TESTS)
     # A small application the tests start, crash, hang and stop.
