@@ -65,6 +65,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <vector>
@@ -115,6 +116,10 @@ namespace hub {
 class Client;
 }
 
+/// Daemon naming standard: lowercase letters and digits, words separated by '-'
+/// ("radio-controller", "forge-hub"). Other names work, with a warning at start-up.
+bool is_standard_name(std::string_view name);
+
 struct AppInfo {
     AppInfo(std::string name_ = "app", std::string version_ = "0.1.0", std::string description_ = {},
             std::vector<std::filesystem::path> config_paths_ = {})
@@ -123,7 +128,9 @@ struct AppInfo {
           description(std::move(description_)),
           config_paths(std::move(config_paths_)) {}
 
-    std::string name;                  ///< used for logger, config file and syslog ident
+    /// Daemon name: lowercase words separated by '-' (radio-controller). It names
+    /// the binary, the logger, <name>.toml, <name>.service and the forge-hub entry.
+    std::string name;
     std::string version;
     std::string description;
     /// Searched in order when --config is not given. Empty = defaults:

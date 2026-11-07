@@ -548,3 +548,13 @@ TEST_CASE("web: card layouts are stored on the device and survive a restart") {
     CHECK(js->body.find("GridStack") != std::string::npos);
     CHECK(http.Get("/forge/vendor/gridstack/gridstack.min.css")->status == 200);
 }
+
+TEST_CASE("daemon naming standard: lowercase words separated by '-'") {
+    for (const char* ok : {"radio-controller", "forge-hub", "pipeline", "sensor-service", "app2", "a-b-c"}) {
+        CHECK_MESSAGE(forge::is_standard_name(ok), ok);
+    }
+    for (const char* bad : {"sensor_service", "RadioController", "radio--controller", "-radio", "radio-", "2app",
+                            "radio controller", ""}) {
+        CHECK_FALSE_MESSAGE(forge::is_standard_name(bad), bad);
+    }
+}

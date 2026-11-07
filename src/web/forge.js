@@ -665,6 +665,8 @@
       const list = !!(narrow && narrow.matches);
       container.classList.toggle('forge-layout-list', list);
       grid.setStatic(list);
+      // the list follows the layout: top to bottom, left to right
+      grid.engine.nodes.forEach(function (n) { if (n.el) n.el.style.order = list ? String(Math.round(n.y / 10) * 100 + n.x) : ''; });
     }
     applyWidth();
     if (narrow) {
@@ -701,6 +703,7 @@
         const w = wrap(card);
         grid.makeWidget(w.item, w.opts);
         observe(w.item);
+        applyWidth();
         return w.item;
       },
       remove: function (card) {

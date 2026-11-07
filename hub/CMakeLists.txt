@@ -22,10 +22,10 @@ forge_add_app(forge-hub
 
 if(FORGECPP_BUILD_TESTS)
     # A small application the tests start, crash, hang and stop.
-    forge_add_app(forge_hub_test_app SOURCES tests/test_app.cpp NO_INSTALL)
+    forge_add_app(forge-hub-test-app SOURCES tests/test_app.cpp NO_INSTALL)
     forge_add_test(forge_hub_tests SOURCES tests/test_hub.cpp LIBS forge_hub_core)
     target_compile_definitions(forge_hub_tests PRIVATE
-        HUB_TEST_APP="$<TARGET_FILE:forge_hub_test_app>"
+        HUB_TEST_APP="$<TARGET_FILE:forge-hub-test-app>"
         HUB_CONFIG_FILE="${CMAKE_CURRENT_SOURCE_DIR}/config/forge-hub.toml")
-    add_dependencies(forge_hub_tests forge_hub_test_app)
+    add_dependencies(forge_hub_tests forge-hub-test-app)
 endif()

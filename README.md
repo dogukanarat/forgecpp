@@ -796,7 +796,7 @@ without extra files.
 | Example | What it shows |
 |---|---|
 | `examples/hello` | The smallest daemon (lambda style), a console command |
-| `examples/sensor_service` | Every building block: channel, thread pool, events, control panel, own page, alarm with hysteresis |
+| `examples/sensor_service` (`sensor-service`) | Every building block: channel, thread pool, events, control panel, own page, alarm with hysteresis |
 | `examples/pipeline` | **Multi-threaded application:** N producer threads → lock-free `Channel` → dispatcher thread → `ThreadPool` workers → result channel → main loop. Bounded in-flight work (backpressure), atomic counters, alarms raised from worker threads, clean shutdown |
 | [`examples/radio_controller`](examples/radio_controller/README.md) | **AD936x radio daemon (libiio + forge.v1):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.v1.IqBlock` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.v1.TxBlock`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe. Built when forgecpp has ZeroMQ |
 | [`examples/spectrum_analyzer`](examples/spectrum_analyzer/README.md) | **AD936x spectrum analyzer with a web UI** (on its own RX path, or on RX2 next to the radio controller): realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, `sa.v1.Spectrum` stream. Shares the AD936x backend with the radio controller |
@@ -808,7 +808,7 @@ without extra files.
 cd build/forgecpp/examples
 ./pipeline -c pipeline.toml --producers 4 -i      # http://localhost:8080/forge/
 ./thermostat -c thermostat.toml                    # http://localhost:8080/
-./sensor_service -c sensor_service.toml -i --simulate-spikes
+./sensor-service -c sensor-service.toml -i --simulate-spikes
 ./radio_controller/radio-controller -c radio_controller/radio-controller.toml   # simulated AD9364
 ./radio_controller/radio-controller --backend iio --uri ip:192.168.2.1         # real AD936x via iiod
 ./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml  # http://localhost:8081/

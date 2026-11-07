@@ -145,7 +145,7 @@ jobs:
           EOF
           kill -TERM $hub
           wait $hub
-          run_app 18101 ./sensor_service -c sensor_service.toml
+          run_app 18101 ./sensor-service -c sensor-service.toml
           run_app 18102 ./pipeline -c pipeline.toml --producers 2
           run_app 18103 ./thermostat -c thermostat.toml -D thermostat.settings_file=/tmp/thermostat.json
           ./thermostat -c thermostat.toml -D http.port=18104 -D log.console=false &

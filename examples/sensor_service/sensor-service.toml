@@ -1,9 +1,9 @@
-# Configuration for the sensor_service example.
+# Configuration for the sensor-service example.
 # Every key can be overridden from the command line: -D sensor.rate_hz=20
 
 [log]
 level = "info"            # trace|debug|info|warn|error|critical|off
-# file = "/var/log/sensor_service/sensor_service.log"
+# file = "/var/log/sensor-service/sensor-service.log"
 # max_size_mb = 10
 # max_files = 3
 # syslog = true
@@ -32,7 +32,7 @@ log_level = "info"
 
 [console]
 # enabled = true          # same as -i
-# history = "~/.sensor_service_history"
+# history = "~/.sensor-service_history"
 
 [sensor]
 rate_hz = 10

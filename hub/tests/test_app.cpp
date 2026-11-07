@@ -1,9 +1,9 @@
 // An application for the forge-hub tests: registers like every forgecpp
 // application and misbehaves on request.
 //
-//   forge_hub_test_app --name a --crash-after-ms 500     # SIGKILL itself
-//   forge_hub_test_app --name b --hang-after-ms 500      # block the main loop
-//   forge_hub_test_app --name c --exit-after-ms 500 --exit-code 3
+//   forge-hub-test-app --name a --crash-after-ms 500     # SIGKILL itself
+//   forge-hub-test-app --name b --hang-after-ms 500      # block the main loop
+//   forge-hub-test-app --name c --exit-after-ms 500 --exit-code 3
 #include <forge/forge.hpp>
 
 #include <csignal>

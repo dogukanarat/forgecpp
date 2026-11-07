@@ -64,7 +64,7 @@ json to_json(const Stats& s) {
 
 class SensorService : public forge::Application {
 public:
-    SensorService() : Application({"sensor_service", "1.0.0", "Example forgecpp sensor service"}) {}
+    SensorService() : Application({"sensor-service", "1.0.0", "Example forgecpp sensor service"}) {}
 
 protected:
     void setup_cli(CLI::App& cli) override {

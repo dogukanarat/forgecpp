@@ -376,6 +376,12 @@ int Application::run(int argc, char** argv) {
 
         logger_->info("{} {} starting (forgecpp {}, pid {}, {} worker threads)", info_.name, info_.version,
                       version_string, ::getpid(), pool_->get_thread_count());
+        if (!is_standard_name(info_.name)) {
+            logger_->warn("'{}' does not follow the daemon naming standard: lowercase words separated by '-' "
+                          "(e.g. radio-controller); the name is used for the binary, config file, systemd unit "
+                          "and forge-hub entry",
+                          info_.name);
+        }
         if (!cfg.source().empty()) logger_->info("configuration: {}", cfg.source().string());
         trace::set_thread_name("main");
 
@@ -1523,6 +1529,19 @@ void Component::setup_config(config::Schema&) {}
 void Component::setup_web(web::Dashboard&) {}
 void Component::setup_console(Console&) {}
 void Component::setup_http(http::Server&) {}
+bool is_standard_name(std::string_view name) {
+    if (name.empty() || name.size() > 64 || !std::islower(static_cast<unsigned char>(name.front())) || name.back() == '-') {
+        return false;
+    }
+    char prev = 0;
+    for (const char c : name) {
+        const bool ok = std::islower(static_cast<unsigned char>(c)) || std::isdigit(static_cast<unsigned char>(c)) || c == '-';
+        if (!ok || (c == '-' && prev == '-')) return false;
+        prev = c;
+    }
+    return true;
+}
+
 std::string Application::default_layout_file(const std::string& name) {
     // systemd's StateDirectory= (the units forge_add_app generates have one).
     if (const char* sd = std::getenv("STATE_DIRECTORY"); sd && *sd) {
