@@ -71,7 +71,7 @@ Build
   --with-ssl            Require OpenSSL (fail if missing)
   --without-zlib        Build cpp-httplib without zlib compression
   --without-zmq         Skip ZeroMQ (libzmq, cppzmq) and the forgecpp::zmq library
-  --without-iio         Skip libiio (radio-controller then only has its simulator)
+  --without-iio         Skip libiio (the AD9364 examples then only have their simulator)
   --iio-usb             Build libiio's USB backend (needs libusb-1.0)
   --no-rpath            Do not set \$ORIGIN rpaths on installed libraries
   --cmake-arg ARG       Extra argument passed to every CMake configure (repeatable)

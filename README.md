@@ -64,7 +64,7 @@ kill -HUP $(pidof pump)            # reload the configuration
 | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | v0.65.0 | HTTP/HTTPS client and server | `forge::http::Server`, `forge::http::Client` |
 | [doctest](https://github.com/doctest/doctest) | v2.5.3 | Unit testing | `forge/testing.hpp`, `forge_add_test()` |
 | [libzmq](https://github.com/zeromq/libzmq) + [cppzmq](https://github.com/zeromq/cppzmq) | v4.3.5 / v4.11.0 | ZeroMQ messaging (pub/sub, push/pull, request/reply) | `forgecpp::zmq`, `forge/zmq.hpp` |
-| [libiio](https://github.com/analogdevicesinc/libiio) | v0.26 | Industrial I/O devices (ADI transceivers, ADCs, ...) | `examples/radio_controller` |
+| [libiio](https://github.com/analogdevicesinc/libiio) | v0.26 | Industrial I/O devices (ADI transceivers, ADCs, ...) | `examples/radio_controller`, `examples/spectrum_analyzer` |
 
 ## Installation
 
@@ -521,6 +521,7 @@ without extra files.
 | `examples/sensor_service` | Every building block: channel, thread pool, events, control panel, own page, alarm with hysteresis |
 | `examples/pipeline` | **Multi-threaded application:** N producer threads → lock-free `Channel` → dispatcher thread → `ThreadPool` workers → result channel → main loop. Bounded in-flight work (backpressure), atomic counters, alarms raised from worker threads, clean shutdown |
 | [`examples/radio_controller`](examples/radio_controller/README.md) | **AD9364 radio daemon (libiio + ZeroMQ):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples over ZeroMQ (RX via PUB, TX via PULL, JSON control via REP). Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe. Built when forgecpp has ZeroMQ |
+| [`examples/spectrum_analyzer`](examples/spectrum_analyzer/README.md) | **AD9364 spectrum analyzer with a web UI:** realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, spectrum stream over ZeroMQ. Shares the AD936x backend with the radio controller |
 | `examples/thermostat` | **Web-first application:** its own multi-page site (overview, live SVG chart, settings form), custom REST API with per-field validation, live data via `publish_web`, radio/segmented controls, alarms, settings persisted with `save_json` |
 
 ```sh
@@ -531,12 +532,15 @@ cd build/forgecpp/examples
 ./sensor_service -c sensor_service.toml -i --simulate-spikes
 ./radio_controller/radio-controller -c radio_controller/radio-controller.toml   # simulated AD9364
 ./radio_controller/radio-controller --backend iio --uri ip:192.168.2.1         # real AD936x via iiod
+./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml  # http://localhost:8080/
 ```
 
-The radio controller is also a standalone CMake project (`cmake -S
-examples/radio_controller -B build -DCMAKE_PREFIX_PATH=<forgecpp prefix>`)
-that installs the daemon, its config, systemd unit and clients; the Yocto
-recipe `yocto/recipes-connectivity/radio-controller` builds it that way.
+The radio controller and the spectrum analyzer are also standalone CMake
+projects (`cmake -S examples/radio_controller -B build
+-DCMAKE_PREFIX_PATH=<forgecpp prefix>`) that install the daemon, its config
+and systemd unit; their Yocto recipes in `yocto/recipes-connectivity` build
+them that way. Both use `examples/common/ad936x` (libiio backend, simulator,
+FFT/windows).
 
 ## Updating dependencies
 
@@ -555,9 +559,10 @@ third_party/       submodules
 cmake/             package config, pkg-config, forge_add_app/forge_add_web/forge_add_test
 tools/forgecpp-new project scaffolder
 examples/          hello, sensor_service, pipeline (multi-threaded), thermostat (web site),
-                   radio_controller (AD9364 over libiio + ZeroMQ)
+                   radio_controller (AD9364 over libiio + ZeroMQ),
+                   spectrum_analyzer (AD9364 spectrum analyzer), common/ad936x
 tests/             doctest unit tests
-yocto/             bitbake recipes (forgecpp, radio-controller)
+yocto/             bitbake recipes (forgecpp, radio-controller, spectrum-analyzer)
 install.sh, get.sh installation
 ```
 

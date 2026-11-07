@@ -1,0 +1,41 @@
+# spectrum-analyzer configuration
+# Everything below [analyzer] except the device settings can also be changed
+# from the web UI; with state_file set, those changes survive restarts.
+
+[analyzer]
+backend = "sim"               # sim | iio  (also: --backend)
+uri = ""                      # iio: "local:" (on the board), "ip:192.168.2.1", "usb:1.2.5"; "" = libiio default
+timeout_ms = 2000
+state_file = ""               # e.g. "/var/lib/spectrum-analyzer/state.json"
+sweep_rate_hz = 61440000      # sample rate of swept (wide) spans; lower it on slow links (USB/network)
+usable_fraction = 0.8         # part of each capture used in swept mode (the band edges roll off)
+# settle_buffers = 3          # buffers dropped after a retune (default: 3 for iio, 1 for sim)
+
+# Initial measurement setup
+center_hz = 2440000000
+span_hz = 100000000
+rbw_hz = 0                    # 0 = auto (span / 500)
+window = "blackman_harris"    # rectangular | hann | hamming | blackman_harris | flat_top
+vbw_averages = 1
+gain_mode = "manual"          # manual | slow_attack | fast_attack | hybrid
+rx_gain_db = 40
+unit = "dBFS"                 # dBFS | dBm  (dBm = dBFS - RX gain + cal_offset_db)
+cal_offset_db = 0
+trace_modes = ["clear_write", "max_hold", "blank"]   # clear_write | max_hold | min_hold | average | view | blank
+detector = "peak"             # peak | sample | average | negative_peak
+points = 1001
+ref_level = 0
+scale_db = 10
+update_hz = 15
+
+[zmq]
+spectrum = "tcp://*:5566"     # PUB: topic "spectrum", header JSON + float32 trace
+control = "tcp://*:5567"      # REP: JSON commands (same controls as the web UI)
+
+[http]
+enabled = true
+host = "0.0.0.0"
+port = 8080
+
+[log]
+level = "info"

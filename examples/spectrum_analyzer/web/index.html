@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spectrum analyzer</title>
+  <link rel="stylesheet" href="/forge/forge.css">
+  <link rel="stylesheet" href="/assets/sa.css">
+  <script src="/forge/forge.js" data-manual></script>
+  <script src="/assets/sa.js" defer></script>
+</head>
+<body class="forge sa">
+  <header class="forge-header">
+    <div class="forge-brand">
+      <span class="forge-dot" data-forge-connection></span>
+      <h1>Spectrum analyzer</h1>
+    </div>
+    <nav>
+      <a href="/" aria-current="page">Analyzer</a>
+      <a href="/forge/">Control panel</a>
+    </nav>
+    <div class="forge-meta">
+      <span data-forge-value="backend"></span>
+      <span><span data-forge-value="temperature_c" data-forge-precision="1"></span> °C</span>
+    </div>
+    <div class="forge-alarms-host" data-forge-alarms></div>
+  </header>
+
+  <main class="sa-main">
+    <!-- ================================================================ display -->
+    <section class="sa-display" aria-label="Analyzer display">
+      <div class="sa-annot top">
+        <span>Ref <b id="a-ref">–</b></span>
+        <span><b id="a-scale">–</b>/div</span>
+        <span>RBW <b id="a-rbw">–</b></span>
+        <span>VBW <b id="a-vbw">–</b></span>
+        <span>Det <b id="a-det">–</b></span>
+        <span>Gain <b id="a-gain">–</b></span>
+        <span>Sweep <b id="a-sweep">–</b></span>
+        <span class="sa-mode" id="a-mode">–</span>
+        <span class="sa-badge hold" id="b-hold" hidden>HOLD</span>
+        <span class="sa-badge over" id="b-over" hidden>ADC OVERLOAD</span>
+      </div>
+
+      <div class="sa-screen">
+        <canvas id="spectrum" aria-label="Spectrum: click to place the active marker, drag to zoom, double-click to center, wheel to zoom"></canvas>
+        <div class="sa-hint" id="hint">Click: marker · Drag: zoom · Double-click: center · Wheel: zoom</div>
+      </div>
+
+      <div class="sa-annot bottom">
+        <span>Start <b id="a-start">–</b></span>
+        <span>Center <b id="a-center">–</b></span>
+        <span>Span <b id="a-span">–</b></span>
+        <span>Stop <b id="a-stop">–</b></span>
+      </div>
+
+      <div class="sa-screen waterfall" id="wf-box">
+        <canvas id="waterfall" aria-label="Waterfall"></canvas>
+      </div>
+
+      <div class="sa-tables">
+        <section class="sa-table-card">
+          <h3>Markers</h3>
+          <table class="sa-table" id="marker-table">
+            <thead><tr><th></th><th>Frequency</th><th>Level</th><th>Δ freq</th><th>Δ level</th></tr></thead>
+            <tbody><tr class="empty"><td colspan="5">No marker on. Click the display or press <kbd>P</kbd> for a peak search.</td></tr></tbody>
+          </table>
+        </section>
+        <section class="sa-table-card">
+          <h3>Peaks <span class="sa-sub" id="peak-count"></span></h3>
+          <table class="sa-table" id="peak-table">
+            <thead><tr><th>#</th><th>Frequency</th><th>Level</th><th>Δ to #1</th></tr></thead>
+            <tbody><tr class="empty"><td colspan="4">–</td></tr></tbody>
+          </table>
+        </section>
+        <section class="sa-table-card" id="meas-card">
+          <h3>Measurement</h3>
+          <div id="meas-body" class="sa-meas"><span class="sa-sub">Off. Choose one in the Meas tab.</span></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ================================================================ soft keys -->
+    <aside class="sa-panel forge-card" aria-label="Settings">
+      <div class="sa-tabs" role="tablist">
+        <button role="tab" data-tab="freq">Freq</button>
+        <button role="tab" data-tab="bw">BW</button>
+        <button role="tab" data-tab="amp">Amp</button>
+        <button role="tab" data-tab="trace">Trace</button>
+        <button role="tab" data-tab="marker">Marker</button>
+        <button role="tab" data-tab="meas">Meas</button>
+        <button role="tab" data-tab="sweep">Sweep</button>
+        <button role="tab" data-tab="display">Display</button>
+      </div>
+
+      <!-- Frequency -->
+      <div class="sa-pane" data-pane="freq" role="tabpanel">
+        <label class="sa-field"><span>Center</span>
+          <span class="sa-step">
+            <button class="forge-btn small" data-center-step="-1" title="Center − one division">◀</button>
+            <input type="number" step="any" data-forge-bind="center_mhz"><i>MHz</i>
+            <button class="forge-btn small" data-center-step="1" title="Center + one division">▶</button>
+          </span>
+        </label>
+        <label class="sa-field"><span>Span</span>
+          <span class="sa-step">
+            <button class="forge-btn small" data-span-factor="0.5" title="Half the span">÷2</button>
+            <input type="number" step="any" min="0.01" data-forge-bind="span_mhz"><i>MHz</i>
+            <button class="forge-btn small" data-span-factor="2" title="Double the span">×2</button>
+          </span>
+        </label>
+        <label class="sa-field"><span>Start</span><span class="sa-in"><input type="number" step="any" data-forge-bind="start_mhz"><i>MHz</i></span></label>
+        <label class="sa-field"><span>Stop</span><span class="sa-in"><input type="number" step="any" data-forge-bind="stop_mhz"><i>MHz</i></span></label>
+        <label class="sa-field"><span>Preset</span><select data-forge-bind="preset"></select></label>
+        <div class="sa-keys">
+          <button class="forge-btn" data-forge-press="full_span">Full span</button>
+          <button class="forge-btn" id="last-span" disabled>Last span</button>
+        </div>
+        <p class="sa-info">Mode: <b data-forge-value="sweep_mode"></b></p>
+      </div>
+
+      <!-- Bandwidth -->
+      <div class="sa-pane" data-pane="bw" role="tabpanel" hidden>
+        <div class="sa-field"><span>Auto RBW</span><label class="forge-switch"><input type="checkbox" data-forge-bind="rbw_auto"><span></span></label></div>
+        <label class="sa-field"><span>RBW</span><span class="sa-in"><input type="number" step="any" min="0.1" data-forge-bind="rbw_khz"><i>kHz</i></span></label>
+        <div class="sa-keys rbw-keys">
+          <button class="forge-btn small" data-rbw="1">1 k</button>
+          <button class="forge-btn small" data-rbw="10">10 k</button>
+          <button class="forge-btn small" data-rbw="30">30 k</button>
+          <button class="forge-btn small" data-rbw="100">100 k</button>
+          <button class="forge-btn small" data-rbw="300">300 k</button>
+          <button class="forge-btn small" data-rbw="1000">1 M</button>
+        </div>
+        <label class="sa-field"><span>Video averaging</span><span class="sa-in"><input type="number" min="1" max="64" step="1" data-forge-bind="vbw_averages"><i>FFTs</i></span></label>
+        <label class="sa-field"><span>Window</span><select data-forge-bind="window"></select></label>
+        <dl class="sa-readout">
+          <dt>Actual RBW</dt><dd data-forge-value="rbw_actual"></dd>
+          <dt>FFT size</dt><dd data-forge-value="fft_size"></dd>
+          <dt>Sample rate</dt><dd data-forge-value="sample_rate"></dd>
+        </dl>
+        <p class="sa-info">RBW = window ENBW × sample rate / FFT size. Flat top reads levels most accurately; Blackman-Harris separates close signals best.</p>
+      </div>
+
+      <!-- Amplitude -->
+      <div class="sa-pane" data-pane="amp" role="tabpanel" hidden>
+        <label class="sa-field"><span>Reference level</span><span class="sa-in"><input type="number" step="1" data-forge-bind="ref_level"><i class="unit"></i></span></label>
+        <label class="sa-field"><span>Scale</span><select data-forge-bind="scale_db"></select></label>
+        <div class="sa-keys"><button class="forge-btn" id="auto-scale">Auto scale</button></div>
+        <label class="sa-field"><span>Unit</span><select data-forge-bind="unit"></select></label>
+        <label class="sa-field"><span>dBm calibration</span><span class="sa-in"><input type="number" step="0.1" data-forge-bind="cal_offset_db"><i>dB</i></span></label>
+        <label class="sa-field"><span>Gain control</span><select data-forge-bind="gain_mode"></select></label>
+        <label class="sa-field"><span>RX gain <output data-forge-value="rx_gain_db" data-forge-precision="0"></output> dB</span>
+          <input type="range" min="-3" max="71" step="1" data-forge-bind="rx_gain_db">
+        </label>
+        <p class="sa-info">Reduce the gain when <b>ADC OVERLOAD</b> shows: clipping creates spurs that are not really there.</p>
+      </div>
+
+      <!-- Traces -->
+      <div class="sa-pane" data-pane="trace" role="tabpanel" hidden>
+        <label class="sa-field"><span><i class="swatch t1"></i>Trace 1</span><select data-forge-bind="trace1_mode"></select></label>
+        <label class="sa-field"><span><i class="swatch t2"></i>Trace 2</span><select data-forge-bind="trace2_mode"></select></label>
+        <label class="sa-field"><span><i class="swatch t3"></i>Trace 3</span><select data-forge-bind="trace3_mode"></select></label>
+        <label class="sa-field"><span>Average count</span><span class="sa-in"><input type="number" min="2" max="1000" step="1" data-forge-bind="trace_average"><i>sweeps</i></span></label>
+        <label class="sa-field"><span>Detector</span><select data-forge-bind="detector"></select></label>
+        <label class="sa-field"><span>Display points</span><select data-forge-bind="points"></select></label>
+        <div class="sa-keys"><button class="forge-btn" data-forge-press="reset_traces">Restart traces</button></div>
+        <p class="sa-info">The detector picks one value per display point from the FFT bins under it: Peak never misses a narrow signal, Average shows the noise floor truthfully.</p>
+      </div>
+
+      <!-- Markers -->
+      <div class="sa-pane" data-pane="marker" role="tabpanel" hidden>
+        <div class="sa-field"><span>Active marker</span>
+          <span class="segmented">
+            <label><input type="radio" name="am" value="1" data-forge-bind="active_marker"><span>1</span></label>
+            <label><input type="radio" name="am" value="2" data-forge-bind="active_marker"><span>2</span></label>
+            <label><input type="radio" name="am" value="3" data-forge-bind="active_marker"><span>3</span></label>
+            <label><input type="radio" name="am" value="4" data-forge-bind="active_marker"><span>4</span></label>
+          </span>
+        </div>
+        <div class="sa-keys grid">
+          <button class="forge-btn primary" data-forge-press="peak_search" title="P">Peak search</button>
+          <button class="forge-btn" data-forge-press="next_peak" title="N">Next peak</button>
+          <button class="forge-btn" data-forge-press="peak_left" title="←">◀ Peak left</button>
+          <button class="forge-btn" data-forge-press="peak_right" title="→">Peak right ▶</button>
+          <button class="forge-btn" data-forge-press="marker_to_center" title="C">Marker → center</button>
+          <button class="forge-btn" id="markers-off">All markers off</button>
+        </div>
+        <div class="sa-field"><span>Peak track</span><label class="forge-switch"><input type="checkbox" data-forge-bind="peak_track"><span></span></label></div>
+        <div class="sa-field"><span>Signal track</span><label class="forge-switch"><input type="checkbox" data-forge-bind="signal_track"><span></span></label></div>
+        <label class="sa-field"><span>Marker trace</span><select data-forge-bind="marker_trace"></select></label>
+        <table class="sa-mk">
+          <thead><tr><th></th><th>On</th><th>Frequency (MHz)</th><th title="Relative to marker 1">Δ</th></tr></thead>
+          <tbody>
+            <tr><th>1</th><td><input type="checkbox" data-forge-bind="m1_on"></td><td><input type="number" step="any" data-forge-bind="m1_mhz"></td><td></td></tr>
+            <tr><th>2</th><td><input type="checkbox" data-forge-bind="m2_on"></td><td><input type="number" step="any" data-forge-bind="m2_mhz"></td><td><input type="checkbox" data-forge-bind="m2_delta"></td></tr>
+            <tr><th>3</th><td><input type="checkbox" data-forge-bind="m3_on"></td><td><input type="number" step="any" data-forge-bind="m3_mhz"></td><td><input type="checkbox" data-forge-bind="m3_delta"></td></tr>
+            <tr><th>4</th><td><input type="checkbox" data-forge-bind="m4_on"></td><td><input type="number" step="any" data-forge-bind="m4_mhz"></td><td><input type="checkbox" data-forge-bind="m4_delta"></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Measurements -->
+      <div class="sa-pane" data-pane="meas" role="tabpanel" hidden>
+        <div class="sa-field"><span>Measurement</span>
+          <span class="segmented">
+            <label><input type="radio" name="ms" value="off" data-forge-bind="measurement"><span>Off</span></label>
+            <label><input type="radio" name="ms" value="channel_power" data-forge-bind="measurement"><span>Ch. power</span></label>
+            <label><input type="radio" name="ms" value="obw" data-forge-bind="measurement"><span>OBW</span></label>
+          </span>
+        </div>
+        <label class="sa-field"><span>Channel bandwidth</span><span class="sa-in"><input type="number" step="any" min="0.001" data-forge-bind="channel_bw_mhz"><i>MHz</i></span></label>
+        <label class="sa-field"><span>OBW power</span><span class="sa-in"><input type="number" step="0.1" min="50" max="99.99" data-forge-bind="obw_percent"><i>%</i></span></label>
+        <p class="sa-info">Result: <b data-forge-value="result"></b></p>
+        <hr>
+        <div class="sa-field"><span>Limit line</span><label class="forge-switch"><input type="checkbox" data-forge-bind="limit_on"><span></span></label></div>
+        <label class="sa-field"><span>Limit level</span><span class="sa-in"><input type="number" step="1" data-forge-bind="limit_level"><i class="unit"></i></span></label>
+        <label class="sa-field"><span>Peak table threshold</span><span class="sa-in"><input type="number" step="1" data-forge-bind="peak_threshold"><i class="unit"></i></span></label>
+        <p class="sa-info">The limit line raises the <code>analyzer.limit</code> alarm while the live trace is above it.</p>
+      </div>
+
+      <!-- Sweep -->
+      <div class="sa-pane" data-pane="sweep" role="tabpanel" hidden>
+        <div class="sa-field"><span>Run</span><label class="forge-switch"><input type="checkbox" data-forge-bind="run"><span></span></label></div>
+        <div class="sa-keys"><button class="forge-btn primary" data-forge-press="single">Single sweep</button></div>
+        <label class="sa-field"><span>Max update rate</span><span class="sa-in"><input type="number" min="1" max="30" step="1" data-forge-bind="update_hz"><i>Hz</i></span></label>
+        <dl class="sa-readout">
+          <dt>Sweep time</dt><dd data-forge-value="sweep_time"></dd>
+          <dt>Mode</dt><dd data-forge-value="sweep_mode"></dd>
+          <dt>Connected</dt><dd data-forge-value="connected" data-forge-true="yes" data-forge-false="no"></dd>
+          <dt>Backend</dt><dd data-forge-value="backend"></dd>
+          <dt>Temperature</dt><dd><span data-forge-value="temperature_c" data-forge-precision="1"></span> °C</dd>
+        </dl>
+        <div class="sa-keys"><button class="forge-btn" data-forge-press="reconnect">Reconnect radio</button></div>
+        <p class="sa-info">Spans up to 49 MHz are captured in one go (realtime). Wider spans are swept: the LO steps through the band in segments.</p>
+      </div>
+
+      <!-- Display -->
+      <div class="sa-pane" data-pane="display" role="tabpanel" hidden>
+        <div class="sa-field"><span>Waterfall</span><label class="forge-switch"><input type="checkbox" id="v-waterfall"><span></span></label></div>
+        <label class="sa-field"><span>Palette</span>
+          <select id="v-palette"><option value="turbo">Turbo</option><option value="viridis">Viridis</option><option value="inferno">Inferno</option><option value="gray">Grayscale</option></select>
+        </label>
+        <div class="sa-field"><span>Auto range</span><label class="forge-switch"><input type="checkbox" id="v-wfauto"><span></span></label></div>
+        <label class="sa-field"><span>Waterfall min</span><span class="sa-in"><input type="number" step="1" id="v-wfmin"><i class="unit"></i></span></label>
+        <label class="sa-field"><span>Waterfall max</span><span class="sa-in"><input type="number" step="1" id="v-wfmax"><i class="unit"></i></span></label>
+        <div class="sa-keys"><button class="forge-btn" id="wf-clear">Clear waterfall</button></div>
+        <div class="sa-field"><span>Peak labels</span><label class="forge-switch"><input type="checkbox" id="v-peaks"><span></span></label></div>
+        <div class="sa-field"><span>Trace fill</span><label class="forge-switch"><input type="checkbox" id="v-fill"><span></span></label></div>
+        <hr>
+        <div class="sa-keys grid">
+          <a class="forge-btn" href="/api/trace.csv" download>Traces (CSV)</a>
+          <button class="forge-btn" id="save-png">Screenshot (PNG)</button>
+          <a class="forge-btn" href="/api/iq.cs16" download title="Last capture, realtime spans only">IQ capture (cs16)</a>
+        </div>
+        <p class="sa-info">Keys: <kbd>P</kbd> peak, <kbd>N</kbd> next, <kbd>←</kbd>/<kbd>→</kbd> peak left/right, <kbd>C</kbd> marker → center, <kbd>Space</kbd> run/hold, <kbd>R</kbd> restart traces, <kbd>A</kbd> auto scale, <kbd>+</kbd>/<kbd>−</kbd> zoom.</p>
+      </div>
+    </aside>
+  </main>
+</body>
+</html>

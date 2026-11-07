@@ -35,6 +35,20 @@ The device tree must describe the AD9364 (`adi,ad9364` with the AXI AD9361
 HDL cores), so that the kernel exposes `ad9361-phy`, `cf-ad9361-lpc` and
 `cf-ad9361-dds-core-lpc`; `iio_info -u local:` on the target should list them.
 
+## spectrum-analyzer
+
+`recipes-connectivity/spectrum-analyzer/spectrum-analyzer_git.bb` builds the
+AD9364 spectrum analyzer from `examples/spectrum_analyzer`, set up the same way
+(`backend = "iio"`, `uri = "local:"`, state in `/var/lib/spectrum-analyzer`;
+override with `SA_URI`). It uses the same RX path as radio-controller and its
+unit conflicts with it: install both and set
+`SYSTEMD_AUTO_ENABLE:radio-controller = "disable"` (or the other way round)
+if you want to switch between them at run time.
+
+```
+IMAGE_INSTALL:append = " spectrum-analyzer"
+```
+
 ## Application recipes
 
 A project created with `forgecpp-new` builds in Yocto without changes:

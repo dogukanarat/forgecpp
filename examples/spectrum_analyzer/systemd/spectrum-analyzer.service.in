@@ -1,0 +1,18 @@
+[Unit]
+Description=AD9364 spectrum analyzer (forgecpp)
+After=network-online.target
+Wants=network-online.target
+# Both daemons use the AD9364 RX path: run one or the other.
+Conflicts=radio-controller.service
+
+[Service]
+Type=notify
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/spectrum-analyzer --config @CMAKE_INSTALL_FULL_SYSCONFDIR@/spectrum-analyzer/spectrum-analyzer.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+WatchdogSec=30
+StateDirectory=spectrum-analyzer
+
+[Install]
+WantedBy=multi-user.target

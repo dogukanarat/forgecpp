@@ -18,48 +18,13 @@ if(NOT TARGET forgecpp::zmq)
     message(FATAL_ERROR "radio-controller needs forgecpp built with ZeroMQ (forgecpp::zmq)")
 endif()
 
-# libiio (0.x API). Without it only the simulator backend is available.
-option(RADIO_WITH_IIO "Build the libiio backend for AD936x hardware" ON)
-set(RADIO_HAS_IIO OFF)
-if(RADIO_WITH_IIO)
-    find_path(IIO_INCLUDE_DIR iio.h)
-    find_library(IIO_LIBRARY NAMES iio libiio)
-    if(IIO_INCLUDE_DIR AND IIO_LIBRARY)
-        set(RADIO_HAS_IIO ON)
-    else()
-        message(WARNING "radio-controller: libiio not found - building with the simulator backend only")
-    endif()
-endif()
-message(STATUS "radio-controller: libiio backend ${RADIO_HAS_IIO}")
+# AD936x access (libiio backend + simulator) and DSP, shared with spectrum_analyzer.
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/ad936x ${CMAKE_CURRENT_BINARY_DIR}/ad936x)
 
 # Everything except main() lives in a static library so the tests can use it.
-add_library(radio_core STATIC
-    src/dsp.cpp
-    src/radio_controller.cpp
-    src/sim_backend.cpp
-    src/backend.cpp)
+add_library(radio_core STATIC src/radio_controller.cpp)
 target_include_directories(radio_core PUBLIC src)
-target_compile_features(radio_core PUBLIC cxx_std_17)
-target_link_libraries(radio_core PUBLIC forgecpp::forgecpp forgecpp::zmq)
-if(RADIO_HAS_IIO)
-    target_sources(radio_core PRIVATE src/iio_backend.cpp)
-    target_include_directories(radio_core PRIVATE ${IIO_INCLUDE_DIR})
-    target_link_libraries(radio_core PUBLIC ${IIO_LIBRARY})
-    if(IIO_LIBRARY MATCHES "\\.a$")
-        # A static libiio does not carry its own dependencies.
-        find_package(LibXml2 REQUIRED)
-        find_package(Threads REQUIRED)
-        target_link_libraries(radio_core PUBLIC LibXml2::LibXml2 Threads::Threads)
-        find_package(PkgConfig QUIET)
-        if(PkgConfig_FOUND)
-            pkg_check_modules(LIBUSB QUIET IMPORTED_TARGET libusb-1.0)
-            if(LIBUSB_FOUND)
-                target_link_libraries(radio_core PUBLIC PkgConfig::LIBUSB)
-            endif()
-        endif()
-    endif()
-    target_compile_definitions(radio_core PUBLIC RADIO_HAS_IIO=1)
-endif()
+target_link_libraries(radio_core PUBLIC ad936x forgecpp::forgecpp forgecpp::zmq)
 target_compile_definitions(radio_core PUBLIC RADIO_VERSION="${PROJECT_VERSION}")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(radio_core PRIVATE -Wall -Wextra -Wpedantic)

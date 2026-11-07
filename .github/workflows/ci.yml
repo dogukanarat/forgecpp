@@ -43,6 +43,20 @@ jobs:
           }
           ./hello --version
           run_app 18105 ./radio_controller/radio-controller --backend sim -D http.enabled=true -D radio.sample_rate_hz=5e6
+          run_app 18106 ./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml --backend sim
+          ./spectrum_analyzer/spectrum-analyzer -c spectrum_analyzer/spectrum-analyzer.toml --backend sim \
+            -D http.port=18107 -D log.console=false -D analyzer.span_hz=20e6 &
+          pid=$!
+          for _ in $(seq 100); do curl -fs http://127.0.0.1:18107/health >/dev/null && break; sleep 0.1; done
+          curl -fs http://127.0.0.1:18107/ -o /tmp/sa.html && grep -q "<title>Spectrum analyzer</title>" /tmp/sa.html
+          for _ in $(seq 100); do curl -fs http://127.0.0.1:18107/api/frame -o /tmp/sa.json && grep -q '"live"' /tmp/sa.json && break; sleep 0.1; done
+          curl -fs -X POST http://127.0.0.1:18107/forge/api/controls/peak_search -d '{}' >/dev/null
+          curl -fs http://127.0.0.1:18107/forge/api/controls/m1_on | grep -q true
+          curl -fs http://127.0.0.1:18107/api/trace.csv -o /tmp/sa.csv && head -1 /tmp/sa.csv | grep -q frequency_hz
+          test "$(wc -l < /tmp/sa.csv)" -eq 1002
+          curl -fs http://127.0.0.1:18107/api/iq.cs16 -o /tmp/sa.cs16 && test -s /tmp/sa.cs16
+          kill -TERM $pid
+          wait $pid
           run_app 18101 ./sensor_service -c sensor_service.toml
           run_app 18102 ./pipeline -c pipeline.toml --producers 2
           run_app 18103 ./thermostat -c thermostat.toml -D thermostat.settings_file=/tmp/thermostat.json
