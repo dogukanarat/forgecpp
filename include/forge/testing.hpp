@@ -85,11 +85,22 @@ inline bool wait_until(const std::function<bool()>& predicate,
 ///   forge::testing::AppRunner<MyDaemon> r({"-D", "forge.control=tcp://127.0.0.1:*"});
 ///   forge::zmq::Client c(r.app().endpoints().at("control"));
 ///   ...                                   // stopped and joined on destruction
+struct RunnerOptions {
+    /// Timers only fire when the test calls advance(): no sleeping, no flaky timing.
+    bool manual_time = false;
+};
+
 template <class App>
 class AppRunner {
 public:
     explicit AppRunner(std::vector<std::string> args = {}, std::unique_ptr<App> app = std::make_unique<App>())
+        : AppRunner(std::move(args), RunnerOptions{}, std::move(app)) {}
+
+    ///   forge::testing::AppRunner<MyDaemon> r({}, {.manual_time = true});
+    ///   r.advance(std::chrono::seconds(10));   // every timer due in 10 s has run
+    AppRunner(std::vector<std::string> args, RunnerOptions options, std::unique_ptr<App> app = std::make_unique<App>())
         : app_(std::move(app)) {
+        if (options.manual_time) app_->use_manual_clock();
         const auto config = dir_ / "empty.toml";
         std::ofstream(config) << "# test configuration: everything comes from -D\n";
         // No registration with a hub that may run on the machine (pass -D hub.register=true to test it).
@@ -111,6 +122,9 @@ public:
     AppRunner& operator=(const AppRunner&) = delete;
 
     App& app() { return *app_; }
+    /// Manual time (RunnerOptions::manual_time): move the clock forward; every
+    /// timer due on the way has run on the main loop when this returns.
+    std::size_t advance(std::chrono::steady_clock::duration d) { return app_->advance_time(d); }
     App* operator->() { return app_.get(); }
     /// Stop and join; returns the exit code of run().
     int stop() {

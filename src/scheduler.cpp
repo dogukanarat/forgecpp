@@ -48,6 +48,14 @@ std::size_t Scheduler::advance(Clock::duration d) {
     return ran;
 }
 
+std::optional<Scheduler::Clock::time_point> Scheduler::next_due() const {
+    std::lock_guard lock(mutex_);
+    for (const auto& [due, id] : queue_) {
+        if (entries_.count(id)) return due;  // cancelled ones stay queued until reached
+    }
+    return std::nullopt;
+}
+
 Scheduler::Id Scheduler::after(Clock::duration delay, Task task) {
     return schedule(now() + delay, Clock::duration::zero(), std::move(task));
 }

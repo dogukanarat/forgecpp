@@ -399,6 +399,18 @@ TEST_CASE("${NAME}: controls, commands and the ticks stream over forge.v1") {
     CHECK(c.call_command("burst", {{"count", 5}})["ticks"] == before + 5);
     CHECK(c.get("paused") == true);
 }
+
+// Timer logic without sleeping: the test drives the clock.
+TEST_CASE("${NAME}: ticks follow the interval (manual time)") {
+    forge::testing::AppRunner<${CLASS}> r({"-D", "http.enabled=false", "-D", "${IDENT}.interval_ms=250"},
+                                         {.manual_time = true});
+    const auto ticks = [&] { return r->dashboard()->get("ticks").get<std::uint64_t>(); };
+    const auto start = r->invoke(ticks);
+    r.advance(std::chrono::seconds(1));
+    CHECK(r->invoke(ticks) == start + 4);   // exactly 4: no timing slack needed
+    r.advance(std::chrono::minutes(1));
+    CHECK(r->invoke(ticks) == start + 244);
+}
 EOF
 
 # ---------------------------------------------------------------------------

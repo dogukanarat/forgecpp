@@ -18,6 +18,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <unordered_map>
 
@@ -61,6 +62,8 @@ public:
     /// falls due on the way, in order, on the calling thread (through the
     /// executor). Returns the number of tasks run.
     std::size_t advance(Clock::duration d);
+    /// When the next pending task is due (nullopt: none).
+    std::optional<Clock::time_point> next_due() const;
 
     /// Stop the timer thread. Pending tasks are discarded.
     void stop();

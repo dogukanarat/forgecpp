@@ -217,9 +217,22 @@ public:
     }
 
     /// Timers; callbacks run on the main loop.
+    /// Time-based logic should read now() (not steady_clock) so tests can drive it.
     Scheduler::Id after(Duration delay, Task task);
     Scheduler::Id every(Duration period, Task task, bool run_immediately = false);
     bool cancel(Scheduler::Id id);
+    /// The application's time: steady_clock, or the manual clock of a test.
+    Scheduler::Clock::time_point now() const;
+
+    // --- deterministic time for tests ----------------------------------------
+    /// Before run(): timers only fire when the test calls advance_time()
+    /// (forge::testing::AppRunner: Options{.manual_time = true}, r.advance(10s)).
+    void use_manual_clock() { manual_clock_ = true; }
+    bool manual_clock() const { return manual_clock_; }
+    /// Manual clock only, not from the main loop: move time forward by `d`.
+    /// Every timer that falls due on the way runs on the main loop, in order,
+    /// seeing now() == its due time, before the next one; returns how many ran.
+    std::size_t advance_time(Duration d);
 
     /// Publish an event asynchronously on the main loop.
     template <class Event>
@@ -456,6 +469,7 @@ private:
     bool interactive_ = false;
     std::string http_listen_;
     std::string instance_;
+    bool manual_clock_ = false;
     bool print_config_ = false;
     bool help_config_ = false;
     bool check_config_ = false;

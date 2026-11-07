@@ -257,7 +257,31 @@ void Application::publish_web(const std::string& event, const json& data) {
 http::Server* Application::http() { return http_ ? http_->server() : nullptr; }
 Console* Application::console() { return console_ ? console_->console() : nullptr; }
 
+Scheduler::Clock::time_point Application::now() const {
+    return scheduler_ ? scheduler_->now() : Scheduler::Clock::now();
+}
+
+std::size_t Application::advance_time(Duration d) {
+    if (!scheduler_ || !scheduler_->manual()) {
+        throw std::logic_error("advance_time() needs use_manual_clock() before run()");
+    }
+    if (on_main_loop()) throw std::logic_error("advance_time() waits for the main loop: call it from the test");
+    const auto target = scheduler_->now() + d;
+    std::size_t ran = 0;
+    // One due time at a time: what a task schedules (after(), every()) is seen
+    // by the next step, and every task reads now() == the time it was due.
+    while (auto next = scheduler_->next_due()) {
+        if (*next > target) break;
+        ran += scheduler_->advance(*next - scheduler_->now());
+        invoke([] {});  // the posted tasks have run
+    }
+    scheduler_->advance(target - scheduler_->now());
+    invoke([] {});
+    return ran;
+}
+
 std::int64_t Application::loop_age_ms() const {
+    if (manual_clock_) return 0;  // the heartbeat timer only runs when a test advances time
     const auto tick = loop_tick_ms_.load();
     if (tick <= 0) return 0;
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -334,7 +358,9 @@ int Application::run(int argc, char** argv) {
         const auto workers = cfg.value<int>("threads.workers");
         pool_ = std::make_unique<ThreadPool>(workers > 0 ? static_cast<std::size_t>(workers)
                                                          : std::thread::hardware_concurrency());
-        scheduler_ = std::make_unique<Scheduler>([this](Scheduler::Task t) { post(std::move(t)); });
+        auto to_main_loop = [this](Scheduler::Task t) { post(std::move(t)); };
+        scheduler_ = manual_clock_ ? std::make_unique<Scheduler>(Scheduler::manual_clock, to_main_loop)
+                                   : std::make_unique<Scheduler>(to_main_loop);
         start_signal_thread();
 
         logger_->info("{} {} starting (forgecpp {}, pid {}, {} worker threads)", id(), info_.version,

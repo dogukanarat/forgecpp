@@ -648,6 +648,70 @@ TEST_CASE("web: signed-in users keep their own card layouts; the device's is the
     CHECK(get(ada)["items"] == device["items"]);
 }
 
+namespace {
+// Timer-driven logic: a tick counter and an alarm that needs 3 s of overheating
+// (hysteresis) before it is raised and 2 s of normal readings to clear.
+struct TimedApp : forge::Application {
+    TimedApp() : Application({"timed-app", "1.0"}) {}
+    int ticks = 0;
+    double temperature = 20;
+    std::vector<double> tick_times;  // now() seen by each tick, s since start
+    forge::Scheduler::Clock::time_point start, hot_since{}, cool_since{};
+
+protected:
+    void on_start() override {
+        start = now();
+        every(std::chrono::seconds(1), [this] {
+            ++ticks;
+            tick_times.push_back(std::chrono::duration<double>(now() - start).count());
+            const bool hot = temperature > 80;
+            if (hot) {
+                cool_since = {};
+                if (hot_since == forge::Scheduler::Clock::time_point{}) hot_since = now();
+                if (now() - hot_since >= std::chrono::seconds(3)) alarms().raise("hot", forge::Severity::warning, "too hot");
+            } else {
+                hot_since = {};
+                if (cool_since == forge::Scheduler::Clock::time_point{}) cool_since = now();
+                if (now() - cool_since >= std::chrono::seconds(2)) alarms().clear("hot");
+            }
+        });
+    }
+};
+}  // namespace
+
+TEST_CASE("testing: manual time - timers run when the test advances the clock, without sleeping") {
+    const auto wall = std::chrono::steady_clock::now();
+    forge::testing::AppRunner<TimedApp> r({}, {.manual_time = true});
+    CHECK(r->manual_clock());
+    CHECK(r.advance(std::chrono::milliseconds(500)) >= 0);
+    CHECK(r->invoke([&] { return r->ticks; }) == 0);
+    r.advance(std::chrono::seconds(10));
+    CHECK(r->invoke([&] { return r->ticks; }) == 10);
+    // every tick saw the time it was due at
+    CHECK(r->invoke([&] { return r->tick_times; }) == std::vector<double>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+
+    // hysteresis: hot for 2 s is not enough, 3 s is
+    r->invoke([&] { r->temperature = 95; });
+    r.advance(std::chrono::seconds(3));  // ticks at 11, 12, 13: hot since 11 -> 2 s
+    CHECK_FALSE(r->alarms().active("hot"));
+    r.advance(std::chrono::seconds(1));  // 14: 3 s
+    CHECK(r->alarms().active("hot"));
+    r->invoke([&] { r->temperature = 20; });
+    r.advance(std::chrono::seconds(2));  // cool since 15, at 16: 1 s
+    CHECK(r->alarms().active("hot"));
+    r.advance(std::chrono::seconds(1));
+    CHECK_FALSE(r->alarms().active("hot"));
+
+    // A day of timers in a moment.
+    r.advance(std::chrono::hours(24));
+    CHECK(r->invoke([&] { return r->ticks; }) == 17 + 86400);
+    CHECK(std::chrono::steady_clock::now() - wall < std::chrono::seconds(30));
+
+    // Real clock: advance_time is refused.
+    forge::testing::AppRunner<TimedApp> real;
+    CHECK_THROWS_AS(real.advance(std::chrono::seconds(1)), std::logic_error);
+}
+
 TEST_CASE("instances: --instance names the application <name>@<instance>") {
     {
         forge::testing::AppRunner<InvokeApp> r({"--instance", "rx2"});

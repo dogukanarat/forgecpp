@@ -723,7 +723,7 @@ void setup_console(forge::Console& c) override {
 ### Testing
 
 ```cpp
-#include <forge/testing.hpp>     // doctest + TempDir + wait_until
+#include <forge/testing.hpp>     // doctest + TempDir + wait_until + AppRunner
 
 TEST_CASE("config defaults") {
     auto cfg = forge::Config::parse("port = 80");
@@ -743,8 +743,23 @@ forge::zmq::Client c(r->endpoints().at("control"));
 CHECK(c.set("speed", 1500) == 1500);
 ```
 
-Timers without waiting: `forge::Scheduler s(forge::Scheduler::manual_clock);
-s.every(1s, f); s.advance(10s);` runs the ten ticks immediately.
+Timer-driven logic without sleeping (alarms with hysteresis, rate limits,
+timeouts): the test owns the clock. Every timer due on the way runs on the
+main loop, in order, and reads `now()` == the time it was due at:
+
+```cpp
+forge::testing::AppRunner<Pump> r({}, {.manual_time = true});
+r->invoke([&] { r->pressure = 9.5; });
+r.advance(2s);                         // not long enough for the alarm
+CHECK_FALSE(r->alarms().active("overpressure"));
+r.advance(1s);
+CHECK(r->alarms().active("overpressure"));
+r.advance(24h);                        // a day of timers in a few seconds
+```
+
+For that, time-based code reads `now()` (the application's clock), not
+`std::chrono::steady_clock::now()`. `wait_until()` timeouts scale with
+`$FORGE_TEST_TIMEOUT_SCALE` for slow builds (sanitizers, emulation).
 Sanitizers: `-DFORGECPP_SANITIZE=address;undefined` (or `thread`), or
 `install.sh --sanitize thread` to instrument the dependencies as well.
 

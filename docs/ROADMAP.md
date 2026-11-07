@@ -27,17 +27,13 @@ pre-production security work: forgecpp is used in the lab for now.
 | Every application's page needed its own port | forge-hub proxies `/apps/<name>/...` (all methods, query strings, redirects kept under the prefix, Server-Sent Events streamed) to the application's port; the dashboard links there (`[proxy].enabled`). forge.js finds the application's root from its own URL (`forge.base`, `forge.url()`); the built-in and example pages use relative URLs. |
 | One card layout per page for everybody | With `[auth]`, each signed-in user's layout is their own (kept in the same file under `@users`), the device's layout is the default; `?scope=device` (operator and up) changes the default. Without `[auth]` nothing changes. |
 | The radio simulator used 60-70 % of a core at 30.72 MSPS | One pass per 1024-sample block (L1) instead of a pass per step, plain float rotators (std::complex's multiply goes through `__mulsc3`), carriers in 8 independent lanes (vectorized), noise copied in contiguous runs, peak and int16 conversion fused: two channels 64 % -> 35 % of a core (Release). |
+| Timer-driven application logic could only be tested by sleeping | `Application::use_manual_clock()` / `advance_time()`, `AppRunner({}, {.manual_time = true})` + `r.advance(d)`: every timer due on the way runs on the main loop in order and reads `now()` == its due time. The scaffolder's tests show it. |
 | Docs drifted from the code | A sweep of README, the examples' and Yocto READMEs, header comments, configuration comments and the scaffolder: REP -> ROUTER, `streams()`/`BufferPool` examples, the generated project tree, `[hub]` restart wording, the Yocto application example (generated unit), build paths. Found one bug: spectrum-analyzer's `settle_buffers` default depends on the backend and is now `.computed()`. The defaults check also covers the scaffolder's template. |
 
 ## Plan
 
 Ordered by risk to the running system. Each step lands on its own with tests,
 without changing behaviour that is not named.
-
-### 9. Deterministic time in applications
-
-Let `Application` take a `Scheduler::manual_clock` in tests, so timer-driven
-logic (alarms with hysteresis, rate limits) is tested without sleeping.
 
 ## Pre-production security work (later)
 
