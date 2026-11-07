@@ -14,7 +14,7 @@ namespace {
 int status_of(const std::function<void()>& fn) {
     try {
         fn();
-    } catch (const HttpError& e) {
+    } catch (const forge::Error& e) {
         return e.status();
     }
     return 200;

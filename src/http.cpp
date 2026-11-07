@@ -30,9 +30,9 @@ Handler guarded(Fn fn) {
     return [fn = std::move(fn)](const Request& req, Response& res) {
         try {
             fn(req, res);
-        } catch (const HttpError& e) {
-            if (!e.body().is_null()) {
-                reply_json(res, e.body(), e.status());
+        } catch (const forge::Error& e) {
+            if (!e.details().is_null()) {
+                reply_json(res, e.details(), e.status());
             } else {
                 reply_error(res, e.status(), e.what());
             }

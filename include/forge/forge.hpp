@@ -14,6 +14,7 @@
 #include "forge/config_schema.hpp"
 #include "forge/console.hpp"
 #include "forge/control.hpp"
+#include "forge/error.hpp"
 #include "forge/events.hpp"
 #include "forge/health.hpp"
 #include "forge/http.hpp"

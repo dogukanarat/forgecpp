@@ -12,6 +12,7 @@
 // tools never fight over a setting. Leases expire on their own.
 
 #include "forge/auth.hpp"
+#include "forge/error.hpp"
 #include "forge/json.hpp"
 #include "forge/proto.hpp"
 
@@ -41,7 +42,7 @@ public:
     /// Older JSON commands ({"cmd":"set","id":..,"value":..}) -> JSON reply.
     json handle_legacy_json(const json& request, const Caller& caller);
 
-    // --- typed calls; throw http::HttpError(status, message) --------------------------
+    // --- typed calls; throw forge::Error(status, message) --------------------------
     json get(const std::string& id, const Caller& caller);
     json set(const std::string& id, const json& value, const Caller& caller);
     void press(const std::string& id, const Caller& caller);

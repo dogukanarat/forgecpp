@@ -43,11 +43,11 @@ enum LoopErrorKind { kNone, kHttp, kConfig, kInvalidArgument, kOutOfRange, kRunt
 void LoopError::capture() noexcept {
     try {
         throw;
-    } catch (const http::HttpError& e) {
+    } catch (const Error& e) {  // forge::Error and http::HttpError
         kind = kHttp;
         status = e.status();
         message = e.what();
-        body = e.body();
+        body = e.details();
     } catch (const ConfigError& e) {
         kind = kConfig;
         message = e.what();
@@ -73,6 +73,7 @@ void LoopError::set_stopped() {
 
 void LoopError::rethrow() const {
     switch (kind) {
+        // an http::HttpError is a forge::Error too: either catch works
         case kHttp: throw http::HttpError(status, message, body);
         case kConfig: throw ConfigError(message);
         case kInvalidArgument: throw std::invalid_argument(message);
@@ -226,7 +227,7 @@ void Application::loop_busy() const {
                          .count();
     const auto tick = loop_tick_ms_.load();
     const auto lag = tick > 0 ? std::max<std::int64_t>(now - tick, 0) : 0;
-    throw http::HttpError(503, fmt::format("main loop busy (last heartbeat {} ms ago)", lag),
+    throw Error(503, fmt::format("main loop busy (last heartbeat {} ms ago)", lag),
                           json{{"error", "main loop busy"}, {"loop_age_ms", lag},
                                {"timeout_ms", request_timeout_ms_.load()}});
 }

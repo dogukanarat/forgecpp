@@ -163,7 +163,7 @@ TEST_CASE("control: roles, leases, audit, commands and persistence") {
         auto status = [](auto&& fn) {
             try {
                 fn();
-            } catch (const forge::http::HttpError& e) {
+            } catch (const forge::Error& e) {
                 return e.status();
             }
             return 200;
@@ -537,7 +537,7 @@ TEST_CASE("framework: a blocked main loop does not hang requests (invoke_for, 50
     const auto rpc = json::parse(res->body);
     CHECK_FALSE(rpc.value("ok", false));
     CHECK(rpc["status"] == 503);
-    CHECK_THROWS_AS(r->invoke_for(20ms, [] { return 1; }), forge::http::HttpError);
+    CHECK_THROWS_AS(r->invoke_for(20ms, [] { return 1; }), forge::Error);
     // What does not need the main loop still answers.
     CHECK(http.Get("/health")->status == 200);
     CHECK(http.Get("/metrics")->body.find("forge_control_timeouts ") != std::string::npos);

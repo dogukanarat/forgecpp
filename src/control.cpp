@@ -14,7 +14,6 @@
 namespace forge {
 namespace {
 
-using http::HttpError;
 
 const char* call_name(v1::Request::KindCase c) {
     switch (c) {
@@ -83,7 +82,7 @@ Caller ControlService::identify(std::string channel, std::string client, std::st
 
 void ControlService::require(Role needed, const Caller& caller, const std::string& what) const {
     if (static_cast<int>(caller.role) >= static_cast<int>(needed)) return;
-    throw HttpError(caller.user.empty() && app_.auth().enabled() ? 401 : 403,
+    throw Error(caller.user.empty() && app_.auth().enabled() ? 401 : 403,
                     fmt::format("{} needs role {} ({} is {})", what, to_string(needed), caller.describe(),
                                 to_string(caller.role)));
 }
@@ -117,7 +116,7 @@ std::string ControlService::lease_holder(const std::string& id) const {
 void ControlService::check_lease(const std::string& id, const Caller& caller) {
     const auto holder = lease_holder(id);
     if (!holder.empty() && holder != caller.describe()) {
-        throw HttpError(409, fmt::format("'{}' is leased by {}", id, holder));
+        throw Error(409, fmt::format("'{}' is leased by {}", id, holder));
     }
 }
 
@@ -169,12 +168,12 @@ json ControlService::set(const std::string& id, const json& value, const Caller&
         audit(caller, "set", id, old, now, true, {});
         app_.control_changed(id, c.persist);
         return now;
-    } catch (const HttpError& e) {
+    } catch (const Error& e) {
         audit(caller, "set", id, old, value, false, e.what());
         throw;
     } catch (const std::exception& e) {
         audit(caller, "set", id, old, value, false, e.what());
-        throw HttpError(500, e.what());
+        throw Error(500, e.what());
     }
 }
 
@@ -187,12 +186,12 @@ void ControlService::press(const std::string& id, const Caller& caller) {
         app_.invoke_for(app_.request_timeout(), [&] { d->press(id); });
         audit(caller, "press", id, nullptr, nullptr, true, {});
         app_.control_changed(id, false);
-    } catch (const HttpError& e) {
+    } catch (const Error& e) {
         audit(caller, "press", id, nullptr, nullptr, false, e.what());
         throw;
     } catch (const std::exception& e) {
         audit(caller, "press", id, nullptr, nullptr, false, e.what());
-        throw HttpError(500, e.what());
+        throw Error(500, e.what());
     }
 }
 
@@ -206,12 +205,12 @@ json ControlService::call(const std::string& id, const json& args, const Caller&
         audit(caller, "call", id, nullptr, args, true, {});
         app_.control_changed(id, false);
         return result;
-    } catch (const HttpError& e) {
+    } catch (const Error& e) {
         audit(caller, "call", id, nullptr, args, false, e.what());
         throw;
     } catch (const std::exception& e) {
         audit(caller, "call", id, nullptr, args, false, e.what());
-        throw HttpError(500, e.what());
+        throw Error(500, e.what());
     }
 }
 
@@ -224,7 +223,7 @@ std::size_t ControlService::ack(const std::string& id, const Caller& caller) {
         n = 1;
     } else {
         audit(caller, "ack", id, nullptr, nullptr, false, "unknown alarm");
-        throw HttpError(404, "unknown alarm '" + id + "'");
+        throw Error(404, "unknown alarm '" + id + "'");
     }
     audit(caller, "ack", id, nullptr, nullptr, true, {});
     return n;
@@ -235,7 +234,7 @@ std::chrono::seconds ControlService::lease(const std::string& id, unsigned secon
     auto* d = app_.dashboard();
     const bool group = id.rfind("group:", 0) == 0;
     if (!group && !app_.invoke_for(app_.request_timeout(), [&] { return d->contains(id) || d->has_command(id); })) {
-        throw HttpError(404, "unknown control '" + id + "'");
+        throw Error(404, "unknown control '" + id + "'");
     }
     const auto duration = std::chrono::seconds(seconds == 0 ? 60 : std::min(seconds, 3600u));
     {
@@ -243,7 +242,7 @@ std::chrono::seconds ControlService::lease(const std::string& id, unsigned secon
         auto& l = leases_[id];
         const auto now = std::chrono::steady_clock::now();
         if (!l.holder.empty() && l.expires > now && l.holder != caller.describe()) {
-            throw HttpError(409, fmt::format("'{}' is leased by {}", id, l.holder));
+            throw Error(409, fmt::format("'{}' is leased by {}", id, l.holder));
         }
         l.holder = caller.describe();
         l.expires = now + duration;
@@ -259,7 +258,7 @@ void ControlService::release(const std::string& id, const Caller& caller) {
         auto it = leases_.find(id);
         if (it == leases_.end()) return;
         if (it->second.holder != caller.describe() && caller.role != Role::admin) {
-            throw HttpError(409, fmt::format("'{}' is leased by {}", id, it->second.holder));
+            throw Error(409, fmt::format("'{}' is leased by {}", id, it->second.holder));
         }
         leases_.erase(it);
     }
@@ -275,7 +274,7 @@ void ControlService::set_log_level(const std::string& logger, const std::string&
             log::set_logger_level(logger, level);
         }
     } catch (const std::exception& e) {
-        throw HttpError(400, e.what());
+        throw Error(400, e.what());
     }
     audit(caller, "log-level", logger.empty() ? "*" : logger, nullptr, level, true, {});
 }
@@ -348,7 +347,7 @@ v1::Reply ControlService::handle(const v1::Request& request, const Caller& calle
         reply = dispatch(request, caller);
         reply.set_ok(true);
         if (reply.status() == 0) reply.set_status(200);
-    } catch (const HttpError& e) {
+    } catch (const Error& e) {
         reply = proto::error_reply(e.status(), e.what());
     } catch (const std::exception& e) {
         reply = proto::error_reply(500, e.what());
@@ -447,7 +446,7 @@ v1::Reply ControlService::dispatch(const v1::Request& r, const Caller& caller) {
             set_log_level(r.log_level().logger(), r.log_level().level(), caller);
             break;
         default:
-            throw HttpError(400, "empty or unknown request");
+            throw Error(400, "empty or unknown request");
     }
     return out;
 }
@@ -480,7 +479,7 @@ json ControlService::handle_legacy_json(const json& req, const Caller& transport
             caller.role = transport.role;
         }
         auto need_id = [&] {
-            if (!req.contains("id") || !req["id"].is_string()) throw HttpError(400, "\"id\" is required");
+            if (!req.contains("id") || !req["id"].is_string()) throw Error(400, "\"id\" is required");
             return req["id"].get<std::string>();
         };
         if (cmd == "ping") return {{"ok", true}, {"pong", true}};
@@ -507,7 +506,7 @@ json ControlService::handle_legacy_json(const json& req, const Caller& transport
         }
         if (cmd == "set") {
             const auto id = need_id();
-            if (!req.contains("value")) throw HttpError(400, "\"value\" is required");
+            if (!req.contains("value")) throw Error(400, "\"value\" is required");
             return {{"ok", true}, {"id", id}, {"value", set(id, req["value"], caller)}};
         }
         if (cmd == "press") {
@@ -524,8 +523,8 @@ json ControlService::handle_legacy_json(const json& req, const Caller& transport
             return {{"ok", true}, {"alarms", app_.alarms().to_json()}};
         }
         if (cmd == "ack") return {{"ok", true}, {"acknowledged", ack(need_id(), caller)}};
-        throw HttpError(400, "unknown command '" + cmd + "' (ping|info|ui|state|get|set|press|call|alarms|ack)");
-    } catch (const HttpError& e) {
+        throw Error(400, "unknown command '" + cmd + "' (ping|info|ui|state|get|set|press|call|alarms|ack)");
+    } catch (const Error& e) {
         return {{"ok", false}, {"error", e.what()}, {"status", e.status()}};
     } catch (const std::exception& e) {
         return {{"ok", false}, {"error", e.what()}, {"status", 500}};

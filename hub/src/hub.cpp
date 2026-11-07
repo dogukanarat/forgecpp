@@ -598,9 +598,9 @@ std::optional<Entry> Hub::entry(const std::string& name) const {
 namespace {
 Entry& find_or_throw(std::map<std::string, Entry>& apps, const std::string& name) {
     auto it = apps.find(name);
-    if (it == apps.end()) throw forge::http::HttpError(404, "unknown application '" + name + "'");
+    if (it == apps.end()) throw forge::Error(404, "unknown application '" + name + "'");
     if (it->second.static_entry) {
-        throw forge::http::HttpError(409, "'" + name + "' is a static entry: the hub does not manage it");
+        throw forge::Error(409, "'" + name + "' is a static entry: the hub does not manage it");
     }
     return it->second;
 }
@@ -637,7 +637,7 @@ json Hub::restart(const std::string& name) {
         std::lock_guard lock(mutex_);
         Entry& e = find_or_throw(apps_, name);
         if (e.unit.empty()) {
-            throw forge::http::HttpError(409, "'" + name + "' is not a systemd unit: the hub cannot restart it");
+            throw forge::Error(409, "'" + name + "' is not a systemd unit: the hub cannot restart it");
         }
         e.state = v1::AppStatus::STATE_STARTING;
         e.message = "restart requested";
@@ -653,7 +653,7 @@ json Hub::stop_app(const std::string& name) {
         Entry& e = find_or_throw(apps_, name);
         unit = !e.unit.empty();
         if (!unit && (!live(e.state) || e.pid <= 0 || !alive(e.pid, e.ticks))) {
-            throw forge::http::HttpError(409, "'" + name + "' is not running");
+            throw forge::Error(409, "'" + name + "' is not running");
         }
         e.stop_requested = true;  // its unregistration is then a stop, not a crash
         e.message = "stopping";
@@ -668,10 +668,10 @@ json Hub::start(const std::string& name) {
         std::lock_guard lock(mutex_);
         Entry& e = find_or_throw(apps_, name);
         if (e.unit.empty()) {
-            throw forge::http::HttpError(409, "'" + name + "' is not a systemd unit: the hub cannot start it");
+            throw forge::Error(409, "'" + name + "' is not a systemd unit: the hub cannot start it");
         }
         if (live(e.state) && e.pid > 0 && alive(e.pid, e.ticks)) {
-            throw forge::http::HttpError(409, "'" + name + "' is already running");
+            throw forge::Error(409, "'" + name + "' is already running");
         }
         e.state = v1::AppStatus::STATE_STARTING;
         e.message = "start requested";
@@ -684,7 +684,7 @@ json Hub::forget(const std::string& name) {
     std::lock_guard lock(mutex_);
     Entry& e = find_or_throw(apps_, name);
     if (live(e.state) && e.pid > 0 && alive(e.pid, e.ticks)) {
-        throw forge::http::HttpError(409, "'" + name + "' is running; stop it first");
+        throw forge::Error(409, "'" + name + "' is running; stop it first");
     }
     for (const auto* kind : {"ended", "failed", "unresponsive"}) clear(e, kind);
     apps_.erase(name);

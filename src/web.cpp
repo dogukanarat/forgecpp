@@ -311,7 +311,7 @@ std::vector<std::string> Dashboard::ids() const {
 
 const detail::ControlDef& Dashboard::control(const std::string& id) const {
     auto it = by_id_.find(id);
-    if (it == by_id_.end()) throw http::HttpError(404, "unknown control '" + id + "'");
+    if (it == by_id_.end()) throw forge::Error(404, "unknown control '" + id + "'");
     return *it->second;
 }
 
@@ -392,22 +392,22 @@ json Dashboard::get(const std::string& id) const {
 
 void Dashboard::press(const std::string& id) {
     const auto& c = control(id);
-    if (c.kind != Kind::button) throw http::HttpError(400, "control '" + id + "' is not a button");
+    if (c.kind != Kind::button) throw forge::Error(400, "control '" + id + "' is not a button");
     if (c.action) c.action();
 }
 
 void Dashboard::set(const std::string& id, const json& value) {
     auto it = by_id_.find(id);
-    if (it == by_id_.end()) throw http::HttpError(404, "unknown control '" + id + "'");
+    if (it == by_id_.end()) throw forge::Error(404, "unknown control '" + id + "'");
     auto& c = *it->second;
 
     if (c.kind == Kind::button) {
         press(id);
         return;
     }
-    if (c.readonly || !c.set) throw http::HttpError(403, "control '" + id + "' is read-only");
+    if (c.readonly || !c.set) throw forge::Error(403, "control '" + id + "' is read-only");
 
-    auto bad = [&](const std::string& why) { return http::HttpError(400, "control '" + id + "': " + why); };
+    auto bad = [&](const std::string& why) { return forge::Error(400, "control '" + id + "': " + why); };
     switch (c.kind) {
         case Kind::toggle:
             if (!value.is_boolean()) throw bad("expected true or false");
@@ -446,17 +446,17 @@ std::vector<std::string> Dashboard::command_ids() const {
 
 const detail::CommandDef& Dashboard::command(const std::string& id) const {
     auto it = commands_by_id_.find(id);
-    if (it == commands_by_id_.end()) throw http::HttpError(404, "unknown command '" + id + "'");
+    if (it == commands_by_id_.end()) throw forge::Error(404, "unknown command '" + id + "'");
     return *it->second;
 }
 
 json Dashboard::call(const std::string& id, const json& args) {
     const auto& c = command(id);
-    if (!args.is_null() && !args.is_object()) throw http::HttpError(400, "arguments must be an object");
+    if (!args.is_null() && !args.is_object()) throw forge::Error(400, "arguments must be an object");
     json in = args.is_object() ? args : json::object();
     json out = json::object();
     auto bad = [&](const std::string& p, const std::string& why) {
-        return http::HttpError(400, "command '" + id + "': " + p + ": " + why);
+        return forge::Error(400, "command '" + id + "': " + p + ": " + why);
     };
     for (const auto& p : c.params) {
         json v = in.contains(p.name) ? in[p.name] : p.default_value;

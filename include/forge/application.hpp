@@ -170,7 +170,8 @@ public:
     /// already on the main loop, so it is safe everywhere (HTTP handlers,
     /// worker threads, console commands).
     /// Exceptions thrown by `fn` are thrown again on the calling thread
-    /// (http::HttpError with its status, ConfigError, std::invalid_argument,
+    /// (forge::Error with its status and details, thrown as http::HttpError,
+    /// which is a forge::Error; ConfigError, std::invalid_argument,
     /// std::out_of_range, otherwise std::runtime_error with the message): a new
     /// object is thrown there, none is shared between threads.
     template <class F>
@@ -179,7 +180,7 @@ public:
     }
 
     /// invoke() that gives up when the main loop has not started `fn` within
-    /// `timeout`: throws http::HttpError 503 "main loop busy" (with the loop's
+    /// `timeout`: throws forge::Error 503 "main loop busy" (with the loop's
     /// lag) and `fn` never runs. Once `fn` has started it is waited for, so it
     /// may refer to the caller's locals. The framework's request handlers
     /// (forge.v1, HTTP) use it with request_timeout().

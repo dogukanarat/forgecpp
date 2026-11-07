@@ -200,7 +200,7 @@ pool().detach_task([this] {
 | `post(fn)` | Run `fn` on the main loop (from any thread) |
 | `call(fn) -> std::future<R>` | Run on the main loop, get the result as a future |
 | `invoke(fn) -> R` | Run on the main loop and wait for the result (runs inline if already on the main loop; use this in HTTP handlers) |
-| `invoke_for(timeout, fn) -> R` | Same, but gives up with `HttpError(503, "main loop busy")` when the main loop has not started `fn` in time (`fn` then never runs). The framework's request handlers use it with `request_timeout()` (`[forge].request_timeout_ms`) |
+| `invoke_for(timeout, fn) -> R` | Same, but gives up with `forge::Error(503, "main loop busy")` when the main loop has not started `fn` in time (`fn` then never runs). The framework's request handlers use it with `request_timeout()` (`[forge].request_timeout_ms`) |
 | `after(d, fn)`, `every(d, fn)`, `cancel(id)` | Timers (run on the main loop) |
 | `emit(Event{...})`, `events().subscribe<Event>(...)` | Typed event bus |
 | `config()` | Snapshot of the effective configuration |
@@ -376,7 +376,7 @@ server.get_json("/api/items/:id", [](const forge::http::Request& req) {
     return forge::json{{"id", req.path_params.at("id")}};
 });
 server.post_json("/api/items", [](const auto& req, const forge::json& body) {
-    if (!body.contains("name")) throw forge::http::HttpError(422, "name is required");
+    if (!body.contains("name")) throw forge::Error(422, "name is required");
     return forge::json{{"created", true}};
 });
 
@@ -387,6 +387,13 @@ forge::json items = client.get_json("/api/items");   // >= 400 -> HttpError
 
 An invalid JSON body is answered with 400, an uncaught exception with 500 and
 an unknown path with 404, each with a JSON error object.
+
+Errors of requests are `forge::Error{status, message, details}`
+(`<forge/error.hpp>`), whatever channel the request came in on: the control
+registry, `ControlService`, forge-hub and handlers throw it, and each channel
+maps it (HTTP status and body, `forge.v1.Reply.status`/`error`, console text).
+`http::HttpError` is a `forge::Error`; `http::Client` throws it, and code that
+throws it keeps working.
 
 ### Web UI (`forge::web`)
 

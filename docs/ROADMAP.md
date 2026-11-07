@@ -14,20 +14,12 @@ pre-production security work: forgecpp is used in the lab for now.
 | `invoke()` shared exception objects between threads (TSan) | Errors are described on the main loop and thrown anew on the caller's thread. |
 | A stuck main loop hung forgectl and the panel | `invoke_for(timeout, fn)`: forge.v1 and the framework's HTTP routes wait at most `[forge].request_timeout_ms` (2000) for the main loop, then answer `503 main loop busy` with the loop's lag (metric `forge.control.timeouts`); a request that timed out is never applied later. info, health, metrics, logs, audit, trace, alarms and streams do not need the loop. |
 | `[forge].control` served one request at a time (REP) | `zmq::Server` is a ROUTER socket with an I/O thread and a worker pool (`[forge].control_workers`, 2); replies go back to the client that asked, requests that waited too long for a worker (or beyond 256 waiting) get 503 without being handled. Clients and messages unchanged. |
+| The control service threw an HTTP type (`http::HttpError`) on every channel | `forge::Error{status, message, details}` in `forge/error.hpp`, thrown by `ControlService`, `web::Dashboard`, forge-hub and `invoke_for`; HTTP, forge.v1 and the console map it. `http::HttpError` derives from it (throwing it still works; `catch (const http::HttpError&)` around control calls becomes `catch (const forge::Error&)`). |
 
 ## Plan
 
 Ordered by risk to the running system. Each step lands on its own with tests,
 without changing behaviour that is not named.
-
-### 3. A transport-neutral error type
-
-*Problem.* `ControlService` (shared by forge.v1, HTTP, console, telnet) throws
-`http::HttpError`; ZeroMQ and telnet catch an HTTP type.
-
-*Plan.* `forge::Error{status, message, details}` in `forge/error.hpp`;
-`http::HttpError` derives from it (source compatible). Each channel maps it:
-HTTP status, `forge.v1.Reply.status`, console text.
 
 ### 4. One source for configuration defaults
 

@@ -257,7 +257,7 @@ public:
     json state() const;
     json get(const std::string& id) const;
     /// Validate and apply a value; for buttons this presses them.
-    /// Throws http::HttpError (404 unknown id, 400 invalid value, 403 read-only).
+    /// Throws forge::Error (404 unknown id, 400 invalid value, 403 read-only).
     void set(const std::string& id, const json& value);
     void press(const std::string& id);
 
@@ -266,7 +266,7 @@ public:
     std::vector<std::string> command_ids() const;
     const detail::CommandDef& command(const std::string& id) const;
     /// Validate `args` (object), apply defaults and run the handler.
-    /// Throws http::HttpError (404 unknown, 400 invalid arguments).
+    /// Throws forge::Error (404 unknown, 400 invalid arguments).
     json call(const std::string& id, const json& args);
     /// Ids of controls marked persist().
     std::vector<std::string> persistent_ids() const;

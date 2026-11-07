@@ -234,8 +234,8 @@ TEST_CASE("hub: without a unit a crash is reported, not restarted; duplicates ar
     REQUIRE(f.wait_state("gamma", v1::AppStatus::STATE_CRASHED));
     CHECK(f.entry("gamma")->message == "ended without unregistering (not a systemd unit: not restarted)");
     CHECK(f.h().alarms().active("app.gamma.ended"));
-    CHECK_THROWS_AS(f.h().restart("gamma"), forge::http::HttpError);  // no unit: nothing to restart with
-    CHECK_THROWS_AS(f.h().start("gamma"), forge::http::HttpError);
+    CHECK_THROWS_AS(f.h().restart("gamma"), forge::Error);  // no unit: nothing to restart with
+    CHECK_THROWS_AS(f.h().start("gamma"), forge::Error);
 
     // Registering again (started by someone) clears it.
     REQUIRE(f.reg("gamma", other).ok());
@@ -348,7 +348,7 @@ TEST_CASE("hub: static entries are listed and checked") {
     CHECK(f.entry("docs")->static_entry);
     CHECK(f.entry("docs")->state == v1::AppStatus::STATE_UNKNOWN);
     REQUIRE(f.wait_state("dead", v1::AppStatus::STATE_UNRESPONSIVE));
-    CHECK_THROWS_AS(f.h().restart("docs"), forge::http::HttpError);
+    CHECK_THROWS_AS(f.h().restart("docs"), forge::Error);
     CHECK(f.status("docs").url() == "http://{host}:9000/");
     CHECK(f.status("docs").static_entry());
 }
