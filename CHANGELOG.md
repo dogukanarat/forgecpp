@@ -146,6 +146,10 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
     more.
   - `Application::command()` throws when it is called after the links
     started: add commands in the constructor or `setup_web()`.
+- `install.sh --profile embedded` keeps the libraries shared (it built them
+  static): the applications of a device share one `libforgecpp.so`,
+  `libzmq.so`, `libcpp-httplib.so` and `libiio.so`. `--static` still builds
+  static libraries.
 - CI: a push builds and tests once (g++); the other compilers, sanitizers,
   the armhf build, the systemd job and the API reference run on pull
   requests, weekly and by hand.

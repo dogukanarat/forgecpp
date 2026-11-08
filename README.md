@@ -114,7 +114,7 @@ into the same prefix (each with its own `find_package` config), then builds
 | Option | Description |
 |---|---|
 | `--prefix DIR` | Install location (default `/usr/local`) |
-| `--static` | Static libraries (default: shared) |
+| `--static` | Static libraries (default: shared: every application on a device uses the same `libforgecpp.so`, `libzmq.so`, `libcpp-httplib.so` and `libiio.so`) |
 | `--build-type T` | `Release`, `Debug`, `RelWithDebInfo`, `MinSizeRel` |
 | `--tests` / `--examples` | Build and run the unit tests / build the examples |
 | `--toolchain FILE` | Cross compile (Yocto SDK, OE `toolchain.cmake`) |
@@ -123,7 +123,7 @@ into the same prefix (each with its own `find_package` config), then builds
 | `--without-ssl`, `--with-ssl`, `--without-zlib` | cpp-httplib features |
 | `--without-iio`, `--iio-usb` | Skip libiio, or build libiio's USB backend |
 | `--system-protobuf`, `--protoc PATH` | Use the `protoc` on the PATH, or this one (default: built from the bundled sources with `HOST_CC`/`HOST_CXX`; it only runs on the build machine) |
-| `--profile embedded` | MinSizeRel, LTO, static libraries, no tests (small targets) |
+| `--profile embedded` | MinSizeRel and LTO for small targets; the libraries stay shared |
 | `--sanitize LIST` | `address,undefined` or `thread`, applied to the dependencies too (use a separate prefix) |
 | `--libdir DIR` | e.g. `lib64` instead of `lib` |
 | `--skip-deps`, `--deps-only` | Only forgecpp / only the dependencies |

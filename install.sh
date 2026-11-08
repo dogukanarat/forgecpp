@@ -68,7 +68,8 @@ Install location
 Build
   --build-type TYPE     Release | Debug | RelWithDebInfo | MinSizeRel (default: ${BUILD_TYPE})
   -j, --jobs N          Parallel jobs (default: ${JOBS})
-  --static              Build static libraries (default: shared)
+  --static              Build static libraries (default: shared, so the applications
+                        of a device share one copy of each library)
   --toolchain FILE      CMake toolchain file for cross compiling (Yocto SDK, OE, ...)
   --generator GEN       CMake generator (default: Ninja if available)
   --without-ssl         Build cpp-httplib without OpenSSL (no HTTPS)
@@ -78,7 +79,7 @@ Build
   --protoc PATH         protoc for the build machine (default: built from the bundled protobuf
                         with HOST_CC / HOST_CXX, or cc / c++). Only the build machine needs
                         protobuf (protoc and Python's protobuf module); nothing links it
-  --profile embedded    Size/speed settings for small targets: MinSizeRel, LTO, static, no tests
+  --profile embedded    Size/speed settings for small targets: MinSizeRel, LTO, shared libraries
   --sanitize LIST       Build everything with sanitizers: address,undefined or thread (debugging;
                         use a separate --prefix, the libraries are instrumented too)
   --without-iio         Skip libiio (the AD9364 examples then only have their simulator)
@@ -195,9 +196,10 @@ done
 case "${PROFILE}" in
     "") ;;
     embedded)
-        # Small targets (e.g. Zynq-7000): compact, link-time optimized, self-contained binaries.
+        # Small targets (e.g. Zynq-7000): compact, link-time optimized. The libraries
+        # stay shared: a device runs several forgecpp applications, and they share one
+        # copy of libforgecpp, libzmq, cpp-httplib and libiio (--static to change it).
         BUILD_TYPE="MinSizeRel"
-        SHARED="OFF"
         EXTRA_CMAKE_ARGS+=("-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON")
         ;;
     *) die "unknown profile '${PROFILE}' (embedded)" ;;
