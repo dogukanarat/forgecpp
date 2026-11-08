@@ -1,10 +1,7 @@
 #include "forge/control.hpp"
 
 #include "forge/application.hpp"
-#include "forge/http.hpp"
-#include "forge/metrics.hpp"
 #include "forge/trace.hpp"
-#include "forge/version.hpp"
 #include "forge/web.hpp"
 
 #include <format>

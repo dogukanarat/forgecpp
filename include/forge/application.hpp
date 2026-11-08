@@ -108,6 +108,7 @@ class HubRegistration;
 class Messaging;
 class RemoteConsole;
 class HttpFrontend;
+void register_builtin_commands(Application& app);
 }  // namespace detail
 namespace web {
 class Dashboard;
@@ -327,7 +328,6 @@ public:
     }
     zmq::Stream& stream(const std::string& name, const pb::Type& type);
     zmq::Stream& stream(const std::string& name, const pb::Type& type, const zmq::StreamOptions& options);
-    std::vector<zmq::StreamInfo> stream_list() const;
 
     /// The commands this program answers, by number (links) and by name (web).
     /// The built-in ones (proto/forge/messages.proto) use 0x0001..0x00FF.
@@ -359,10 +359,6 @@ public:
         attach(std::move(c));
         return ref;
     }
-
-    /// Called by ControlService after a control changed (live updates,
-    /// persistence, "state" event). Main loop or any thread.
-    void control_changed(const std::string& id, bool persistent);
     /// Command line parser; add your own options in the constructor or setup_cli().
     CLI::App& cli() { return *cli_; }
     std::chrono::steady_clock::duration uptime() const;
@@ -494,6 +490,13 @@ private:
     friend class detail::Messaging;
     friend class detail::RemoteConsole;
     friend class detail::HttpFrontend;
+    friend void detail::register_builtin_commands(Application& app);
+    friend class ControlService;
+
+    /// After a control changed (live updates, persistence, "state" event).
+    /// Main loop or any thread.
+    void control_changed(const std::string& id, bool persistent);
+    std::vector<zmq::StreamInfo> stream_list() const;
 
     int parse_command_line(int argc, char** argv);
     Config load_config() const;
