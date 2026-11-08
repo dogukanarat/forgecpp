@@ -1,7 +1,7 @@
 #include "radio_controller.hpp"
 
 #include "dsp.hpp"
-#include "radio/v1/radio.pb.h"
+#include "radio/radio.forge.hpp"
 
 #include <forge/buffer_pool.hpp>
 #include <forge/trace.hpp>
@@ -128,7 +128,7 @@ void RadioController::setup_config(forge::config::Schema& s) {
     s.number("radio.sim.loopback_db", -20, "Loss of the simulated cable, splitter and attenuators").range(-120, 0).unit("dB");
     s.number("radio.sim.loopback_cfo_hz", 0, "Frequency error of the looped back signal").range(-1e6, 1e6).unit("Hz");
     s.section("zmq", "Radio sockets");
-    s.string("zmq.tx", "tcp://*:5556", "PULL: radio.v1.TxBlock + cs16 samples");
+    s.string("zmq.tx", "tcp://*:5556", "PULL: radio.tx_block + cs16 samples");
 }
 
 void RadioController::setup_cli(CLI::App& cli) {
@@ -333,7 +333,7 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
     auto& net = ui.group("ZeroMQ");
     net.value("zmq_data", "Streams (PUB: iq, rx1, rx2)", [this] { return data_endpoint(); });
     net.value("zmq_tx", "TX input (PULL)", [this] { return tx_endpoint(); });
-    net.value("zmq_control", "Control (forge.v1)", [this] { return control_endpoint(); });
+    net.value("zmq_control", "Commands (c2)", [this] { return control_endpoint(); });
 }
 
 template <class F>
@@ -404,11 +404,10 @@ void RadioController::on_start() {
     const auto cfg = config();
 
     // Streams on [forge].data, so clients can subscribe even while the radio is absent.
-    iq_stream_ = &stream("iq", "radio.v1.IqBlock");
+    iq_stream_ = &stream<radio_iq_block>("iq");
     for (unsigned ch = 0; ch < 2; ++ch) {
         if (tap_mask_ >> ch & 1u) {
-            tap_stream_[ch] = &stream("rx" + std::to_string(ch + 1), "radio.v1.IqBlock",
-                                      forge::zmq::StreamOptions{"latest", tap_hz_});
+            tap_stream_[ch] = &stream<radio_iq_block>("rx" + std::to_string(ch + 1), {"latest", tap_hz_});
         }
     }
     running_ = true;
@@ -649,14 +648,14 @@ void RadioController::rx_loop() {
 
         FORGE_TRACE_SCOPE("rx.publish", "radio");
         auto block = [&](unsigned ch, std::size_t count) {
-            radio::v1::IqBlock m;
-            m.set_channel(ch + 1);
-            m.set_sample_rate(rate_hz_.load());
-            m.set_center_freq(rx_lo_hz_.load());
-            m.set_samples(static_cast<std::uint32_t>(count));
-            m.set_format("cs16");
-            m.set_rx_gain_db(rx_gain_actual_[ch].load());
-            m.set_buffer(seq);
+            radio_iq_block m{};
+            m.channel = ch + 1;
+            m.sample_rate = rate_hz_.load();
+            m.center_freq = rx_lo_hz_.load();
+            m.samples = static_cast<std::uint32_t>(count);
+            std::strcpy(m.format, "cs16");
+            m.rx_gain_db = rx_gain_actual_[ch].load();
+            m.buffer = seq;
             return m;
         };
         // Own channels: topic "iq", every buffer while someone listens.
@@ -695,15 +694,15 @@ void RadioController::on_tx_frame(forge::zmq::Message&& m) {
         ++tx_dropped_;
         return;
     }
-    radio::v1::TxBlock tx;
+    radio_tx_block tx{};
     try {
-        tx = m.as<radio::v1::TxBlock>();
+        tx = m.as<radio_tx_block>();
     } catch (const std::exception& e) {
         ++tx_dropped_;
         logger()->warn("radio: TX frame ignored: {}", e.what());
         return;
     }
-    if ((!tx.format().empty() && tx.format() != "cs16") || m.blob.size() % 4 != 0 || m.blob.empty()) {
+    if ((tx.format[0] != '\0' && std::string_view(tx.format) != "cs16") || m.blob.size() % 4 != 0 || m.blob.empty()) {
         ++tx_dropped_;
         logger()->warn("radio: TX frame ignored (need format cs16 and a blob of int16 I/Q pairs)");
         return;
@@ -711,11 +710,11 @@ void RadioController::on_tx_frame(forge::zmq::Message&& m) {
     // A backlog (the TX path stalled while the sender kept going) is dropped, not
     // played late: otherwise the latency would stay up for good.
     const int max_age = tx_max_age_ms_;
-    if (max_age > 0 && !tx.cyclic() && m.header.time_unix_ns() > 0) {
+    if (max_age > 0 && !tx.cyclic && m.header.time_unix_ns > 0) {
         const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                                 std::chrono::system_clock::now().time_since_epoch())
                                 .count();
-        if (now_ns - m.header.time_unix_ns() > std::int64_t(max_age) * 1000000) {
+        if (now_ns - m.header.time_unix_ns > std::int64_t(max_age) * 1000000) {
             ++tx_late_;
             return;
         }
@@ -723,7 +722,7 @@ void RadioController::on_tx_frame(forge::zmq::Message&& m) {
     FORGE_TRACE_SCOPE("tx.write", "radio");
     const auto* samples = reinterpret_cast<const std::int16_t*>(m.blob.data());
     const std::size_t n = m.blob.size() / 4;
-    const bool cyclic = tx.cyclic();
+    const bool cyclic = tx.cyclic;
 
     std::shared_lock lock(backend_mutex_);
     Backend* b = backend_.get();

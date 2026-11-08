@@ -7,9 +7,9 @@
     ./tx_tone.py tcp://radio:5556 --offset=-2e6                          # negative offsets need "="
 
 TX must be enabled first:  forgectl -e tcp://radio:5557 set tx_enabled true
-Messages: [b"tx"][forge.v1.Header][radio.v1.TxBlock][cs16 samples].
-Needs the forge-v1 Python package (installed with forgecpp) and radio.v1
-(installed with radio-controller); from build directories set PYTHONPATH to
+Messages: [b"tx"][forge.stream_header][radio.tx_block][cs16 samples].
+Needs forgecpp's Python package "forge" and "radio" (installed with
+radio-controller); from build directories set PYTHONPATH to
 <forgecpp build>/python:<build>/examples/radio-controller/ad936x/python.
 """
 import argparse
@@ -18,8 +18,8 @@ import time
 import numpy as np
 import zmq
 
-from forge.v1 import framing
-from radio.v1 import radio_pb2
+from forge import framing
+from radio import radio_pb2
 
 
 def main():
@@ -45,11 +45,11 @@ def main():
     time.sleep(0.2)  # let the connection come up
 
     if args.stream is None:
-        block = radio_pb2.TxBlock(format="cs16", cyclic=True)
+        block = radio_pb2.tx_block(format="cs16", cyclic=True)
         sock.send_multipart(framing.frames("tx", block, iq.tobytes(), source="tx_tone"))
         print(f"cyclic tone at {args.offset / 1e3:+.1f} kHz ({n} samples) sent")
     else:
-        block = radio_pb2.TxBlock(format="cs16")
+        block = radio_pb2.tx_block(format="cs16")
         end = time.monotonic() + args.stream
         sent = 0
         while time.monotonic() < end:

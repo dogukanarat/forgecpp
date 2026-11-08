@@ -1,14 +1,14 @@
 #pragma once
 // radio-controller: AD9364 control and IQ streaming daemon.
 //
-//   forge.v1 on ZeroMQ (radio.v1.IqBlock / TxBlock + cs16 blob = interleaved
-//   int16 I/Q, full scale +-32767):
+//   ZeroMQ (radio.iq_block / tx_block + cs16 blob = interleaved int16 I/Q,
+//   full scale +-32767):
 //     [forge].data   PUB   topic "iq": every buffer of the channels it listens to
-//                          ([radio].rx_channels; IqBlock.channel)
+//                          ([radio].rx_channels; iq_block.channel)
 //                          topics "rx1"/"rx2": blocks of the channels it shares
 //                          ([radio].tap_rx), rate limited: e.g. the spectrum analyzer
-//     [zmq].tx       PULL  TxBlock + samples for [radio].tx_channel
-//     [forge].control REP  forge.v1 requests (forgectl, panels; older JSON commands too)
+//     [zmq].tx       PULL  tx_block + samples for [radio].tx_channel
+//     [forge].control REP  c2 commands (forgectl, other programs)
 //     [forge].events PUB   state, alarms, log, audit, health, metrics
 //   Web UI: /  (spectrum, waterfall, controls)   /forge/  (control panel)
 //   Console: -i  (controls / set / press / alarms)

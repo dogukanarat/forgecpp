@@ -1,6 +1,6 @@
 #include "analyzer.hpp"
 
-#include "sa/v1/spectrum.pb.h"
+#include "sa/spectrum.forge.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -826,7 +826,7 @@ void Analyzer::on_start() {
     engine_->start(settings_);
 
     // Remote displays get the newest sweep, never a backlog.
-    spectrum_ = &stream("spectrum", "sa.v1.Spectrum", {"latest", 30});
+    spectrum_ = &stream<sa_spectrum>("spectrum", {"latest", 30});
 
     every(30ms, [this] { publish_frame(); });
     every(1s, [this] { check_status(); });
@@ -905,20 +905,20 @@ void Analyzer::publish_frame() {
     publish_web("frame", frame_json(*f));
 
     if (spectrum_->wanted()) {
-        sa::v1::Spectrum msg;
-        msg.set_seq(f->seq);
-        msg.set_start_hz(f->start_hz);
-        msg.set_stop_hz(f->stop_hz);
-        msg.set_points(static_cast<std::uint32_t>(f->points));
-        msg.set_unit(f->unit);
-        msg.set_rbw_hz(f->plan.rbw_hz);
-        msg.set_sweep_mode(f->plan.fixed ? "fixed" : f->plan.swept ? "swept" : "realtime");
-        msg.set_overload(f->overload);
-        msg.set_sweep_time_s(f->sweep_ms / 1e3);
-        msg.set_channel(channel_);
-        msg.mutable_levels()->Reserve(static_cast<int>(f->live.size()));
-        for (const double v : f->live) msg.add_levels(static_cast<float>(v));
-        spectrum_->publish(msg);
+        sa_spectrum msg{};
+        msg.seq = f->seq;
+        msg.start_hz = f->start_hz;
+        msg.stop_hz = f->stop_hz;
+        msg.points = static_cast<std::uint32_t>(f->points);
+        (void)forge::pb::assign(msg.unit, f->unit);
+        msg.rbw_hz = f->plan.rbw_hz;
+        (void)forge::pb::assign(msg.sweep_mode, f->plan.fixed ? "fixed" : f->plan.swept ? "swept" : "realtime");
+        msg.overload = f->overload;
+        msg.sweep_time_s = f->sweep_ms / 1e3;
+        msg.channel = channel_;
+        // The levels are the blob: float32, little endian like every target we build for.
+        auto levels = std::make_shared<std::vector<float>>(f->live.begin(), f->live.end());
+        spectrum_->publish(msg, levels, levels->data(), levels->size() * sizeof(float));
     }
 }
 

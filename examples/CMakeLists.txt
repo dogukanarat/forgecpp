@@ -2,7 +2,7 @@
 # sensor-service: every building block in one service
 # pipeline:       multi-threaded processing (threads, channels, thread pool, atomics)
 # thermostat:     web-first application with its own multi-page site
-# radio-controller: AD9364 daemon: libiio + IQ streaming over forge.v1 (ZeroMQ)
+# radio-controller: AD9364 daemon: libiio + IQ streaming over ZeroMQ
 # spectrum-analyzer: AD9364 spectrum analyzer with a web UI
 # qam-modem:      16QAM packet modem (UDP <-> radio-controller), 2+ Mbit/s
 # channel-emulator: radio channel impairments in the TX path (noise, offsets, multipath, fading)
@@ -34,9 +34,11 @@ forge_add_app(pump SOURCES pump/main.cpp pump/pump.cpp
     DESCRIPTION "forgecpp tutorial pump"
     RESTART on-failure MAX_RESTARTS 3 WATCHDOG 30
     NO_INSTALL)
+forge_add_proto(pump ROOT pump PROTOS pump.proto)
 if(BUILD_TESTING OR FORGECPP_BUILD_TESTS)
     forge_add_test(pump_tests SOURCES pump/test_pump.cpp pump/pump.cpp)
     target_include_directories(pump_tests PRIVATE pump)
+    forge_add_proto(pump_tests ROOT pump PROTOS pump.proto)
 endif()
 
 add_subdirectory(radio-controller)

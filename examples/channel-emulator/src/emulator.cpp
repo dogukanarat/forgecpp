@@ -1,6 +1,6 @@
 #include "emulator.hpp"
 
-#include "radio/v1/radio.pb.h"
+#include "radio/radio.forge.hpp"
 
 #include <cmath>
 #include <sstream>
@@ -248,8 +248,7 @@ void ChannelEmulator::read_sample_rate() {
     background(
         [endpoint]() -> double {
             try {
-                forge::zmq::Client c(endpoint, 2s);
-                c.set_client("channel-emulator");
+                forge::Remote c(endpoint, 2s);
                 return c.get("sample_rate_msps").get<double>() * 1e6;
             } catch (const std::exception&) {
                 return 0;
@@ -287,19 +286,19 @@ void ChannelEmulator::tick() {
 // Receiver thread: impair and forward every block
 
 void ChannelEmulator::on_block(forge::zmq::Message&& m) {
-    radio::v1::TxBlock tx;
+    radio_tx_block tx{};
     try {
-        tx = m.as<radio::v1::TxBlock>();
+        tx = m.as<radio_tx_block>();
     } catch (const forge::zmq::Error&) {
         ++dropped_;
         return;
     }
-    if ((!tx.format().empty() && tx.format() != "cs16") || m.blob.size() % 4 != 0 || m.blob.empty()) {
+    if ((tx.format[0] != '\0' && std::string_view(tx.format) != "cs16") || m.blob.size() % 4 != 0 || m.blob.empty()) {
         ++dropped_;
         return;
     }
     const std::size_t n = m.blob.size() / 4;
-    if (tx.cyclic()) {
+    if (tx.cyclic) {
         ++cyclic_;  // a repeated test frame: impairments would repeat with it, pass it as it is
     } else {
         if (version_ != applied_version_) {

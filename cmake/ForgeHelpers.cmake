@@ -47,8 +47,8 @@
 #
 #   forge_install_python(DIRECTORY <dir>)
 #     Install the Python modules under <dir> (e.g. the PYTHON dir of
-#     forge_add_proto: <dir>/radio/v1/radio_pb2.py) into site-packages, next to
-#     forgecpp's forge-v1 package, so clients simply `from radio.v1 import radio_pb2`.
+#     forge_add_proto: <dir>/radio/radio_pb2.py) into site-packages, next to
+#     forgecpp's forge package, so clients simply `from radio import radio_pb2`.
 #     The directory is FORGE_PYTHON_SITEDIR (relative to the install prefix);
 #     by default the interpreter's own for this prefix, else lib/python3.X/site-packages.
 #     Yocto: -DFORGE_PYTHON_SITEDIR=${PYTHON_SITEPACKAGES_DIR}.
@@ -64,11 +64,11 @@ else()
     set(_FORGE_LIB forgecpp)
 endif()
 
-# forge/v1/*.proto: next to this file when installed, in the source tree otherwise.
+# forge/*.proto: in the source tree, or under share/forgecpp when installed.
 if(NOT DEFINED FORGECPP_PROTO_DIR)
-    if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../proto/forge/v1/common.proto")
+    if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../proto/forge/messages.proto")
         get_filename_component(FORGECPP_PROTO_DIR "${CMAKE_CURRENT_LIST_DIR}/../proto" ABSOLUTE)
-    elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/proto/forge/v1/common.proto")
+    elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/proto/forge/messages.proto")
         get_filename_component(FORGECPP_PROTO_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/proto" ABSOLUTE)
     endif()
 endif()
@@ -107,65 +107,6 @@ function(_forge_protoc out)
         endif()
         set(${out} "${_forge_protoc_found}" PARENT_SCOPE)
     endif()
-endfunction()
-
-# Google protobuf (forge.v1), until it is gone.
-function(_forge_add_protobuf_legacy target)
-    cmake_parse_arguments(ARG "" "ROOT;PYTHON" "PROTOS;IMPORT_DIRS" ${ARGN})
-    if(NOT ARG_PROTOS)
-        message(FATAL_ERROR "_forge_add_protobuf_legacy(${target}): PROTOS is required")
-    endif()
-    if(NOT ARG_ROOT)
-        set(ARG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
-    endif()
-    get_filename_component(root "${ARG_ROOT}" ABSOLUTE)
-    _forge_protoc(protoc)
-
-    set(out "${CMAKE_CURRENT_BINARY_DIR}/forge_proto/${target}")
-    file(MAKE_DIRECTORY "${out}")
-    set(includes -I "${root}")
-    foreach(dir ${ARG_IMPORT_DIRS} ${FORGECPP_PROTO_DIR})
-        list(APPEND includes -I "${dir}")
-    endforeach()
-    # google/protobuf/*.proto (well-known types) live next to the protobuf headers.
-    get_target_property(_pb_inc protobuf::libprotobuf INTERFACE_INCLUDE_DIRECTORIES)
-    foreach(dir ${_pb_inc})
-        if(EXISTS "${dir}/google/protobuf/struct.proto")
-            list(APPEND includes -I "${dir}")
-        endif()
-    endforeach()
-
-    set(sources)
-    set(python_outputs)
-    foreach(proto ${ARG_PROTOS})
-        get_filename_component(abs "${root}/${proto}" ABSOLUTE)
-        file(RELATIVE_PATH rel "${root}" "${abs}")
-        string(REGEX REPLACE "\\.proto$" "" stem "${rel}")
-        set(outputs "${out}/${stem}.pb.cc" "${out}/${stem}.pb.h")
-        set(python_arg)
-        if(ARG_PYTHON)
-            string(REGEX REPLACE "\\.proto$" "_pb2.py" py "${rel}")
-            list(APPEND outputs "${ARG_PYTHON}/${py}")
-            list(APPEND python_outputs "${ARG_PYTHON}/${py}")
-            set(python_arg "--python_out=${ARG_PYTHON}")
-        endif()
-        add_custom_command(
-            OUTPUT ${outputs}
-            COMMAND ${protoc} --cpp_out=${out} ${python_arg} ${includes} "${rel}"
-            WORKING_DIRECTORY "${root}"
-            DEPENDS "${abs}"
-            COMMENT "protoc ${rel}"
-            VERBATIM)
-        list(APPEND sources "${out}/${stem}.pb.cc")
-    endforeach()
-    if(ARG_PYTHON)
-        file(MAKE_DIRECTORY "${ARG_PYTHON}")
-    endif()
-    target_sources(${target} PRIVATE ${sources})
-    target_include_directories(${target} PUBLIC $<BUILD_INTERFACE:${out}>)
-    target_link_libraries(${target} PUBLIC protobuf::libprotobuf)
-    # Generated code triggers warnings we cannot fix.
-    set_source_files_properties(${sources} PROPERTIES COMPILE_OPTIONS "-w")
 endfunction()
 
 function(forge_add_proto target)
@@ -245,6 +186,12 @@ function(forge_add_proto target)
     set_target_properties(${target} PROPERTIES FORGE_PROTO_DIR "${out}/proto")
     # Generated code triggers warnings we cannot fix.
     set_source_files_properties(${sources} PROPERTIES COMPILE_OPTIONS "-w")
+    # A project with only CXX enabled compiles the .pb.c files as C++ (nanopb supports it).
+    get_property(languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+    if(NOT "C" IN_LIST languages)
+        list(FILTER sources INCLUDE REGEX "\\.pb\\.c$")
+        set_source_files_properties(${sources} PROPERTIES LANGUAGE CXX)
+    endif()
 endfunction()
 
 # Where Python modules go, relative to CMAKE_INSTALL_PREFIX (see forge_install_python).

@@ -21,7 +21,7 @@ option(FORGECPP_BUILD_TESTS     "Build the unit tests (needs doctest)"  ${FORGEC
 option(FORGECPP_INSTALL_TOOLS   "Install the forgecpp-new scaffolder"   ON)
 option(FORGECPP_WARNINGS        "Enable extra compiler warnings"        ${FORGECPP_TOP_LEVEL})
 option(FORGECPP_BUILD_HUB       "Build forge-hub (dashboard of the device's applications)" ${FORGECPP_TOP_LEVEL})
-# ZeroMQ and protobuf are core dependencies: every application speaks forge.v1.
+# ZeroMQ is a core dependency: every application has a command link and streams.
 set(FORGECPP_WITH_ZMQ ON CACHE STRING "Deprecated: ZeroMQ is always used")
 set(FORGECPP_SANITIZE "" CACHE STRING
     "Build with sanitizers: address, undefined, thread or a list (address;undefined)")
@@ -133,6 +133,7 @@ add_library(forgecpp
     src/status.cpp
     src/systemd.cpp
     src/telnet.cpp
+    src/remote.cpp
     src/tmtc.cpp
     src/trace.cpp
     src/web.cpp
@@ -267,9 +268,12 @@ install(DIRECTORY include/forge DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 install(DIRECTORY "${PROJECT_BINARY_DIR}/forge_proto/forgecpp/forge" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         FILES_MATCHING PATTERN "*.pb.h" PATTERN "*.forge.hpp")
 install(DIRECTORY proto/forge DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp/proto)
-# forge-v1 Python package: the generated forge/v1/*_pb2.py and the framing
-# helpers, in site-packages (from a build directory: PYTHONPATH=<build>/python).
-configure_file(python/forge/v1/framing.py "${PROJECT_BINARY_DIR}/python/forge/v1/framing.py" COPYONLY)
+# Python package "forge": the generated forge/*_pb2.py, the stream framing and
+# the c2 command client, in site-packages (from a build directory:
+# PYTHONPATH=<build>/python).
+foreach(py framing.py c2.py)
+    configure_file(python/forge/${py} "${PROJECT_BINARY_DIR}/python/forge/${py}" COPYONLY)
+endforeach()
 forge_install_python(DIRECTORY "${PROJECT_BINARY_DIR}/python")
 install(TARGETS forgectl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES "${PROJECT_BINARY_DIR}/include/forge/version.hpp"

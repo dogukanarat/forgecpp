@@ -22,9 +22,9 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/ad936x ${CMAKE_CURRENT_BI
 add_library(sa_core STATIC src/spectrum.cpp src/engine.cpp src/radio_tap.cpp src/analyzer.cpp)
 target_include_directories(sa_core PUBLIC src)
 target_link_libraries(sa_core PUBLIC ad936x forgecpp::forgecpp)
-# sa.v1 messages (spectrum stream); Python modules for clients
+# sa messages (spectrum stream); Python modules for clients
 set(SA_PYTHON_DIR "${CMAKE_CURRENT_BINARY_DIR}/python")
-_forge_add_protobuf_legacy(sa_core ROOT ${CMAKE_CURRENT_SOURCE_DIR}/proto PROTOS sa/v1/spectrum.proto PYTHON ${SA_PYTHON_DIR})
+forge_add_proto(sa_core ROOT ${CMAKE_CURRENT_SOURCE_DIR}/proto PROTOS sa/spectrum.proto PYTHON ${SA_PYTHON_DIR})
 target_compile_definitions(sa_core PUBLIC SA_VERSION="${PROJECT_VERSION}")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(sa_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -46,8 +46,8 @@ forge_add_app(spectrum-analyzer
     ${_install_mode})
 
 if(SA_STANDALONE)
-    install(FILES proto/sa/v1/spectrum.proto DESTINATION ${CMAKE_INSTALL_DATADIR}/spectrum-analyzer/proto/sa/v1)
-    forge_install_python(DIRECTORY ${SA_PYTHON_DIR})  # sa.v1 in site-packages
+    install(FILES proto/sa/spectrum.proto DESTINATION ${CMAKE_INSTALL_DATADIR}/spectrum-analyzer/proto/sa)
+    forge_install_python(DIRECTORY ${SA_PYTHON_DIR})  # sa in site-packages
     install(PROGRAMS clients/spectrum_watch.py DESTINATION ${CMAKE_INSTALL_DATADIR}/spectrum-analyzer/clients)
 endif()
 

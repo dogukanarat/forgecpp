@@ -34,6 +34,7 @@
 #include "forge/messages.forge.hpp"
 #include "forge/pb.hpp"
 #include "forge/status.hpp"
+#include "forge/tmtc.hpp"
 
 #include <zmq.hpp>
 
@@ -99,6 +100,14 @@ struct Message {
         return out;
     }
 };
+
+/// A message with the header publish() would give it, for Sender::send()
+/// (a test that changes the time, a relay that adds a field).
+Message make_message(std::string_view topic, const pb::Type& type, const void* body, std::string blob = {});
+template <pb::Message T>
+Message make_message(std::string_view topic, const T& body, std::string blob = {}) {
+    return make_message(topic, *pb::type_of<T>, &body, std::move(blob));
+}
 
 /// What a stream reports about itself (the "streams" command, the panel).
 struct StreamInfo {
@@ -367,6 +376,10 @@ private:
 ///   forge::zmq::Client c("tcp://board:5557");
 ///   forge_info_reply info{};
 ///   if (auto s = c.call(forge_msg_id_info, forge_info_request{}, info); !s.ok()) ...
+/// What `commands` answers to one c2 request, as Server frames:
+///   Server s(endpoint, [&](std::string_view r) { return answer(commands, r); });
+std::vector<std::string> answer(const tmtc::Registry& commands, std::string_view request);
+
 class Client {
 public:
     explicit Client(std::string endpoint, std::chrono::milliseconds timeout = std::chrono::seconds(2));

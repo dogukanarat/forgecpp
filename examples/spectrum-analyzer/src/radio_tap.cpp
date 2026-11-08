@@ -1,8 +1,10 @@
 #include "radio_tap.hpp"
 
+#include <forge/error.hpp>
+#include <forge/remote.hpp>
 #include <forge/zmq.hpp>
 
-#include "radio/v1/radio.pb.h"
+#include "radio/radio.forge.hpp"
 
 #include <atomic>
 #include <condition_variable>
@@ -20,7 +22,6 @@ namespace fz = forge::zmq;
 class RadioTapBackend final : public radio::Backend, public FixedTuning {
 public:
     explicit RadioTapBackend(RadioTapOptions o) : options_(std::move(o)), control_(options_.control, options_.timeout) {
-        control_.set_client("spectrum-analyzer");
         if (options_.channel < 1 || options_.channel > 2) throw DeviceError("channel must be 1 or 2");
         // radio-controller's control ids for the channel's gain
         mode_id_ = options_.channel == 1 ? "gain_mode" : "rx2_gain_mode";
@@ -35,7 +36,7 @@ public:
                 throw DeviceError("radio-controller does not share RX" + ch + " (it shares " + shared.dump() +
                                   "): add " + ch + " to [radio] tap_rx in its configuration");
             }
-        } catch (const fz::Error& e) {
+        } catch (const forge::Error& e) {
             throw DeviceError("radio-controller at " + options_.control + ": " + e.what());
         }
         fz::Receiver::Options ro;
@@ -89,7 +90,7 @@ public:
         try {
             const auto v = control_.get("temperature_c");
             if (v.is_number()) return v.get<double>();
-        } catch (const fz::Error&) {
+        } catch (const forge::Error&) {
         }
         return std::nullopt;
     }
@@ -159,22 +160,22 @@ private:
     void remote_set(const std::string& id, const T& value) {
         try {
             control_.set(id, value);
-        } catch (const fz::Error& e) {
+        } catch (const forge::Error& e) {
             throw DeviceError(std::string("radio-controller: ") + e.what());
         }
     }
 
     // Receiver thread: keep only the newest block.
     void on_block(fz::Message&& m) {
-        radio::v1::IqBlock h;
+        radio_iq_block h{};
         try {
-            h = m.as<radio::v1::IqBlock>();
+            h = m.as<radio_iq_block>();
         } catch (const fz::Error&) {
             return;  // not an IQ block
         }
-        const std::size_t samples = h.samples();
-        if (h.format() != "cs16" || samples == 0 || m.blob.size() != samples * 4) return;
-        Tuning t{h.center_freq(), h.sample_rate(), samples};
+        const std::size_t samples = h.samples;
+        if (std::string_view(h.format) != "cs16" || samples == 0 || m.blob.size() != samples * 4) return;
+        Tuning t{h.center_freq, h.sample_rate, samples};
         if (t.rate_hz <= 0) return;
         {
             std::lock_guard lock(mutex_);
@@ -182,14 +183,14 @@ private:
             std::memcpy(block_.data(), m.blob.data(), m.blob.size());
             block_tuning_ = t;
             have_block_ = fresh_ = true;
-            gain_db_ = h.rx_gain_db();
+            gain_db_ = h.rx_gain_db;
         }
         cv_.notify_all();
     }
 
     RadioTapOptions options_;
     std::string mode_id_, gain_id_;  ///< radio-controller control ids of the channel's gain
-    fz::Client control_;  // engine thread only
+    forge::Remote control_;  // engine thread only
     std::unique_ptr<fz::Receiver> receiver_;
 
     mutable std::mutex mutex_;

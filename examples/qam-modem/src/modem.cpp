@@ -1,6 +1,6 @@
 #include "modem.hpp"
 
-#include "radio/v1/radio.pb.h"
+#include "radio/radio.forge.hpp"
 
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -266,7 +266,7 @@ void QamModem::on_stop() {
 }
 
 // ---------------------------------------------------------------------------
-// Radio set-up: forge.v1 requests to radio-controller, off the main loop
+// Radio set-up: commands to radio-controller (forge::Remote), off the main loop
 
 void QamModem::configure_radio() {
     if (configuring_) return;
@@ -285,8 +285,7 @@ void QamModem::configure_radio() {
     background(
         [=]() -> std::string {
             try {
-                forge::zmq::Client c(endpoint, 3s);
-                c.set_client("qam-modem");
+                forge::Remote c(endpoint, 3s);
                 c.set("rx_lo_mhz", lo_mhz);
                 c.set("tx_lo_mhz", lo_mhz);
                 c.set("sample_rate_msps", rate_msps);
@@ -426,8 +425,8 @@ void QamModem::add_credit(std::size_t samples) {
 void QamModem::tx_loop() {
     configure_thread("tx");
     std::vector<std::int16_t> block(2 * block_samples_);
-    radio::v1::TxBlock header;
-    header.set_format("cs16");
+    radio_tx_block header{};
+    std::strcpy(header.format, "cs16");
     const auto n = static_cast<std::int64_t>(block_samples_);
     auto wall = std::chrono::steady_clock::now();
     double level = tx_level_dbfs_;
@@ -474,25 +473,27 @@ void QamModem::tx_loop() {
 // RX (the Receiver thread): radio-controller -> demodulator -> Ethernet
 
 void QamModem::on_iq(forge::zmq::Message&& m) {
-    radio::v1::IqBlock b;
+    radio_iq_block b{};
     try {
-        b = m.as<radio::v1::IqBlock>();
+        b = m.as<radio_iq_block>();
     } catch (const forge::zmq::Error&) {
         return;
     }
-    if (b.channel() != rx_channel_ || b.format() != "cs16" || m.blob.size() != std::size_t(b.samples()) * 4) return;
-    rx_rate_hz_ = b.sample_rate();
-    if (std::abs(b.sample_rate() - params_.sample_rate) > 1) return;  // not set up yet (or by someone else)
+    if (b.channel != rx_channel_ || std::string_view(b.format) != "cs16" || m.blob.size() != std::size_t(b.samples) * 4) {
+        return;
+    }
+    rx_rate_hz_ = b.sample_rate;
+    if (std::abs(b.sample_rate - params_.sample_rate) > 1) return;  // not set up yet (or by someone else)
     ++rx_blocks_;
-    add_credit(b.samples());  // the samples happened, decoded or not: TX keeps its pace
-    const auto last = last_rx_buffer_.exchange(static_cast<std::int64_t>(b.buffer()));
-    bool gap = last >= 0 && b.buffer() != static_cast<std::uint64_t>(last) + 1;  // samples lost
+    add_credit(b.samples);  // the samples happened, decoded or not: TX keeps its pace
+    const auto last = last_rx_buffer_.exchange(static_cast<std::int64_t>(b.buffer));
+    bool gap = last >= 0 && b.buffer != static_cast<std::uint64_t>(last) + 1;  // samples lost
     // Behind real time (a slow CPU, a busy board): skip old blocks rather than let
     // the queue and the latency grow; the demodulator starts again with fresh ones.
     const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::system_clock::now().time_since_epoch())
                             .count();
-    if (m.header.time_unix_ns() > 0 && now_ns - m.header.time_unix_ns() > max_lag_ns_) {
+    if (m.header.time_unix_ns > 0 && now_ns - m.header.time_unix_ns > max_lag_ns_) {
         ++rx_late_;
         skipping_ = true;
         return;
@@ -502,7 +503,7 @@ void QamModem::on_iq(forge::zmq::Message&& m) {
         skipping_ = false;
         demod_->reset();  // a packet across the gap cannot be decoded
     }
-    demod_->push(reinterpret_cast<const std::int16_t*>(m.blob.data()), b.samples(),
+    demod_->push(reinterpret_cast<const std::int16_t*>(m.blob.data()), b.samples,
                  [this](qam::Packet&& p) { on_packet(std::move(p)); });
 }
 

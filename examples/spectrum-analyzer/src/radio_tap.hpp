@@ -4,9 +4,9 @@
 // radio-controller owns the transceiver: the RX LO and the sample rate (both
 // RX channels of an AD9361 share them and arrive in one DMA buffer). It
 // publishes blocks of the channels it shares as streams on its [forge].data
-// socket (topics "rx1", "rx2"; forge.v1 Header + radio.v1.IqBlock + cs16
-// samples); this backend reads one of them and, if allowed, sets that
-// channel's gain through radio-controller's control endpoint (forge.v1). The analyzer
+// socket (topics "rx1", "rx2"; radio.iq_block + cs16 samples); this backend
+// reads one of them and, if allowed, sets that channel's gain through
+// radio-controller's command endpoint (forge::Remote). The analyzer
 // cannot retune: its display window stays inside the band radio-controller is
 // tuned to (see FixedTuning).
 

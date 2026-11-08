@@ -4,6 +4,8 @@
 // readings and heavy work done off the main loop.
 #pragma once
 
+#include "pump.forge.hpp"
+
 #include <forge/forge.hpp>
 
 #include <chrono>
@@ -32,7 +34,7 @@ protected:
         s.integer("pump.alarm_after_s", 3, "Overpressure this long raises the alarm").range(0, 600).unit("s");
     }
 
-    // One declaration: web panel, forgectl, forge.v1, console and telnet.
+    // One declaration: web panel, forgectl, the command link, console and telnet.
     void setup_web(forge::web::Dashboard& ui) override {
         auto& drive = ui.group("Drive");
         drive.number("speed_rpm", "Speed", speed_rpm).range(0, 3000, 10).unit("rpm").persist();
@@ -62,7 +64,7 @@ protected:
         const auto cfg = config();
         limit_bar = cfg.value<double>("pump.limit_bar");
         alarm_after_ = std::chrono::seconds(cfg.value<int>("pump.alarm_after_s"));
-        readings_ = &stream("pressure", "forge.v1.Values");
+        readings_ = &stream<pump_reading>("pressure");
         every(std::chrono::milliseconds(cfg.value<int>("pump.sample_ms")), [this] { sample(); });
     }
 
@@ -90,9 +92,7 @@ private:
 
         // The stream: only built when someone listens.
         if (readings_->wanted()) {
-            forge::v1::Values v;
-            (*v.mutable_values())["pressure_bar"] = forge::proto::to_value(pressure_bar);
-            readings_->publish(v);
+            readings_->publish(pump_reading{pressure_bar, speed_rpm, running});
         }
     }
 

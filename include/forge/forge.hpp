@@ -32,6 +32,7 @@
 #include "forge/systemd.hpp"
 #include "forge/telnet.hpp"
 #include "forge/thread_pool.hpp"
+#include "forge/remote.hpp"
 #include "forge/tmtc.hpp"
 #include "forge/trace.hpp"
 #include "forge/version.hpp"

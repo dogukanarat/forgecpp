@@ -407,6 +407,7 @@ int Application::run(int argc, char** argv) {
         dashboard_->bind_to_thread(main_thread_.load());  // its values belong to the main loop
         state_->restore(*dashboard_, cfg.value<std::string>("state.file"), logger_);
 
+        commands_closed_ = true;
         http_->create(cfg);
         console_->create(cfg);
         messaging_->start(cfg);

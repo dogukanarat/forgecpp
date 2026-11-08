@@ -134,6 +134,22 @@ bool send_parts(::zmq::socket_t& s, std::string_view topic, const std::string& h
 
 }  // namespace
 
+std::vector<std::string> answer(const tmtc::Registry& commands, std::string_view request) {
+    std::vector<std::string> frames;
+    tmtc::Dispatcher(commands).handle({reinterpret_cast<const std::uint8_t*>(request.data()), request.size()},
+                                      [&](std::span<const std::uint8_t> m) { frames.emplace_back(m.begin(), m.end()); });
+    return frames;
+}
+
+Message make_message(std::string_view topic, const pb::Type& type, const void* body, std::string blob) {
+    Message m;
+    m.topic = std::string(topic);
+    m.header = make_header(topic, type.name);
+    m.body = encode_to_string(type, body);
+    m.blob = std::move(blob);
+    return m;
+}
+
 void set_source(std::string name) {
     std::lock_guard lock(source_mutex());
     source_name() = std::move(name);

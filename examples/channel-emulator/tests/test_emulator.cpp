@@ -3,7 +3,7 @@
 // qam-modem -> channel-emulator -> radio-controller (simulated) -> qam-modem.
 #include "emulator.hpp"
 
-#include "radio/v1/radio.pb.h"
+#include "radio/radio.forge.hpp"
 
 #include <forge/testing.hpp>
 
@@ -13,6 +13,7 @@
 #include "radio_controller.hpp"
 #endif
 
+#include <cstring>
 #include <deque>
 #include <map>
 #include <mutex>
@@ -35,20 +36,20 @@ void set(forge::Application& app, const std::string& id, const json& v) {
 /// Stands in for radio-controller's TX input: collects the blocks.
 struct Sink {
     std::mutex m;
-    std::deque<std::pair<radio::v1::TxBlock, std::string>> blocks;
+    std::deque<std::pair<radio_tx_block, std::string>> blocks;
     fz::Receiver rx;
     Sink()
         : rx(fz::Receiver::Kind::pull, "tcp://127.0.0.1:*",
              [this](fz::Message&& msg) {
                  std::lock_guard lock(m);
-                 blocks.emplace_back(msg.as<radio::v1::TxBlock>(), std::move(msg.blob));
+                 blocks.emplace_back(msg.as<radio_tx_block>(), std::move(msg.blob));
              },
              fz::Receiver::Options{true, {""}, {}}) {}
     std::size_t size() {
         std::lock_guard lock(m);
         return blocks.size();
     }
-    std::pair<radio::v1::TxBlock, std::string> pop() {
+    std::pair<radio_tx_block, std::string> pop() {
         std::lock_guard lock(m);
         auto b = std::move(blocks.front());
         blocks.pop_front();
@@ -80,8 +81,8 @@ TEST_CASE("channel-emulator: forwards every block, impaired as the controls say"
     CHECK(get(e, "sample_rate") == 1.0);
 
     fz::Sender tx(fz::Sender::Kind::push, e.input_endpoint(), false);
-    radio::v1::TxBlock h;
-    h.set_format("cs16");
+    radio_tx_block h{};
+    std::strcpy(h.format, "cs16");
     const auto blob = tone_blob(4096);
     auto send = [&] { REQUIRE(forge::testing::wait_until([&] { return tx.publish("tx", h, blob.data(), blob.size()); })); };
 
@@ -97,7 +98,7 @@ TEST_CASE("channel-emulator: forwards every block, impaired as the controls say"
     send();
     REQUIRE(forge::testing::wait_until([&] { return sink.size() == 1; }));
     auto [hdr, out] = sink.pop();
-    CHECK(hdr.format() == "cs16");
+    CHECK(std::string_view(hdr.format) == "cs16");
     CHECK(out.size() == blob.size());
     CHECK(out != blob);
 
@@ -111,7 +112,7 @@ TEST_CASE("channel-emulator: forwards every block, impaired as the controls say"
     REQUIRE(forge::testing::wait_until([&] { return sink.size() == 1; }));
     CHECK(sink.pop().second == blob);
     set(e, "bypass", false);
-    h.set_cyclic(true);
+    h.cyclic = true;
     send();
     REQUIRE(forge::testing::wait_until([&] { return sink.size() == 1; }));
     CHECK(sink.pop().second == blob);
@@ -126,7 +127,7 @@ TEST_CASE("channel-emulator: forwards every block, impaired as the controls say"
     CHECK(get(e, "paths") == "0:0:0, 0.5:-3:90");
 
     // no radio-controller downstream: the emulator waits (backpressure), it does not drop
-    h.set_cyclic(false);
+    h.cyclic = false;
 }
 
 TEST_CASE("channel-emulator: path list parsing") {

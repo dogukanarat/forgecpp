@@ -5,9 +5,9 @@
     ./rx_capture.py tcp://radio:5555 --seconds 2 --out capture.cs16
     ./rx_capture.py tcp://radio:5555 --topic rx2      # a shared channel (tap_rx)
 
-Messages: [topic][forge.v1.Header][radio.v1.IqBlock][cs16 samples].
-Needs the forge-v1 Python package (installed with forgecpp) and radio.v1
-(installed with radio-controller); from build directories set PYTHONPATH to
+Messages: [topic][forge.stream_header][radio.iq_block][cs16 samples].
+Needs forgecpp's Python package "forge" and "radio" (installed with
+radio-controller); from build directories set PYTHONPATH to
 <forgecpp build>/python:<build>/examples/radio-controller/ad936x/python.
 """
 import argparse
@@ -17,8 +17,8 @@ import time
 import numpy as np
 import zmq
 
-from forge.v1 import framing
-from radio.v1 import radio_pb2
+from forge import framing
+from radio import radio_pb2
 
 
 def main():
@@ -40,7 +40,7 @@ def main():
     deadline = time.monotonic() + args.seconds
     try:
         while time.monotonic() < deadline:
-            topic, h, block, blob = framing.parse(sock.recv_multipart(), radio_pb2.IqBlock)
+            topic, h, block, blob = framing.parse(sock.recv_multipart(), radio_pb2.iq_block)
             if last_seq is not None and h.seq != last_seq + 1:
                 lost += h.seq - last_seq - 1
             last_seq = h.seq

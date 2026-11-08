@@ -1,0 +1,10 @@
+// The pump's stream "pressure": one reading per sample.
+syntax = "proto3";
+
+package pump;
+
+message reading {
+    double pressure_bar = 1;
+    double speed_rpm = 2;
+    bool running = 3;
+}

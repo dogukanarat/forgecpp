@@ -12,10 +12,10 @@ find_dependency(tomlplusplus    CONFIG)
 find_dependency(httplib         CONFIG)
 
 find_dependency(cppzmq          CONFIG)
+# forge_add_proto() runs protoc on the build machine: from the bundled
+# protobuf's CMake package when it is there, else FORGE_PROTOC or the PATH.
+# Nothing links libprotobuf.
 find_package(protobuf CONFIG QUIET)
-if(NOT protobuf_FOUND)
-    find_dependency(Protobuf)
-endif()
 set(forgecpp_zmq_FOUND ON)
 set(FORGECPP_PROTO_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../@CMAKE_INSTALL_DATADIR@/forgecpp/proto")
 get_filename_component(FORGECPP_PROTO_DIR "${FORGECPP_PROTO_DIR}" ABSOLUTE)

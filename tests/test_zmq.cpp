@@ -170,13 +170,7 @@ TEST_CASE("zmq: a command client that recovers from timeouts") {
         rsp.token = req.token + 1;
         return forge::Status();
     });
-    const auto serve = [&](std::string_view req) {
-        std::vector<std::string> out;
-        forge::tmtc::Dispatcher(commands).handle(
-            {reinterpret_cast<const std::uint8_t*>(req.data()), req.size()},
-            [&](std::span<const std::uint8_t> m) { out.emplace_back(m.begin(), m.end()); });
-        return out;
-    };
+    const auto serve = [&](std::string_view req) { return fz::answer(commands, req); };
     auto server = std::make_unique<fz::Server>("tcp://127.0.0.1:*", serve);
     const auto endpoint = server->endpoint();
     fz::Client client(endpoint, 2s);

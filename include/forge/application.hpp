@@ -334,8 +334,11 @@ public:
     tmtc::Registry& commands() { return commands_; }
     /// A command whose handler runs on the main loop (like the controls); a
     /// busy loop refuses it with EAGAIN after [forge].request_timeout_ms.
+    /// Add commands in the constructor or setup_web(): the links read the
+    /// registry from their own threads once they run.
     template <pb::Message Req, pb::Message Rsp>
     void command(std::uint16_t id, std::string name, tmtc::Handler<Req, Rsp> handler) {
+        if (commands_closed_) throw std::logic_error("command '" + name + "': add commands before the start");
         commands_.add<Req, Rsp>(id, std::move(name),
                                 [this, h = std::move(handler)](const Req& req, Rsp& rsp) {
                                     return invoke_for(request_timeout(), [&] { return h(req, rsp); });
@@ -563,6 +566,7 @@ private:
     std::atomic<bool> state_event_pending_{false};
 
     std::atomic<bool> stop_requested_{false};
+    bool commands_closed_ = false;  // set before the links start
     std::atomic<int> exit_code_{0};
     std::atomic<bool> signal_thread_running_{false};
     std::thread signal_thread_;

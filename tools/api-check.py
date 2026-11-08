@@ -3,7 +3,7 @@
 
 api/forgecpp-<major>.<minor>.json records, for a release series:
   symbols      every function libforgecpp.so exports in namespace forge
-               (forge::detail and the generated forge::v1 excepted): an
+               (forge::detail excepted): an
                application linked against libforgecpp.so.<major>.<minor>
                may use any of them, so none may disappear;
   config_keys  every configuration key the framework declares (keys in
@@ -11,7 +11,7 @@ api/forgecpp-<major>.<minor>.json records, for a release series:
 
 Within a series, adding is fine and removing fails. A new minor version
 (new SOVERSION) starts a new record (--update); until 1.0 it may break, and
-CHANGELOG.md says how. forge.v1 has its own check (tools/proto-compat.py).
+CHANGELOG.md says how. The messages have their own check (tools/proto-compat.py).
 
     tools/api-check.py --lib build/libforgecpp.so --app build/examples/hello            # CI
     tools/api-check.py --lib build/libforgecpp.so --app build/examples/hello --update   # at a release
@@ -38,7 +38,7 @@ def symbols(lib):
     names = subprocess.run(["c++filt"], input="\n".join(mangled), check=True, capture_output=True,
                            text=True).stdout.splitlines()
     keep = sorted({n for n in names
-                   if n.startswith("forge::") and not n.startswith(("forge::detail::", "forge::v1::"))})
+                   if n.startswith("forge::") and not n.startswith("forge::detail::")})
     return keep
 
 

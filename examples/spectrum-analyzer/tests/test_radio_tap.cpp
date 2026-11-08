@@ -4,10 +4,9 @@
 #include "radio_tap.hpp"
 
 #include <forge/testing.hpp>
-#include <forge/proto.hpp>
 #include <forge/zmq.hpp>
 
-#include "radio/v1/radio.pb.h"
+#include "radio/radio.forge.hpp"
 
 #ifdef SA_WITH_RADIO_CONTROLLER
 #include "radio_controller.hpp"
@@ -15,6 +14,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <functional>
 #include <future>
@@ -27,15 +27,23 @@ namespace fz = forge::zmq;
 
 namespace {
 
-/// Stand-in for radio-controller: its forge.v1 control endpoint and the RX2 stream.
+/// Stand-in for radio-controller: the get/set commands of its control
+/// endpoint and the RX2 stream.
 class FakeRadio {
 public:
     explicit FakeRadio(json tap_channels = json::array({2})) {
         state_ = {{"tap_channels", tap_channels}, {"rx2_gain_mode", "slow_attack"}, {"rx2_gain_db", 30.0},
                   {"gain_mode", "slow_attack"}, {"rx_gain_db", 30.0}, {"temperature_c", 44.5}};
-        control_ = std::make_unique<fz::Server>("tcp://127.0.0.1:*", [this](std::string_view req) { return handle(req); });
+        commands_.add<forge_get_request, forge_get_reply>(forge_msg_id_get, "get", [this](const auto& req, auto& rsp) {
+            return answer(req.id, nullptr, rsp.value);
+        });
+        commands_.add<forge_set_request, forge_set_reply>(forge_msg_id_set, "set", [this](const auto& req, auto& rsp) {
+            return answer(req.id, req.value, rsp.value);
+        });
+        control_ = std::make_unique<fz::Server>("tcp://127.0.0.1:*",
+                                                [this](std::string_view req) { return fz::answer(commands_, req); });
         pub_ = std::make_unique<fz::Publisher>("tcp://127.0.0.1:*");
-        stream_ = &pub_->add("rx2", "radio.v1.IqBlock");
+        stream_ = &pub_->add<radio_iq_block>("rx2");
         thread_ = std::thread([this] { publish(); });
     }
     ~FakeRadio() {
@@ -55,23 +63,16 @@ public:
     static constexpr std::size_t kBlock = 16384;
 
 private:
-    std::string handle(std::string_view bytes) {
-        forge::v1::Request req;
-        forge::v1::Reply reply;
-        if (!req.ParseFromArray(bytes.data(), static_cast<int>(bytes.size()))) {
-            return forge::proto::error_reply(400, "bad request").SerializeAsString();
-        }
+    /// A get (value == nullptr) or a set; the control's value goes to `out`.
+    template <std::size_t N>
+    forge::Status answer(const char* id, const char* value, char (&out)[N]) {
         std::lock_guard lock(m_);
-        const bool set = req.kind_case() == forge::v1::Request::kSet;
-        const auto id = set ? req.set().id() : req.get().id();
-        if (!state_.contains(id)) return forge::proto::error_reply(404, "unknown control '" + id + "'").SerializeAsString();
-        if (set) {
-            state_[id] = forge::proto::to_json(req.set().value());
+        if (!state_.contains(id)) return forge::Status::error(forge::module_id::app, ENOENT, "unknown control");
+        if (value) {
+            state_[id] = json::parse(value);
             ++sets;
         }
-        reply.set_ok(true);
-        *reply.mutable_value() = forge::proto::to_value(state_[id]);
-        return reply.SerializeAsString();
+        return forge::pb::assign(out, state_[id].dump());
     }
     void publish() {
         std::vector<std::int16_t> iq(2 * kBlock);
@@ -83,17 +84,17 @@ private:
                 iq[2 * i] = static_cast<std::int16_t>(8000 * std::cos(phase) + (i * 7919 % 64) - 32);
                 iq[2 * i + 1] = static_cast<std::int16_t>(8000 * std::sin(phase) + (i * 104729 % 64) - 32);
             }
-            radio::v1::IqBlock b;
+            radio_iq_block b{};
             {
                 std::lock_guard lock(m_);
-                b.set_rx_gain_db(state_["rx2_gain_db"].get<double>());
+                b.rx_gain_db = state_["rx2_gain_db"].get<double>();
             }
-            b.set_channel(2);
-            b.set_samples(kBlock);
-            b.set_format("cs16");
-            b.set_sample_rate(kRate);
-            b.set_center_freq(lo.load());
-            b.set_buffer(++seq);
+            b.channel = 2;
+            b.samples = kBlock;
+            std::strcpy(b.format, "cs16");
+            b.sample_rate = kRate;
+            b.center_freq = lo.load();
+            b.buffer = ++seq;
             stream_->publish(b, nullptr, iq.data(), iq.size() * sizeof(std::int16_t));  // no owner: copied
             std::this_thread::sleep_for(20ms);
         }
@@ -101,6 +102,7 @@ private:
 
     std::mutex m_;
     json state_;
+    forge::tmtc::Registry commands_;
     std::unique_ptr<fz::Server> control_;
     std::unique_ptr<fz::Publisher> pub_;
     fz::Stream* stream_ = nullptr;
@@ -344,9 +346,9 @@ TEST_CASE("sa radio tap: with the real radio-controller (simulated AD9361, TX1 -
         tx[2 * i + 1] = static_cast<std::int16_t>(16000 * std::sin(ph));
     }
     fz::Sender push(fz::Sender::Kind::push, app.tx_endpoint(), false);
-    radio::v1::TxBlock tb;
-    tb.set_format("cs16");
-    tb.set_cyclic(true);
+    radio_tx_block tb{};
+    std::strcpy(tb.format, "cs16");
+    tb.cyclic = true;
     REQUIRE(forge::testing::wait_until([&] { return push.publish("tx", tb, tx.data(), tx.size() * 2); }));
     f = wait_frame(e, [](const sa::Frame& f) {
         return !f.peaks.empty() && std::abs(f.peaks.front().freq_hz - 2411.5e6) < tolerance(f);

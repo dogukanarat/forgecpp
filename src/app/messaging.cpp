@@ -110,11 +110,7 @@ void Messaging::start(const Config& cfg) {
             control,
             [this](std::string_view request) {
                 CallerScope caller(app_.control().identify("link", "zmq", {}));
-                std::vector<std::string> answers;
-                tmtc::Dispatcher(app_.commands())
-                    .handle({reinterpret_cast<const std::uint8_t*>(request.data()), request.size()},
-                            [&](std::span<const std::uint8_t> m) { answers.emplace_back(m.begin(), m.end()); });
-                return answers;
+                return zmq::answer(app_.commands(), request);
             },
             options);
         logger->info("forge: commands on {}", control_server_->endpoint());

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Check that proto/forge/v1 only changes compatibly with the released API.
+"""Check that proto/forge/*.proto only changes compatibly with the released API.
 
-proto/forge/v1/API.json records every message, field and enum value of the
-last release (number, name, type, label). A change is compatible when
+proto/forge/API.json records every message, field and enum value of the
+last release (number, name, type, label, bound). A change is compatible when
 nothing recorded there changes: no field or enum value is renumbered,
-retyped, renamed (the JSON mapping uses names) or removed without reserving
-its number. Adding messages, fields and values is fine.
+retyped, renamed (the JSON side uses names) or removed without reserving its
+number, and no bound gets smaller (a peer built with the old bound would send
+what the new one cannot hold). Adding messages, fields and values, and making
+bounds larger, is fine. The command ids are the values of the msg_id enums.
 
     tools/proto-compat.py --protoc build/protoc            # check (CI)
     tools/proto-compat.py --protoc build/protoc --update   # at a release: record the API
@@ -23,19 +25,42 @@ from google.protobuf import descriptor_pb2
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROTO_ROOT = os.path.join(ROOT, "proto")
-PACKAGE_DIR = os.path.join(PROTO_ROOT, "forge", "v1")
+PACKAGE_DIR = os.path.join(PROTO_ROOT, "forge")
 SNAPSHOT = os.path.join(PACKAGE_DIR, "API.json")
+NANOPB = os.path.join(ROOT, "third_party", "nanopb", "generator")
 
 FT = descriptor_pb2.FieldDescriptorProto
 
 
+def load_nanopb(protoc):
+    """nanopb_pb2, to read the bounds ([(nanopb).max_size = N]) of the fields."""
+    sys.path.insert(0, NANOPB)
+    os.environ["NANOPB_PB2_TEMP_DIR"] = tempfile.mkdtemp(prefix="nanopb_pb2_")
+    os.environ["PATH"] = os.path.dirname(os.path.abspath(protoc)) + os.pathsep + os.environ.get("PATH", "")
+    import proto
+    return proto.load_nanopb_pb2()
+
+
 def describe(protoc):
-    files = sorted(f"forge/v1/{f}" for f in os.listdir(PACKAGE_DIR) if f.endswith(".proto"))
+    nanopb_pb2 = load_nanopb(protoc)
+    files = sorted(f"forge/{f}" for f in os.listdir(PACKAGE_DIR) if f.endswith(".proto"))
     with tempfile.NamedTemporaryFile(suffix=".pb") as out:
-        subprocess.run([protoc, f"-I{PROTO_ROOT}", f"--descriptor_set_out={out.name}", *files], check=True)
+        subprocess.run([protoc, f"-I{PROTO_ROOT}", f"-I{os.path.join(NANOPB, 'proto')}",
+                        f"--descriptor_set_out={out.name}", *files], check=True)
         fds = descriptor_pb2.FileDescriptorSet()
         fds.ParseFromString(open(out.name, "rb").read())
     api = {"messages": {}, "enums": {}}
+
+    def bound(f):
+        if not f.options.HasExtension(nanopb_pb2.nanopb):
+            return {}
+        o = f.options.Extensions[nanopb_pb2.nanopb]
+        b = {}
+        if o.HasField("max_size"):
+            b["max_size"] = o.max_size
+        if o.HasField("max_count"):
+            b["max_count"] = o.max_count
+        return b
 
     def field_type(f):
         if f.type in (FT.TYPE_MESSAGE, FT.TYPE_ENUM):
@@ -54,7 +79,8 @@ def describe(protoc):
         api["messages"][name] = {
             "fields": {
                 str(f.number): {"name": f.name, "type": field_type(f), "label": FT.Label.Name(f.label)[6:].lower(),
-                                **({"oneof": m.oneof_decl[f.oneof_index].name} if f.HasField("oneof_index") else {})}
+                                **({"oneof": m.oneof_decl[f.oneof_index].name} if f.HasField("oneof_index") else {}),
+                                **bound(f)}
                 for f in m.field
             },
             "reserved": [[r.start, r.end - 1] for r in m.reserved_range],  # exclusive end in descriptors
@@ -101,6 +127,9 @@ def check(old, new):
                     problems.append(f"{where}: {key} changed from {f[key]} to {now[key]}")
             if now.get("oneof") != f.get("oneof"):
                 problems.append(f"{where}: moved into or out of a oneof")
+            for key in ("max_size", "max_count"):
+                if key in f and now.get(key, 0) < f[key]:
+                    problems.append(f"{where}: {key} went down from {f[key]} to {now.get(key)}")
     for name, e in old["enums"].items():
         cur = new["enums"].get(name)
         if cur is None:
@@ -133,10 +162,11 @@ def main():
     for p in problems:
         print(f"incompatible: {p}", file=sys.stderr)
     if problems:
-        print("forge.v1 must stay compatible with the released API (proto/forge/v1/API.json): "
-              "add new fields instead, reserve removed numbers", file=sys.stderr)
+        print("proto/forge must stay compatible with the released API (proto/forge/API.json): "
+              "add new fields instead, reserve removed numbers, only make bounds larger", file=sys.stderr)
         return 1
-    print(f"forge.v1 is compatible with the released API ({len(old['messages'])} messages, {len(old['enums'])} enums)")
+    print(f"proto/forge is compatible with the released API ({len(old['messages'])} messages, "
+          f"{len(old['enums'])} enums)")
     return 0
 
 
