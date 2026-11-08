@@ -115,6 +115,7 @@ add_library(forgecpp
     src/alarms.cpp
     src/audit.cpp
     src/auth.cpp
+    src/c2.cpp
     src/config.cpp
     src/config_schema.cpp
     src/console.cpp
@@ -130,6 +131,7 @@ add_library(forgecpp
     src/proto.cpp
     src/rt.cpp
     src/scheduler.cpp
+    src/status.cpp
     src/systemd.cpp
     src/telnet.cpp
     src/trace.cpp

@@ -8,6 +8,21 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
 
 ## Unreleased (0.4.0)
 
+### Added
+
+- **c2** (`forge/c2.hpp`): the command-and-control message of zephyrus, byte for
+  byte: the 8-byte header (version, flags, command number, sequence number,
+  length), the flags, and the NACK status. forgecpp and zephyrus devices can
+  now exchange messages directly. The codec does not allocate and does not
+  throw.
+- **forge::Status** (`forge/status.hpp`): the int32 status of zephyrus (bit 31,
+  module id, error code). Error codes on the wire use the errno numbers of
+  Zephyr; Status converts them to the numbers of the host (ENOSYS is 38 on
+  Linux and 88 on Zephyr). `http_status()` gives the HTTP answer for the web.
+- Wire compatibility tests: `-DFORGE_ZEPHYRUS_DIR=<zephyrus>` builds the C code
+  of zephyrus on the host and compares it with forgecpp on the same input.
+- `docs/CODING_STANDARDS.md`: the rules of forgecpp, from the rules of zephyrus.
+
 ### Changed
 
 - **C++20** is required (was C++17): the library, its exported CMake target
