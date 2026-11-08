@@ -1,7 +1,7 @@
 SUMMARY = "protoc for forgecpp builds (build machine)"
-DESCRIPTION = "The protobuf compiler from forgecpp's bundled protobuf (v21.12). \
-Generated code must match the target's libprotobuf exactly, so forgecpp and \
-the applications built on it use this protoc rather than another protobuf-native."
+DESCRIPTION = "The protobuf compiler from forgecpp's bundled protobuf (v21.12), for \
+generating the messages of forgecpp and its applications (nanopb C code; nothing \
+on the target links libprotobuf)."
 HOMEPAGE = "https://github.com/dogukanarat/forgecpp"
 LICENSE = "BSD-3-Clause"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=37b5762e07f0af8c74ce80a8bda4266b"

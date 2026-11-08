@@ -38,7 +38,7 @@ local_conf_header:
     INIT_MANAGER = "systemd"
   forgecpp: |
     IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub radio-controller spectrum-analyzer qam-modem channel-emulator \
-                             python3-forge-v1 curl"
+                             python3-forge curl"
     # No transceiver in QEMU: the radio's simulator.
     RADIO_BACKEND:pn-radio-controller = "sim"
     # Build this checkout, not the recipes' git URL.

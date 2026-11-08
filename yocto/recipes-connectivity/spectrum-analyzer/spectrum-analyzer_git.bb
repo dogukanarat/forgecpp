@@ -2,7 +2,7 @@ SUMMARY = "AD936x spectrum analyzer"
 DESCRIPTION = "Spectrum analyzer for AD936x transceivers (RX2 of radio-controller, or its own RX path) with a \
 web UI: RBW/VBW, detectors, max/min hold and average traces, markers with peak \
 search and peak track, waterfall, channel power and occupied bandwidth, limit \
-line alarm. sa.v1.Spectrum stream and forge.v1 control. Built on forgecpp."
+line alarm. sa.spectrum stream and the command link. Built on forgecpp."
 HOMEPAGE = "https://github.com/dogukanarat/forgecpp"
 SECTION = "network"
 LICENSE = "MIT"
@@ -15,11 +15,12 @@ PV = "1.0.0+git${SRCPV}"
 
 S = "${WORKDIR}/git/examples/spectrum-analyzer"
 
-# forgecpp provides ZeroMQ, protobuf and libiio (built from its submodules);
-# forgecpp-protoc-native generates the application's messages (radio.v1, sa.v1).
-DEPENDS = "forgecpp forgecpp-protoc-native"
+# forgecpp provides ZeroMQ, nanopb and libiio (built from its submodules);
+# forgecpp-protoc-native and python3-protobuf-native generate the
+# application's messages (radio, sa).
+DEPENDS = "forgecpp forgecpp-protoc-native python3-protobuf-native"
 
-inherit cmake systemd python3-dir
+inherit cmake systemd python3-dir python3native
 
 EXTRA_OECMAKE = " \
     -DBUILD_TESTING=OFF \
@@ -50,8 +51,8 @@ SYSTEMD_AUTO_ENABLE:${PN} ?= "enable"
 RRECOMMENDS:${PN} = "${@'radio-controller' if d.getVar('SA_BACKEND') == 'radio' else ''}"
 CONFFILES:${PN} = "${sysconfdir}/spectrum-analyzer/spectrum-analyzer.toml"
 
-# spectrum_watch.py and the sa.v1 modules; .proto files are development files.
+# spectrum_watch.py and the sa modules; .proto files are development files.
 PACKAGES =+ "${PN}-clients"
 FILES:${PN}-clients = "${datadir}/spectrum-analyzer/clients ${PYTHON_SITEPACKAGES_DIR}/sa"
-RDEPENDS:${PN}-clients = "python3-core python3-pyzmq python3-protobuf python3-forge-v1"
+RDEPENDS:${PN}-clients = "python3-core python3-pyzmq python3-protobuf python3-forge"
 FILES:${PN}-dev += "${datadir}/spectrum-analyzer/proto"

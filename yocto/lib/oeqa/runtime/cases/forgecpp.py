@@ -38,7 +38,7 @@ class ForgecppTest(OERuntimeTestCase):
         self.assertEqual(status, 0, msg=out)
         self.assertIn('2412', out)
 
-    @OEHasPackage(['python3-forge-v1'])
+    @OEHasPackage(['python3-forge'])
     def test_python_package(self):
-        status, out = self.target.run('python3 -c "from forge.v1 import framing, control_pb2; print(control_pb2.Request)"')
+        status, out = self.target.run('python3 -c "from forge import c2, framing, messages_pb2; print(messages_pb2.info)"')
         self.assertEqual(status, 0, msg=out)

@@ -92,6 +92,11 @@ if(NOT DEFINED FORGECPP_PROTO_GEN)
     endforeach()
 endif()
 
+# The protoc installed with forgecpp (native builds), unless one is given.
+if(NOT FORGE_PROTOC AND NOT CMAKE_CROSSCOMPILING
+   AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/protoc")
+    get_filename_component(FORGE_PROTOC "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/protoc" ABSOLUTE)
+endif()
 # protoc that runs on the build machine.
 function(_forge_protoc out)
     if(FORGE_PROTOC)

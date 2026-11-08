@@ -1,24 +1,25 @@
 SUMMARY = "forgecpp - batteries-included C++20 framework for Linux daemons"
 DESCRIPTION = "Quill, CLI11, linenoise, BS::thread_pool, moodycamel::ConcurrentQueue, \
-nlohmann/json, toml++, cpp-httplib, doctest, ZeroMQ and protobuf, bundled and glued \
-together into an application framework: web control panel, forge.v1 messages, \
-forgectl, telnet console, metrics, tracing, audit trail."
+nlohmann/json, toml++, cpp-httplib, doctest, ZeroMQ and nanopb, bundled and glued \
+together into an application framework: web control panel, c2/tmtc commands \
+(wire compatible with zephyrus), forgectl, telnet console, metrics, tracing, audit trail."
 HOMEPAGE = "https://github.com/dogukanarat/forgecpp"
 SECTION = "libs"
 # forgecpp (MIT) + bundled: Quill, nlohmann/json, toml++, cpp-httplib, doctest,
 # BS::thread_pool (MIT), CLI11 (BSD-3-Clause), linenoise (BSD-2-Clause, compiled in),
-# moodycamel::ConcurrentQueue (BSD-2-Clause or BSL-1.0), protobuf (BSD-3-Clause),
-# GridStack.js (MIT, embedded in the web pages).
+# moodycamel::ConcurrentQueue (BSD-2-Clause or BSL-1.0), nanopb (Zlib, compiled in),
+# GridStack.js (MIT, embedded in the web pages). protobuf only runs on the
+# build machine (forgecpp-protoc-native).
 # libzmq: MPL-2.0. libiio: LGPL-2.1-or-later, its command line tools GPL-2.0-or-later
 # (packaged separately in ${PN}-iio-tools).
-LICENSE = "MIT & BSD-3-Clause & BSD-2-Clause & MPL-2.0 & LGPL-2.1-or-later & GPL-2.0-or-later"
-LICENSE:${PN} = "MIT & BSD-3-Clause & BSD-2-Clause & MPL-2.0 & LGPL-2.1-or-later"
+LICENSE = "MIT & BSD-3-Clause & BSD-2-Clause & Zlib & MPL-2.0 & LGPL-2.1-or-later & GPL-2.0-or-later"
+LICENSE:${PN} = "MIT & BSD-3-Clause & BSD-2-Clause & Zlib & MPL-2.0 & LGPL-2.1-or-later"
 LICENSE:${PN}-iio-tools = "GPL-2.0-or-later"
 LIC_FILES_CHKSUM = " \
     file://LICENSE;md5=d651bd6255f4ea85c3b1b170b8dd19c6 \
     file://third_party/CLI11/LICENSE;md5=744e78b25a90f01b35b087d9fb985ed4 \
     file://third_party/libzmq/LICENSE;md5=9741c346eef56131163e13b9db1241b3 \
-    file://third_party/protobuf/LICENSE;md5=37b5762e07f0af8c74ce80a8bda4266b \
+    file://third_party/nanopb/LICENSE.txt;md5=9db4b73a55a3994384112efcdb37c01f \
     file://src/web/vendor/gridstack/LICENSE;md5=edb97b6dc3fdc07939ff20bd634870d5 \
     file://third_party/libiio/COPYING.txt;md5=7c13b3376cea0ce68d2d2da0a1b3a72c \
     file://third_party/libiio/COPYING_GPL.txt;md5=b234ee4d69f5fce4486a80fdaf4a4263 \
@@ -31,11 +32,12 @@ PV = "0.4.0+git${SRCPV}"
 
 S = "${WORKDIR}/git"
 
-# protoc runs on the build machine: forgecpp-protoc-native is built from the
-# same protobuf sources (generated code must match libprotobuf exactly).
-DEPENDS = "openssl zlib libxml2 forgecpp-protoc-native"
+# The messages are generated on the build machine: protoc (forgecpp-protoc-native)
+# and nanopb's generator (Python with protobuf). The target gets C code only.
+DEPENDS = "openssl zlib libxml2 forgecpp-protoc-native python3-protobuf-native"
 
-# python3native: cpp-httplib is split into a header and a source file at build time
+# python3native: the message generator; cpp-httplib is split into a header and a
+# source file at build time
 inherit cmake pkgconfig systemd python3-dir python3native
 
 # forge-hub, the dashboard of the device's applications (port 80): built with the
@@ -78,14 +80,13 @@ do_install() {
     cp -R --no-dereference --preserve=mode,links ${B}/stage/. ${D}/
 }
 
-# Headers, CMake packages, pkg-config files, .proto files and the static test
-# helper are development files; libforgecpp, libprotobuf and libzmq are
-# runtime.
-#   forgecpp-forgectl  forge.v1 command line client (forgectl) for the target
-#   python3-forge-v1   forge-v1 Python package: forge.v1 messages and framing (site-packages)
+# Headers, CMake packages, pkg-config files, .proto files, the message
+# generator and the static test helper are development files; libforgecpp and
+# libzmq are runtime.
+#   forgecpp-forgectl  command line client (forgectl) for the target
+#   python3-forge      Python package "forge": messages, stream framing, c2 client (site-packages)
 #   forgecpp-tools     forgecpp-new (scaffolder)
-#   forgecpp-protoc    protoc and libprotoc for the target (rarely needed)
-PACKAGES =+ "${PN}-hub ${PN}-forgectl python3-forge-v1 ${PN}-tools ${PN}-iio-tools ${PN}-protoc"
+PACKAGES =+ "${PN}-hub ${PN}-forgectl python3-forge ${PN}-tools ${PN}-iio-tools"
 #   forgecpp-hub       forge-hub: dashboard of the device's applications (state, health, systemd restarts)
 FILES:${PN}-hub = "${bindir}/forge-hub ${sysconfdir}/forge-hub ${systemd_system_unitdir}/forge-hub.service"
 CONFFILES:${PN}-hub = "${sysconfdir}/forge-hub/forge-hub.toml"
@@ -93,17 +94,17 @@ RDEPENDS:${PN}-hub = "${PN}"
 SYSTEMD_PACKAGES = "${@bb.utils.contains('PACKAGECONFIG', 'hub', '${PN}-hub', '', d)}"
 SYSTEMD_SERVICE:${PN}-hub = "forge-hub.service"
 FILES:${PN}-forgectl = "${bindir}/forgectl"
-FILES:python3-forge-v1 = "${PYTHON_SITEPACKAGES_DIR}/forge"
-RDEPENDS:python3-forge-v1 = "python3-core python3-protobuf python3-pyzmq"
-RPROVIDES:python3-forge-v1 = "${PN}-python"
-RREPLACES:python3-forge-v1 = "${PN}-python"
-RCONFLICTS:python3-forge-v1 = "${PN}-python"
+FILES:python3-forge = "${PYTHON_SITEPACKAGES_DIR}/forge ${PYTHON_SITEPACKAGES_DIR}/nanopb_pb2.py"
+RDEPENDS:python3-forge = "python3-core python3-protobuf python3-pyzmq"
+RPROVIDES:python3-forge = "python3-forge-v1"
+RREPLACES:python3-forge = "python3-forge-v1"
+RCONFLICTS:python3-forge = "python3-forge-v1"
 FILES:${PN}-tools = "${bindir}/forgecpp-new"
 FILES:${PN}-iio-tools = "${bindir}/iio_*"
-FILES:${PN}-protoc = "${bindir}/protoc* ${libdir}/libprotoc${SOLIBS}"
 RDEPENDS:${PN}-tools = "bash"
 FILES:${PN}-dev += "${datadir}/cmake ${libdir}/cmake ${datadir}/pkgconfig ${datadir}/licenses \
-                    ${datadir}/forgecpp/proto ${datadir}/forgecpp/install_manifest.txt"
+                    ${datadir}/forgecpp/proto ${datadir}/forgecpp/nanopb ${datadir}/forgecpp/forge-proto.py \
+                    ${includedir}/forgecpp ${datadir}/forgecpp/install_manifest.txt"
 FILES:${PN}-staticdev += "${libdir}/libforgecpp_testing.a"
 
 do_install:append() {

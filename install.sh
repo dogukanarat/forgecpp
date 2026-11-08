@@ -51,7 +51,7 @@ USE_SUDO="auto"
 QUIET="OFF"
 
 # name | source dir | extra cmake args
-DEPS=(quill CLI11 concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq protobuf libiio)
+DEPS=(quill CLI11 concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq libiio)
 
 usage() {
     cat <<EOF
@@ -74,9 +74,10 @@ Build
   --without-ssl         Build cpp-httplib without OpenSSL (no HTTPS)
   --with-ssl            Require OpenSSL (fail if missing)
   --without-zlib        Build cpp-httplib without zlib compression
-  --system-protobuf     Use the system's protobuf (libprotobuf-dev + protoc) instead of the bundled one
-  --protoc PATH         protoc for the build machine (cross builds; default: built from the bundled
-                        protobuf with HOST_CC / HOST_CXX, or cc / c++)
+  --system-protobuf     Use the protoc on the PATH instead of building the bundled one
+  --protoc PATH         protoc for the build machine (default: built from the bundled protobuf
+                        with HOST_CC / HOST_CXX, or cc / c++). Only the build machine needs
+                        protobuf (protoc and Python's protobuf module); nothing links it
   --profile embedded    Size/speed settings for small targets: MinSizeRel, LTO, static, no tests
   --sanitize LIST       Build everything with sanitizers: address,undefined or thread (debugging;
                         use a separate --prefix, the libraries are instrumented too)
@@ -397,12 +398,6 @@ dep_args() {
             else echo "-DBUILD_SHARED=OFF -DBUILD_STATIC=ON"; fi ;;
         cppzmq)
             echo "-DCPPZMQ_BUILD_TESTS=OFF" ;;
-        protobuf)
-            # Cross builds use a protoc built for the build machine (see build_host_protoc).
-            echo "-Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_EXAMPLES=OFF -Dprotobuf_WITH_ZLIB=OFF"
-            echo "-Dprotobuf_BUILD_SHARED_LIBS=${SHARED} -Dprotobuf_INSTALL=ON -Dprotobuf_BUILD_LIBPROTOC=ON"
-            if [[ -n "${TOOLCHAIN}" ]]; then echo "-Dprotobuf_BUILD_PROTOC_BINARIES=OFF"
-            else echo "-Dprotobuf_BUILD_PROTOC_BINARIES=ON"; fi ;;
         libiio)
             # Local (in-kernel IIO) + network (iiod, e.g. ip:192.168.2.1) + XML backends.
             echo "-DBUILD_SHARED_LIBS=${SHARED} -DWITH_IIOD=OFF -DWITH_TESTS=ON -DWITH_EXAMPLES=OFF"
@@ -468,9 +463,9 @@ echo "    libraries   : $([[ ${SHARED} == ON ]] && echo shared || echo static)"
 [[ -n "${SUDO}" ]] && echo "    install via : sudo"
 echo
 
-# protoc must run on the build machine. Native builds use the protoc they build;
-# cross builds get one built from the same protobuf sources for the host (the
-# generated code has to match the target's libprotobuf version exactly).
+# The messages are generated on the build machine (protoc, nanopb's generator in
+# Python); the target only gets the generated C code. protoc is built once from
+# the bundled sources with the host compiler, for native and cross builds alike.
 build_host_protoc() {
     local bdir="${BUILD_DIR}/host-protobuf"
     local prefix="${BUILD_DIR}/host-tools"
@@ -490,23 +485,22 @@ build_host_protoc() {
     HOST_PROTOC="${prefix}/bin/protoc"
 }
 
-if [[ -n "${TOOLCHAIN}" && -z "${HOST_PROTOC}" ]]; then
+python3 -c "import google.protobuf" 2>/dev/null ||
+    die "the message generator needs Python's protobuf module: apt install python3-protobuf (or pip install protobuf)"
+if [[ -z "${HOST_PROTOC}" ]]; then
     if [[ "${SYSTEM_PROTOBUF}" == "ON" ]]; then
         HOST_PROTOC="$(command -v protoc || true)"
-        [[ -n "${HOST_PROTOC}" ]] || die "--system-protobuf with --toolchain needs --protoc (the host protoc)"
+        [[ -n "${HOST_PROTOC}" ]] || die "--system-protobuf: no protoc on the PATH (apt install protobuf-compiler)"
     elif [[ "${SKIP_DEPS}" != "ON" || ! -x "${BUILD_DIR}/host-tools/bin/protoc" ]]; then
         build_host_protoc
     else
         HOST_PROTOC="${BUILD_DIR}/host-tools/bin/protoc"
     fi
 fi
-if [[ -n "${HOST_PROTOC}" ]]; then
-    COMMON_ARGS+=("-DFORGE_PROTOC=${HOST_PROTOC}")
-fi
+COMMON_ARGS+=("-DFORGE_PROTOC=${HOST_PROTOC}")
 
 if [[ "${SKIP_DEPS}" != "ON" ]]; then
     for dep in "${DEPS[@]}"; do
-        if [[ "${SYSTEM_PROTOBUF}" == "ON" && "${dep}" == "protobuf" ]]; then continue; fi
         if [[ "${WITH_IIO}" == "OFF" && "${dep}" == "libiio" ]]; then continue; fi
         # shellcheck disable=SC2046
         build_project "${dep}" "${TP_DIR}/${dep}" $(dep_args "${dep}")

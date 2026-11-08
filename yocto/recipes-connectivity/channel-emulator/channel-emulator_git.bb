@@ -15,10 +15,11 @@ PV = "1.0.0+git${SRCPV}"
 
 S = "${WORKDIR}/git/examples/channel-emulator"
 
-# forgecpp provides ZeroMQ and protobuf; forgecpp-protoc-native generates radio.v1.
-DEPENDS = "forgecpp forgecpp-protoc-native"
+# forgecpp provides ZeroMQ and nanopb; forgecpp-protoc-native and
+# python3-protobuf-native generate the radio messages.
+DEPENDS = "forgecpp forgecpp-protoc-native python3-protobuf-native"
 
-inherit cmake systemd
+inherit cmake systemd python3native
 
 EXTRA_OECMAKE = " \
     -DBUILD_TESTING=OFF \

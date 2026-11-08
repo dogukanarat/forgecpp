@@ -287,6 +287,11 @@ install(FILES "${FORGECPP_NANOPB_DIR}/pb.h" "${FORGECPP_NANOPB_DIR}/pb_common.h"
 install(DIRECTORY "${FORGECPP_NANOPB_DIR}/generator" DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp/nanopb
         PATTERN "__pycache__" EXCLUDE PATTERN "*_pb2.py" EXCLUDE)
 install(PROGRAMS tools/forge-proto.py DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp)
+# Native builds also install the protoc they used, so applications built
+# against this install need no protobuf of their own.
+if(FORGE_PROTOC AND NOT CMAKE_CROSSCOMPILING)
+    install(PROGRAMS "${FORGE_PROTOC}" DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp RENAME protoc)
+endif()
 
 install(EXPORT forgecppTargets
     NAMESPACE forgecpp::
