@@ -20,7 +20,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/ad936x ${CMAKE_CURRENT_BI
 # The DSP alone (no forgecpp): framing, modulator, demodulator.
 add_library(qam_dsp STATIC src/qam.cpp)
 target_include_directories(qam_dsp PUBLIC src)
-target_compile_features(qam_dsp PUBLIC cxx_std_17)
+target_compile_features(qam_dsp PUBLIC cxx_std_20)
 
 add_library(qam_core STATIC src/modem.cpp)
 target_include_directories(qam_core PUBLIC src)
@@ -32,7 +32,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     # IEEE exact), complex products without the NaN/inf recovery: about 2x less
     # CPU. The DSP has no NaN/inf/signed-zero logic.
     target_compile_options(qam_dsp PRIVATE
-        $<$<NOT:$<CONFIG:Debug>>:-O3 -funsafe-math-optimizations -fno-math-errno -fcx-limited-range>
+        $<$<NOT:$<CONFIG:Debug>>:-O3 -funsafe-math-optimizations -fno-math-errno>
+        # GCC: complex products without the NaN/inf recovery (clang 18 warns about the flag)
+        $<$<AND:$<NOT:$<CONFIG:Debug>>,$<CXX_COMPILER_ID:GNU>>:-fcx-limited-range>
         # real time even in debug builds (CI runs the end-to-end tests in Debug)
         $<$<CONFIG:Debug>:-O2>)
     target_compile_options(qam_core PRIVATE -Wall -Wextra -Wpedantic)

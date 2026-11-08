@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(forgecpp
     VERSION 0.3.0
-    DESCRIPTION "Batteries-included C++17 framework for Linux daemons and services"
+    DESCRIPTION "Batteries-included C++20 framework for Linux daemons and services"
     HOMEPAGE_URL "https://github.com/dogukanarat/forgecpp"
     LANGUAGES CXX)
 
@@ -31,7 +31,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 if(NOT DEFINED CMAKE_CXX_STANDARD)
-    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD 20)
 endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -146,7 +146,7 @@ forge_add_proto(forgecpp ROOT proto PROTOS
 # Built-in dashboard (src/web/*) compiled into the library, served at /forge/.
 forge_add_web(forgecpp DIR src/web PREFIX /forge/ SYMBOL forgecpp_builtin_assets)
 
-target_compile_features(forgecpp PUBLIC cxx_std_17)
+target_compile_features(forgecpp PUBLIC cxx_std_20)
 target_include_directories(forgecpp
     PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>

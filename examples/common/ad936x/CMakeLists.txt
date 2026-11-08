@@ -28,7 +28,7 @@ message(STATUS "ad936x: libiio backend ${AD936X_HAS_IIO}")
 
 add_library(ad936x STATIC backend.cpp sim_backend.cpp dsp.cpp)
 target_include_directories(ad936x PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(ad936x PUBLIC cxx_std_17)
+target_compile_features(ad936x PUBLIC cxx_std_20)
 set_target_properties(ad936x PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # nlohmann/json comes with forgecpp
 if(TARGET forgecpp::forgecpp)

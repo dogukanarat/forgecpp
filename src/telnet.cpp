@@ -23,7 +23,7 @@ namespace forge {
 namespace {
 
 constexpr unsigned char IAC = 255, DONT = 254, DO = 253, WONT = 252, WILL = 251, SB = 250, SE = 240, IP = 244,
-                        ECHO_OPT = 1, SGA = 3;
+                        ECHO_OPT = 1;
 
 std::string crlf(std::string_view text) {
     std::string out;

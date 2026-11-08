@@ -1,6 +1,6 @@
 # forgecpp API reference
 
-forgecpp is a C++17 framework for Linux daemons: an application class with a
+forgecpp is a C++20 framework for Linux daemons: an application class with a
 main loop, timers and a worker pool; declared configuration; controls that
 appear on a web panel, forgectl, forge.v1 (ZeroMQ, HTTP), the console and
 telnet; alarms, health, metrics, traces, logs, audit; streams of protobuf

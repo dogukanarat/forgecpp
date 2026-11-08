@@ -126,9 +126,10 @@ public:
         const auto t = std::chrono::system_clock::to_time_t(msg.time);
         std::tm tm{};
         ::gmtime_r(&t, &tm);
-        char stamp[40];
-        std::snprintf(stamp, sizeof(stamp), "%04d-%02d-%02dT%02d:%02d:%02d.%06dZ", tm.tm_year + 1900, tm.tm_mon + 1,
-                      tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, static_cast<int>((ns / 1000) % 1000000));
+        const auto micros = static_cast<unsigned>(((ns / 1000) % 1000000 + 1000000) % 1000000);  // 0..999999
+        char stamp[64];
+        std::snprintf(stamp, sizeof(stamp), "%04d-%02d-%02dT%02d:%02d:%02d.%06uZ", tm.tm_year + 1900, tm.tm_mon + 1,
+                      tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, micros);
         nlohmann::json j{{"time", stamp},
                          {"level", std::string(lv.data(), lv.size())},
                          {"logger", std::string(msg.logger_name.data(), msg.logger_name.size())},

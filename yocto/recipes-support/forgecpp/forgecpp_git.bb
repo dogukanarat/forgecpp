@@ -1,4 +1,4 @@
-SUMMARY = "forgecpp - batteries-included C++17 framework for Linux daemons"
+SUMMARY = "forgecpp - batteries-included C++20 framework for Linux daemons"
 DESCRIPTION = "spdlog, CLI11, replxx, BS::thread_pool, moodycamel::ConcurrentQueue, \
 nlohmann/json, toml++, cpp-httplib, doctest, ZeroMQ and protobuf, bundled and glued \
 together into an application framework: web control panel, forge.v1 messages, \

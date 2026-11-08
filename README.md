@@ -1,6 +1,6 @@
 # forgecpp
 
-A **batteries-included** C++17 framework for Linux daemons and services.
+A **batteries-included** C++20 framework for Linux daemons and services.
 
 Best-in-class libraries are bundled as git submodules, installed with a single
 `install.sh`, and wired together into an application skeleton under the
@@ -85,7 +85,7 @@ kill -HUP $(pidof pump)            # reload the configuration
 
 ## Installation
 
-Requirements: CMake ≥ 3.16, a C++17 compiler (GCC ≥ 9 / Clang ≥ 10), git,
+Requirements: CMake ≥ 3.16, a C++20 compiler (GCC ≥ 13 / Clang ≥ 17 with libstdc++ 13), git,
 libxml2 (for libiio; skip with `--without-iio`). Python 3 with `pyzmq` and
 `protobuf` for the Python clients (optional).
 Optional: `ninja`, OpenSSL (for HTTPS), zlib (for compression), libusb-1.0 (`--iio-usb`).

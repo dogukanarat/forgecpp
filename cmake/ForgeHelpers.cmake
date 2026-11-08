@@ -199,7 +199,7 @@ function(forge_add_app name)
 
     add_executable(${name} ${ARG_SOURCES})
     target_link_libraries(${name} PRIVATE ${_FORGE_LIB} ${ARG_LIBS})
-    target_compile_features(${name} PRIVATE cxx_std_17)
+    target_compile_features(${name} PRIVATE cxx_std_20)
     set_target_properties(${name} PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
     _forge_pch(${name} ${ARG_PCH})
     target_compile_definitions(${name} PRIVATE
@@ -260,7 +260,7 @@ function(forge_add_test name)
 
     add_executable(${name} ${ARG_SOURCES})
     target_link_libraries(${name} PRIVATE ${_testing} ${ARG_LIBS})
-    target_compile_features(${name} PRIVATE cxx_std_17)
+    target_compile_features(${name} PRIVATE cxx_std_20)
     _forge_pch(${name})
     add_test(NAME ${name} COMMAND ${name})
 endfunction()

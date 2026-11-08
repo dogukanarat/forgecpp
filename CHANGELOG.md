@@ -6,6 +6,16 @@ and `find_package(forgecpp 0.3)` only accepts 0.3.x. The forge.v1 protocol
 (`proto/forge/v1`) only changes compatibly; CI compares it with the API of
 the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
 
+## Unreleased (0.4.0)
+
+### Changed
+
+- **C++20** is required (was C++17): the library, its exported CMake target
+  (`cxx_std_20`), `forge_add_app()`, pkg-config (`-std=c++20`) and the
+  examples. Supported toolchains: GCC ≥ 13 or Clang ≥ 17 with libstdc++ 13
+  (Yocto scarthgap, Ubuntu 24.04, the armhf cross compiler). Applications
+  built against forgecpp must compile as C++20.
+
 ## 0.3.0
 
 ### Added

@@ -1,7 +1,7 @@
 # API reference of forgecpp: cmake --build build --target forgecpp_docs
 PROJECT_NAME           = forgecpp
 PROJECT_NUMBER         = @PROJECT_VERSION@
-PROJECT_BRIEF          = "Batteries-included C++17 framework for Linux daemons"
+PROJECT_BRIEF          = "Batteries-included C++20 framework for Linux daemons"
 OUTPUT_DIRECTORY       = @FORGE_DOCS_OUT@
 INPUT                  = @PROJECT_SOURCE_DIR@/docs/api-mainpage.md \
                          @PROJECT_SOURCE_DIR@/include/forge \
