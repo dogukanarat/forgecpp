@@ -1,5 +1,6 @@
 #include "forge/metrics.hpp"
 
+#include "forge/log.hpp"
 
 #include <format>
 
@@ -158,8 +159,11 @@ Snapshot Registry::snapshot(const std::string& prefix) const {
         if (e.fn) {
             try {
                 m.value = e.fn();
-            } catch (const std::exception&) {
-                m.value = std::nan("");  // shown as NaN; the gauge's own code reports why
+                e.fn_failed = false;
+            } catch (const std::exception& ex) {
+                m.value = std::nan("");  // shown as NaN
+                if (!e.fn_failed) log::warn("metrics: gauge {} failed: {}", name, ex.what());
+                e.fn_failed = true;
             }
         }
         if (e.histogram) {

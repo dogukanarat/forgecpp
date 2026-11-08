@@ -477,10 +477,8 @@ json Dashboard::call(const std::string& id, const json& args) {
         if (v.is_null()) throw bad(p.name, "required");
         if (p.type == "number" || p.type == "integer") {
             if (v.is_string()) {  // console / query strings
-                try {
-                    v = json::parse(v.get<std::string>());
-                } catch (...) {
-                }
+                auto parsed = json::parse(v.get<std::string>(), nullptr, false);
+                if (!parsed.is_discarded()) v = std::move(parsed);
             }
             if (!v.is_number()) throw bad(p.name, "expected a number");
             const double d = v.get<double>();

@@ -741,7 +741,10 @@ TEST_CASE("threading: background(), call() on the loop, the dashboard's owner, s
     // A slow task is counted (and logged).
     const auto before = forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics.at(0).value;
     r->invoke([] { std::this_thread::sleep_for(std::chrono::milliseconds(60)); });
-    CHECK(forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics.at(0).value == before + 1);
+    // Counted once the task has returned, which is just after invoke() has its result.
+    CHECK(forge::testing::wait_until([&] {
+        return forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics.at(0).value == before + 1;
+    }));
 }
 
 TEST_CASE("instances: --instance names the application <name>@<instance>") {

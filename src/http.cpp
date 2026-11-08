@@ -115,6 +115,7 @@ Server::Server() {
         } catch (const std::exception& e) {
             what = e.what();
         } catch (...) {
+            // not a std::exception: `what` stays "unknown error"
         }
         log::error("http: {} {} failed: {}", req.method, req.path, what);
         reply_error(res, 500, what);

@@ -132,6 +132,7 @@ private:
         std::unique_ptr<Gauge> gauge;
         std::unique_ptr<Histogram> histogram;
         std::function<double()> fn;
+        mutable bool fn_failed = false;  // its first failure is logged
     };
     Entry& entry(const std::string& name, Type type, const std::string& help, const std::string& unit);
 

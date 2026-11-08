@@ -863,7 +863,8 @@ void Hub::load_registry() {
         Entry e;
         try {
             e.app = forge::pb::from_json<forge_hub_app_registration>(j.at("app"));
-        } catch (const std::exception&) {
+        } catch (const std::exception& ex) {
+            logger()->warn("{}: an entry is skipped: {}", state_file_, ex.what());
             continue;
         }
         const std::string name(text(e.app.name));

@@ -5,6 +5,7 @@
 #include <forge/hub.hpp>
 
 #include <cctype>
+#include <charconv>
 #include <sstream>
 #include <utility>
 
@@ -45,12 +46,11 @@ std::uint64_t timespan_us(const std::string& s) {
 
 namespace {
 
+// systemctl's numbers; 0 for "", "infinity" and anything else that is not one.
 std::uint64_t to_u64(const std::string& s) {
-    try {
-        return s.empty() || s == "infinity" ? 0 : std::stoull(s);
-    } catch (...) {
-        return 0;
-    }
+    std::uint64_t v = 0;
+    const auto [end, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
+    return ec == std::errc() && end == s.data() + s.size() ? v : 0;
 }
 
 class Systemctl final : public Systemd {

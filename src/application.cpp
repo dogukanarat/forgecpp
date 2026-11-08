@@ -587,6 +587,7 @@ void Application::drain_while(const std::function<void()>& blocking) {
         } catch (const std::exception& e) {
             if (logger_) logger_->error("task failed during shutdown: {}", e.what());
         } catch (...) {
+            if (logger_) logger_->error("task failed during shutdown: unknown exception");
         }
     }
     helper.join();
