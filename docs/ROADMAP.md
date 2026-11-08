@@ -39,6 +39,82 @@ pre-production security work: forgecpp is used in the lab for now.
 Ordered by risk to the running system. Each step lands on its own with tests,
 without changing behaviour that is not named.
 
+## Framework plan (0.4.0)
+
+Agreed direction for the framework itself (the examples follow it):
+
+1. **C++20** for the library, its exported targets and the examples. Every
+   supported toolchain has it: Yocto scarthgap GCC 13.5, Ubuntu 24.04 GCC 13/14
+   and clang 18, the armhf cross GCC 13.
+2. **linenoise** (antirez) instead of replxx (unmaintained since 2021): completion,
+   hints, history, UTF-8, log output while the user types (hide/show,
+   non-blocking API). Input syntax colouring is dropped.
+3. **Quill** instead of spdlog, behind a forgecpp log facade (applications
+   no longer see the backend): asynchronous, bounded dropping queues on
+   real-time threads, crash flush. Coloured logs on the terminal, the
+   interactive console and telnet (ANSI), plain with level prefixes under
+   journald, level colours (CSS) on the web panel and forge-hub. fmt is
+   replaced by `std::format`.
+4. **Messages stay .proto** (language independent), the C++ runtime becomes
+   **nanopb** with C++ types (`callback_datatype`: `std::string`,
+   `std::vector`, `std::map`, `google.protobuf.Value` as `nlohmann::json`),
+   type names and JSON mapping generated from descriptor sets. First a spike
+   (byte-identical with the current encoding on every forge.v1 message, Python
+   clients unchanged, size and build time measured), then the migration.
+   **Buf** for lint and breaking-change checks (replaces `tools/proto-compat.py`).
+   Fallback: protobuf-lite.
+5. Afterwards: anti-pattern fixes found while writing the examples (`forge::Worker`
+   on `std::jthread`, `Sender::send_wait()`, counters bound to metrics and the
+   panel, typed configuration, `background()` with an error path, I/O helpers),
+   Dependabot for submodules and actions, clang-tidy, fuzzing, systemd
+   hardening. Later: Asio-based I/O, WebSocket server, connector modules
+   (MQTT, Modbus, CAN, GPIO, OPC UA), Python bindings.
+
+## Hardware bring-up plan (ZC702 / Z7020 + FMCOMMS5) — when the board arrives
+
+Chosen: **AMD EDF 2026.1 (Yocto scarthgap) + a thin `yocto/meta-forgecpp-bsp`
+layer**, not the whole meta-adi.
+
+Why 2026.1 and not 2026.2 (wrynose): ADI HDL `main` needs Vivado 2026.1, which
+is what EDF 2026.1's SDT tools (`gen-machine-conf` `xlnx_rel_v2026.1`) match;
+ADI's 6.12 kernel is built with scarthgap's GCC 13.5 as ADI tests it; meta-adi
+`main` is scarthgap only (no wrynose yet). EDF 2026.1 has the Zynq-7000
+Cortex-A9 machine and `zynq-zc702-sdt-full`. scarthgap is supported until
+April 2028.
+
+Why not all of meta-adi: it is written for PetaLinux/XSCT (depends on
+meta-xilinx-tools, which EDF does not use; its device-tree merging does not
+fit the SDT flow). What we need from it is small and MIT licensed: the ADI
+kernel source switch and `libad9361-iio` (multi-chip sync of the FMCOMMS5's
+two AD9361). libiio 0.26 comes from meta-oe.
+
+The layer:
+
+1. Kernel: ADI linux 6.12 at a fixed commit (not AUTOREV), AMD's 6.12
+   `linux-xlnx` recipe selected (EDF 2026.1 defaults to 6.18),
+   `zynq_xcomm_adv7511_defconfig` plus our fragment.
+2. Device tree for Linux from the ADI kernel:
+   `zynq-zc702-adv7511-ad9361-fmcomms5.dts` (matches the HDL design); the SDT
+   is only used for FSBL / boot.bin.
+3. Machine `zc702-fmcomms5`: ADI HDL `projects/fmcomms5/zc702` built with
+   Vivado 2026.1 → XSA → SDT → `gen-machineconf`; boot.bin from EDF's
+   `xilinx-bootbin`.
+4. `libad9361-iio`; image: `edf-linux-disk-image` + forgecpp, forge-hub and the
+   radio applications.
+5. `yocto/kas/zc702-fmcomms5.yml` with every layer pinned to a commit; nightly CI.
+
+Work: about 2–3 days for the layer, half a day to a day for the HDL/XSA
+(Vivado, on the user's side), half a day for machine + boot.bin, 2–3 days on
+the board. Fallbacks: for the first boot, ADI Kuiper's prebuilt `BOOT.BIN`
+with our kernel and rootfs; EDF features that expect the 6.18 kernel (FPGA
+overlays) need checking. Moving to wrynose later means porting only this
+layer and regenerating the machine (about 2–4 days), once ADI supports it or
+it is needed.
+
+First checks on the board: clean-loop EVM (expect −30 to −35 dB), DC / LO
+leakage at the centre of the constellation (fix: a digital TX offset), CPU
+(skipped RX buffers; `equalizer = false`), RTT and late TX blocks.
+
 ## Pre-production security work (later)
 
 Secure defaults (no `[auth]`: control, telnet and the forge.v1 endpoints only on
