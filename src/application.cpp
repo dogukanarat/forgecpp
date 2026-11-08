@@ -6,7 +6,6 @@
 #include "forge/control.hpp"
 #include "forge/crash.hpp"
 #include "forge/http.hpp"
-#include "forge/proto.hpp"
 #include "forge/rt.hpp"
 #include "forge/systemd.hpp"
 #include "forge/hub.hpp"
@@ -361,7 +360,7 @@ int Application::run(int argc, char** argv) {
         std::cout << info_.name << ": configuration is valid\n";
         return 0;
     }
-    proto::set_source(info_.name);
+    zmq::set_source(info_.name);
     metrics::registry().set_labels({{"app", info_.name}});
 
     try {
@@ -397,7 +396,7 @@ int Application::run(int argc, char** argv) {
         slow_task_ms_ = cfg.value<int>("forge.slow_task_ms");
         start_observability(cfg);
         control_ = std::make_unique<ControlService>(*this);
-        control_->set_legacy_json(cfg.value<bool>("forge.legacy_json"));
+        detail::register_builtin_commands(*this);
 
         // The control registry exists even without HTTP: the console and
         // other channels (ZeroMQ, forgectl, telnet) use it too.
@@ -625,7 +624,6 @@ void Application::do_reload() {
     }
     request_timeout_ms_ = fresh.value<int>("forge.request_timeout_ms");
     slow_task_ms_ = fresh.value<int>("forge.slow_task_ms");
-    if (control_) control_->set_legacy_json(fresh.value<bool>("forge.legacy_json"));
     if (auto level = fresh.get<std::string>("log.level")) {
         try {
             log::set_level(*level);
@@ -648,7 +646,8 @@ void Application::shutdown() {
     if (logger_) logger_->info("{} stopping", info_.name);
     // Tell the hub first, so it does not mistake the end for a crash.
     const bool asked = stop_signal_.load() != 0;
-    hub_->stop(asked ? v1::Unregister::REASON_SIGNAL : v1::Unregister::REASON_EXIT, exit_code_.load());
+    hub_->stop(asked ? forge_hub_unregister_reason_REASON_SIGNAL : forge_hub_unregister_reason_REASON_EXIT,
+               exit_code_.load());
 
     console_->stop();
 
@@ -697,15 +696,15 @@ void Application::attach(std::unique_ptr<Component> component) {
     components_.push_back(std::move(component));
 }
 
-zmq::Stream& Application::stream(const std::string& name, const std::string& type) {
-    return stream(name, type, zmq::StreamOptions{});
+zmq::Stream& Application::stream(const std::string& name, const pb::Type& type) {
+    return messaging_->stream(name, type, zmq::StreamOptions{});
 }
 
-zmq::Stream& Application::stream(const std::string& name, const std::string& type, const zmq::StreamOptions& o) {
+zmq::Stream& Application::stream(const std::string& name, const pb::Type& type, const zmq::StreamOptions& o) {
     return messaging_->stream(name, type, o);
 }
 
-v1::StreamList Application::stream_list() const { return messaging_->stream_list(); }
+std::vector<zmq::StreamInfo> Application::stream_list() const { return messaging_->stream_list(); }
 
 std::map<std::string, std::string> Application::endpoints() const {
     std::map<std::string, std::string> e;
@@ -736,7 +735,7 @@ void Application::control_changed(const std::string&, bool persistent) {
         return;
     }
     http_->push_state();
-    // "state" event: the changed values (forge.v1.Values).
+    // "state" events: the values that changed.
     if (dashboard_ && messaging_->wants_state()) messaging_->publish_state(dashboard_->state());
 }
 
@@ -786,8 +785,8 @@ void Application::declare_framework_config(config::Schema& s) {
     s.integer("console.telnet_max_sessions", 4, "Telnet sessions at once").range(1, 64);
     s.integer("console.telnet_idle_s", 0, "Close idle telnet sessions after (0 = never)").range(0, 86400).unit("s");
 
-    s.section("forge", "forge.v1 on ZeroMQ: control, events and streams");
-    s.string("forge.control", "", "forge.v1 requests (forgectl, panels), e.g. \"tcp://*:5557\"");
+    s.section("forge", "ZeroMQ: commands, events and streams");
+    s.string("forge.control", "", "Commands (c2 frames: forgectl, other programs), e.g. \"tcp://*:5557\"");
     s.string("forge.events", "", "PUB: state, alarms, log, audit, health, metrics, e.g. \"tcp://*:5559\"");
     s.string("forge.data", "", "PUB: the application's streams (empty: an ephemeral port when used)");
     s.integer("forge.metrics_interval_s", 5, "Metrics event interval").range(1, 3600).unit("s");
@@ -795,11 +794,9 @@ void Application::declare_framework_config(config::Schema& s) {
               "Warn when one main loop task (timer, control, command) runs longer than this (0 = never)")
         .range(0, 60000)
         .unit("ms");
-    s.boolean("forge.legacy_json", true,
-              "Accept the older JSON commands ({\"cmd\": ...}) on [forge].control (deprecated; off by default in 0.4)");
-    s.integer("forge.control_workers", 2, "Requests on [forge].control handled at the same time").range(1, 16);
+    s.integer("forge.control_workers", 2, "Commands on [forge].control handled at the same time").range(1, 16);
     s.integer("forge.request_timeout_ms", 2000,
-              "How long a request (forge.v1, HTTP) waits for a busy main loop before answering 503")
+              "How long a request (a command, HTTP) waits for a busy main loop before it is refused")
         .range(10, 600000)
         .unit("ms");
 

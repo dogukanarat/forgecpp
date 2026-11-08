@@ -1,7 +1,7 @@
 #pragma once
 // Users and roles, shared by every way into an application: web (HTTP basic
-// or bearer token), forge.v1 requests (Request.token), telnet (login) and
-// the local console (always admin).
+// or bearer token), telnet (login) and the local console (always admin).
+// Commands over a link (c2 has no credentials) get default_role.
 //
 //   [auth]
 //   enabled = true

@@ -1,6 +1,5 @@
 #include "forge/trace.hpp"
 
-#include "forge/v1/common.pb.h"
 
 #include <format>
 
@@ -152,21 +151,6 @@ Context child_of(const Context& parent) {
     if (!parent.valid()) return new_trace();
     Context c = parent;
     fill_random(c.span_id.data(), c.span_id.size());
-    return c;
-}
-
-v1::TraceContext to_proto(const Context& ctx) {
-    v1::TraceContext t;
-    if (!ctx.valid()) return t;
-    t.set_trace_id(std::string(reinterpret_cast<const char*>(ctx.trace_id.data()), ctx.trace_id.size()));
-    t.set_span_id(std::string(reinterpret_cast<const char*>(ctx.span_id.data()), ctx.span_id.size()));
-    return t;
-}
-
-Context from_proto(const v1::TraceContext& t) {
-    Context c;
-    if (t.trace_id().size() == c.trace_id.size()) std::memcpy(c.trace_id.data(), t.trace_id().data(), c.trace_id.size());
-    if (t.span_id().size() == c.span_id.size()) std::memcpy(c.span_id.data(), t.span_id().data(), c.span_id.size());
     return c;
 }
 

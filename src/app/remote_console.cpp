@@ -4,7 +4,6 @@
 
 #include "forge/component.hpp"
 #include "forge/control.hpp"
-#include "forge/proto.hpp"
 #include "forge/trace.hpp"
 #include "forge/version.hpp"
 #include "forge/web.hpp"
@@ -196,13 +195,13 @@ void RemoteConsole::register_framework(Console& c) {
     auto& control = app_.control();
     c.add("metrics", "metrics [prefix]  show metrics", [&c](const Console::Args& args) {
         const auto snap = metrics::registry().snapshot(args.empty() ? "" : args[0]);
-        for (const auto& m : snap.metrics()) {
-            if (m.type() == v1::Metric::TYPE_HISTOGRAM) {
-                const double mean = m.count() ? m.sum() / static_cast<double>(m.count()) : 0;
-                c.print("  {:<36} count {} mean {:.6g}{}", m.name(), m.count(), mean,
-                        m.unit().empty() ? "" : " " + m.unit());
+        for (const auto& m : snap.metrics) {
+            const std::string unit = m.unit.empty() ? "" : " " + m.unit;
+            if (m.type == metrics::Type::histogram) {
+                const double mean = m.count ? m.sum / static_cast<double>(m.count) : 0;
+                c.print("  {:<36} count {} mean {:.6g}{}", m.name, m.count, mean, unit);
             } else {
-                c.print("  {:<36} {:.6g}{}", m.name(), m.value(), m.unit().empty() ? "" : " " + m.unit());
+                c.print("  {:<36} {:.6g}{}", m.name, m.value, unit);
             }
         }
     });
@@ -217,29 +216,27 @@ void RemoteConsole::register_framework(Console& c) {
     c.add("audit", "audit [n]  recent control changes", [this, &c](const Console::Args& args) {
         const std::size_t n = args.empty() ? 20 : std::stoul(args[0]);
         for (const auto& r : app_.audit().list(n)) {
-            const auto t = static_cast<std::time_t>(r.time_unix_ns() / 1000000000);
+            const auto t = static_cast<std::time_t>(r.time_unix_ns / 1000000000);
             std::tm tm{};
             ::localtime_r(&t, &tm);
             c.print("  {:02}:{:02}:{:02} {:<26} {:<7} {:<20} {}{}", tm.tm_hour, tm.tm_min, tm.tm_sec,
-                    (r.user().empty() ? r.channel() : r.user() + "@" + r.channel()) + " " + r.client(), r.action(),
-                    r.target(), r.has_new_value() ? proto::to_json(r.new_value()).dump() : "",
-                    r.ok() ? "" : " REFUSED: " + r.error());
+                    (r.user.empty() ? r.channel : r.user + "@" + r.channel) + " " + r.client, r.action, r.target,
+                    r.new_value.is_null() ? "" : r.new_value.dump(), r.ok ? "" : " REFUSED: " + r.error);
         }
     });
     c.add("health", "health  component health", [this, &c](const Console::Args&) {
         const auto h = app_.health().snapshot();
-        c.print("overall: {}", to_string(static_cast<HealthState>(h.state())));
-        for (const auto& comp : h.components()) {
-            c.print("  {:<20} {:<9} {}{}", comp.name(), to_string(static_cast<HealthState>(comp.state())),
-                    comp.message(), comp.critical() ? "" : " (non-critical)");
+        c.print("overall: {}", to_string(h.state));
+        for (const auto& comp : h.components) {
+            c.print("  {:<20} {:<9} {}{}", comp.name, to_string(comp.state), comp.message,
+                    comp.critical ? "" : " (non-critical)");
         }
     });
     c.add("streams", "streams  published streams and endpoints", [this, &c](const Console::Args&) {
         for (const auto& [k, v] : app_.endpoints()) c.print("  {:<8} {}", k, v);
-        const auto list = app_.stream_list();
-        for (const auto& s : list.streams()) {
-            c.print("  stream {:<16} {:<22} {} subscriber(s), {} sent, {} dropped", s.name(), s.type(), s.subscribers(),
-                    s.sent(), s.dropped());
+        for (const auto& s : app_.stream_list()) {
+            c.print("  stream {:<16} {:<22} {} subscriber(s), {} sent, {} dropped", s.name, s.type, s.subscribers,
+                    s.sent, s.dropped);
         }
     });
     c.add(

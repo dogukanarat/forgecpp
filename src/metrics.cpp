@@ -1,10 +1,10 @@
 #include "forge/metrics.hpp"
 
-#include "forge/proto.hpp"
 
 #include <format>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 
@@ -83,7 +83,7 @@ std::vector<double> exponential_buckets(double start, double factor, int count) 
     return b;
 }
 
-Registry::Entry& Registry::entry(const std::string& name, v1::Metric::Type type, const std::string& help,
+Registry::Entry& Registry::entry(const std::string& name, Type type, const std::string& help,
                                  const std::string& unit) {
     auto [it, inserted] = entries_.try_emplace(name);
     Entry& e = it->second;
@@ -99,14 +99,14 @@ Registry::Entry& Registry::entry(const std::string& name, v1::Metric::Type type,
 
 Counter& Registry::counter(const std::string& name, const std::string& help, const std::string& unit) {
     std::lock_guard lock(mutex_);
-    auto& e = entry(name, v1::Metric::TYPE_COUNTER, help, unit);
+    auto& e = entry(name, Type::counter, help, unit);
     if (!e.counter) e.counter = std::make_unique<Counter>();
     return *e.counter;
 }
 
 Gauge& Registry::gauge(const std::string& name, const std::string& help, const std::string& unit) {
     std::lock_guard lock(mutex_);
-    auto& e = entry(name, v1::Metric::TYPE_GAUGE, help, unit);
+    auto& e = entry(name, Type::gauge, help, unit);
     if (!e.gauge && !e.fn) e.gauge = std::make_unique<Gauge>();
     if (!e.gauge) throw std::invalid_argument("metric '" + name + "' is a computed gauge");
     return *e.gauge;
@@ -115,7 +115,7 @@ Gauge& Registry::gauge(const std::string& name, const std::string& help, const s
 Histogram& Registry::histogram(const std::string& name, std::vector<double> bounds, const std::string& help,
                                const std::string& unit) {
     std::lock_guard lock(mutex_);
-    auto& e = entry(name, v1::Metric::TYPE_HISTOGRAM, help, unit);
+    auto& e = entry(name, Type::histogram, help, unit);
     if (!e.histogram) e.histogram = std::make_unique<Histogram>(std::move(bounds));
     return *e.histogram;
 }
@@ -123,7 +123,7 @@ Histogram& Registry::histogram(const std::string& name, std::vector<double> boun
 void Registry::gauge_fn(const std::string& name, std::function<double()> fn, const std::string& help,
                         const std::string& unit) {
     std::lock_guard lock(mutex_);
-    auto& e = entry(name, v1::Metric::TYPE_GAUGE, help, unit);
+    auto& e = entry(name, Type::gauge, help, unit);
     e.gauge.reset();
     e.fn = std::move(fn);
 }
@@ -140,73 +140,94 @@ std::vector<std::string> Registry::names() const {
     return out;
 }
 
-v1::MetricsSnapshot Registry::snapshot(const std::string& prefix) const {
-    v1::MetricsSnapshot s;
-    s.set_time_unix_ns(proto::now_unix_ns());
+Snapshot Registry::snapshot(const std::string& prefix) const {
+    Snapshot s;
+    s.time_unix_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     std::lock_guard lock(mutex_);
     for (const auto& [name, e] : entries_) {
         if (!prefix.empty() && name.compare(0, prefix.size(), prefix) != 0) continue;
-        auto* m = s.add_metrics();
-        m->set_name(name);
-        m->set_help(e.help);
-        m->set_unit(e.unit);
-        m->set_type(e.type);
-        for (const auto& [k, v] : labels_) (*m->mutable_labels())[k] = v;
-        if (e.counter) m->set_value(static_cast<double>(e.counter->value()));
-        if (e.gauge) m->set_value(e.gauge->value());
+        Sample m;
+        m.name = name;
+        m.help = e.help;
+        m.unit = e.unit;
+        m.type = e.type;
+        m.labels = labels_;
+        if (e.counter) m.value = static_cast<double>(e.counter->value());
+        if (e.gauge) m.value = e.gauge->value();
         if (e.fn) {
             try {
-                m->set_value(e.fn());
-            } catch (...) {
-                m->set_value(std::nan(""));
+                m.value = e.fn();
+            } catch (const std::exception&) {
+                m.value = std::nan("");  // shown as NaN; the gauge's own code reports why
             }
         }
         if (e.histogram) {
-            std::vector<std::uint64_t> cum;
-            std::uint64_t count = 0;
-            double sum = 0;
-            e.histogram->snapshot(cum, count, sum);
-            for (double b : e.histogram->bounds()) m->add_bounds(b);
-            for (auto c : cum) m->add_buckets(c);
-            m->set_count(count);
-            m->set_sum(sum);
+            e.histogram->snapshot(m.buckets, m.count, m.sum);
+            m.bounds = e.histogram->bounds();
         }
+        s.metrics.push_back(std::move(m));
     }
     return s;
+}
+
+const char* to_string(Type t) {
+    switch (t) {
+        case Type::counter: return "counter";
+        case Type::gauge: return "gauge";
+        case Type::histogram: return "histogram";
+    }
+    return "counter";
+}
+
+json to_json(const Snapshot& s) {
+    json metrics = json::array();
+    for (const auto& m : s.metrics) {
+        json j{{"name", m.name}, {"help", m.help}, {"type", to_string(m.type)}, {"unit", m.unit}};
+        if (m.type == Type::histogram) {
+            j["bounds"] = m.bounds;
+            j["buckets"] = m.buckets;
+            j["count"] = m.count;
+            j["sum"] = m.sum;
+        } else {
+            j["value"] = std::isfinite(m.value) ? json(m.value) : json(nullptr);
+        }
+        if (!m.labels.empty()) j["labels"] = m.labels;
+        metrics.push_back(std::move(j));
+    }
+    return {{"time_unix_ns", s.time_unix_ns}, {"metrics", std::move(metrics)}};
 }
 
 std::string Registry::prometheus() const {
     const auto snap = snapshot();
     std::string out;
-    for (const auto& m : snap.metrics()) {
-        const std::string n = prom_name(m.name());
+    for (const auto& m : snap.metrics) {
+        const std::string n = prom_name(m.name);
         std::string labels;
-        for (const auto& [k, v] : m.labels()) {
+        for (const auto& [k, v] : m.labels) {
             labels += std::format("{}{}=\"{}\"", labels.empty() ? "" : ",", prom_name(k), prom_escape(v));
         }
         auto with = [&](const std::string& extra) {
             const std::string all = labels.empty() ? extra : (extra.empty() ? labels : labels + "," + extra);
             return all.empty() ? std::string() : "{" + all + "}";
         };
-        if (!m.help().empty()) out += std::format("# HELP {} {}\n", n, prom_escape(m.help()));
-        switch (m.type()) {
-            case v1::Metric::TYPE_COUNTER:
-                out += std::format("# TYPE {} counter\n{}{} {}\n", n, n, with(""), prom_number(m.value()));
+        if (!m.help.empty()) out += std::format("# HELP {} {}\n", n, prom_escape(m.help));
+        switch (m.type) {
+            case Type::counter:
+                out += std::format("# TYPE {} counter\n{}{} {}\n", n, n, with(""), prom_number(m.value));
                 break;
-            case v1::Metric::TYPE_GAUGE:
-                out += std::format("# TYPE {} gauge\n{}{} {}\n", n, n, with(""), prom_number(m.value()));
+            case Type::gauge:
+                out += std::format("# TYPE {} gauge\n{}{} {}\n", n, n, with(""), prom_number(m.value));
                 break;
-            case v1::Metric::TYPE_HISTOGRAM:
+            case Type::histogram:
                 out += std::format("# TYPE {} histogram\n", n);
-                for (int i = 0; i < m.bounds_size(); ++i) {
-                    out += std::format("{}_bucket{} {}\n", n, with(std::format("le=\"{}\"", prom_number(m.bounds(i)))),
-                                       m.buckets(i));
+                for (std::size_t i = 0; i < m.bounds.size(); ++i) {
+                    out += std::format("{}_bucket{} {}\n", n, with(std::format("le=\"{}\"", prom_number(m.bounds[i]))),
+                                       m.buckets[i]);
                 }
-                out += std::format("{}_bucket{} {}\n", n, with("le=\"+Inf\""), m.count());
-                out += std::format("{}_sum{} {}\n{}_count{} {}\n", n, with(""), prom_number(m.sum()), n, with(""),
-                                   m.count());
-                break;
-            default:
+                out += std::format("{}_bucket{} {}\n", n, with("le=\"+Inf\""), m.count);
+                out += std::format("{}_sum{} {}\n{}_count{} {}\n", n, with(""), prom_number(m.sum), n, with(""),
+                                   m.count);
                 break;
         }
     }

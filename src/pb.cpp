@@ -313,6 +313,11 @@ Status encode(const Type& type, const void* msg, std::span<std::uint8_t> out, st
     return {};
 }
 
+std::size_t encoded_size(const Type& type, const void* msg) {
+    std::size_t n = 0;
+    return pb_get_encoded_size(&n, type.desc, msg) ? n : 0;
+}
+
 Status decode(const Type& type, std::span<const std::uint8_t> in, void* msg) {
     std::memset(msg, 0, type.size);
     pb_istream_t s = pb_istream_from_buffer(in.data(), in.size());

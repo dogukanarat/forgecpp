@@ -7,6 +7,7 @@
 #include "forge/version.hpp"
 #include "forge/web.hpp"
 
+#include <cstring>
 #include <filesystem>
 #include <unistd.h>
 
@@ -100,28 +101,36 @@ void HubRegistration::start(const Config& cfg) {
     client_ = std::make_unique<hub::Client>(endpoint, retry, [this] {
         const auto c = app_.config();
         const auto& info = app_.info();
-        v1::AppRegistration r;
-        r.set_name(app_.id());
-        r.set_instance(app_.instance());
-        r.set_version(info.version);
-        r.set_description(info.description);
-        r.set_pid(static_cast<std::uint32_t>(::getpid()));
+        forge_hub_app_registration r{};
+        const auto put = [](auto& dst, std::string_view src) {
+            const auto n = std::min(src.size(), sizeof(dst) - 1);
+            std::memcpy(dst, src.data(), n);
+            dst[n] = '\0';
+        };
+        put(r.name, app_.id());
+        put(r.instance, app_.instance());
+        put(r.version, info.version);
+        put(r.description, info.description);
+        r.pid = static_cast<std::uint32_t>(::getpid());
         auto* http = app_.http();
-        r.set_http_port(http ? static_cast<std::uint32_t>(std::max(http->port(), 0)) : 0);
+        r.http_port = http ? static_cast<std::uint32_t>(std::max(http->port(), 0)) : 0;
         for (const auto& [k, v] : app_.endpoints()) {
-            if (k != "http") (*r.mutable_endpoints())[k] = v;
+            if (k == "http" || r.endpoints_count == std::size(r.endpoints)) continue;
+            auto& e = r.endpoints[r.endpoints_count++];
+            put(e.name, k);
+            put(e.url, v);
         }
-        r.set_critical(c.value<bool>("hub.critical"));
-        r.set_group(c.value<std::string>("hub.group"));
-        r.set_title(c.value<std::string>("hub.title"));
-        r.set_unit(hub::unit_of(::getpid()));
-        r.set_forgecpp(version_string);
+        r.critical = c.value<bool>("hub.critical");
+        put(r.group, c.value<std::string>("hub.group"));
+        put(r.title, c.value<std::string>("hub.title"));
+        put(r.unit, hub::unit_of(::getpid()));
+        put(r.forgecpp, version_string);
         return r;
     });
     client_->start();
 }
 
-void HubRegistration::stop(v1::Unregister::Reason reason, int exit_code) {
+void HubRegistration::stop(forge_hub_unregister_reason reason, int exit_code) {
     if (client_) client_->stop(reason, exit_code);
 }
 

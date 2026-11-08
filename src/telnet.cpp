@@ -2,7 +2,6 @@
 
 #include "forge/console.hpp"
 #include "forge/log.hpp"
-#include "forge/v1/observability.pb.h"
 
 #include <format>
 
@@ -43,7 +42,7 @@ struct Telnet::Session {
     std::string peer;
     std::mutex write_mutex;
     std::atomic<bool> open{true};
-    int log_listener = -1;
+    Subscription log_listener;
     std::atomic<bool> color{true};  // ANSI level colours in followed log lines (`color on|off`)
     std::thread thread;
     std::chrono::steady_clock::time_point last_input = std::chrono::steady_clock::now();
@@ -332,24 +331,21 @@ void Telnet::serve(std::shared_ptr<Session> s) {
                 continue;
             }
             if (cmd == "logs") {
-                if (s->log_listener >= 0) {
-                    log::remove_listener(s->log_listener);
-                    s->log_listener = -1;
-                }
+                s->log_listener.reset();
                 if (args.size() > 1 && args[1] == "on") {
                     const auto min = args.size() > 2 ? log::parse_level(args[2]) : log::Level::info;
-                    s->log_listener = log::add_listener([weak, min](const v1::LogRecord& r) {
+                    s->log_listener = log::add_listener([weak, min](const log::Record& r) {
                         auto p = weak.lock();
                         if (!p) return;
-                        const auto level = log::parse_level(r.level());
+                        const auto level = r.level;
                         if (level < min) return;
-                        const auto t = static_cast<std::time_t>(r.time_unix_ns() / 1000000000);
+                        const auto t = static_cast<std::time_t>(r.time_unix_ns / 1000000000);
                         std::tm tm{};
                         ::localtime_r(&t, &tm);
                         const bool c = p->color;
                         p->print(std::format("{:02}:{:02}:{:02} [{}{}{}] [{}] {}\n", tm.tm_hour, tm.tm_min, tm.tm_sec,
                                              c ? log::level_color(level) : "", log::short_name(level), c ? "\033[0m" : "",
-                                             r.logger(), r.message()));
+                                             r.logger, r.message));
                     });
                     s->print("following the log (logs off to stop)\n");
                 } else {
@@ -360,7 +356,7 @@ void Telnet::serve(std::shared_ptr<Session> s) {
             console_.execute(*line, cs);
         }
     }
-    if (s->log_listener >= 0) log::remove_listener(s->log_listener);
+    s->log_listener.reset();
     s->open = false;
     ::shutdown(s->fd, SHUT_RDWR);
     ::close(s->fd);

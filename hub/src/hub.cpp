@@ -1,7 +1,6 @@
 #include "hub.hpp"
 
 #include <forge/hub.hpp>
-#include <forge/proto.hpp>
 
 #include <signal.h>
 #include <sys/stat.h>
@@ -10,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <cstring>
 #include <fstream>
 #include <random>
 
@@ -28,9 +28,9 @@ std::int64_t unix_ms() {
         .count();
 }
 
-bool live(v1::AppStatus::State s) {
-    return s == v1::AppStatus::STATE_RUNNING || s == v1::AppStatus::STATE_UNRESPONSIVE ||
-           s == v1::AppStatus::STATE_STARTING;
+bool live(forge_hub_app_state s) {
+    return s == forge_hub_app_state_STATE_RUNNING || s == forge_hub_app_state_STATE_UNRESPONSIVE ||
+           s == forge_hub_app_state_STATE_STARTING;
 }
 
 std::string lower(std::string s) {
@@ -60,19 +60,37 @@ std::string seconds(std::uint64_t us) {
     return s == static_cast<std::uint64_t>(s) ? std::to_string(static_cast<std::uint64_t>(s)) : std::format("{:.1f}", s);
 }
 
-/// The restart policy of a unit as forge.v1 describes it.
-v1::RestartPolicy policy_of(const UnitState& u) {
-    v1::RestartPolicy p;
-    p.set_restart(u.restart);
-    p.set_mode(u.restart == "no" || u.restart.empty() ? v1::RestartPolicy::MODE_NEVER
-               : u.restart == "always"                 ? v1::RestartPolicy::MODE_ALWAYS
-                                                       : v1::RestartPolicy::MODE_ON_FAILURE);
-    if (u.start_limit_interval_us > 0 && u.start_limit_burst > 0) {
-        p.set_max_restarts(u.start_limit_burst - 1);  // the first start counts too
-        p.set_window_s(static_cast<std::uint32_t>(u.start_limit_interval_us / 1000000));
+template <std::size_t N>
+void put(char (&dst)[N], std::string_view src) {
+    const auto n = std::min(src.size(), N - 1);
+    std::memcpy(dst, src.data(), n);
+    dst[n] = '\0';
+}
+
+std::string_view text(const char* field) { return field; }
+
+std::string_view state_name(forge_hub_app_state s) {
+    for (std::size_t i = 0; i < forge::pb::forge_hub_app_state_pb_names.count; ++i) {
+        if (forge::pb::forge_hub_app_state_pb_names.values[i].number == s) {
+            return std::string_view(forge::pb::forge_hub_app_state_pb_names.values[i].name).substr(6);
+        }
     }
-    p.set_delay_s(static_cast<std::uint32_t>(u.restart_us / 1000000));
-    p.set_watchdog_s(static_cast<std::uint32_t>(u.watchdog_us / 1000000));
+    return "?";
+}
+
+/// The restart policy of a unit, as the dashboard shows it.
+forge_hub_restart_policy policy_of(const UnitState& u) {
+    forge_hub_restart_policy p{};
+    put(p.restart, u.restart);
+    p.mode = u.restart == "no" || u.restart.empty() ? forge_hub_restart_mode_MODE_NEVER
+             : u.restart == "always"                 ? forge_hub_restart_mode_MODE_ALWAYS
+                                                     : forge_hub_restart_mode_MODE_ON_FAILURE;
+    if (u.start_limit_interval_us > 0 && u.start_limit_burst > 0) {
+        p.max_restarts = u.start_limit_burst - 1;  // the first start counts too
+        p.window_s = static_cast<std::uint32_t>(u.start_limit_interval_us / 1000000);
+    }
+    p.delay_s = static_cast<std::uint32_t>(u.restart_us / 1000000);
+    p.watchdog_s = static_cast<std::uint32_t>(u.watchdog_us / 1000000);
     return p;
 }
 
@@ -132,11 +150,11 @@ void Hub::setup_web(forge::web::Dashboard& ui) {
     };
     g.value("apps", "Known", [count] { return count([](const Entry&) { return true; }); });
     g.value("running", "Running", [count] {
-        return count([](const Entry& e) { return e.state == v1::AppStatus::STATE_RUNNING; });
+        return count([](const Entry& e) { return e.state == forge_hub_app_state_STATE_RUNNING; });
     });
     g.value("failed", "Failed / crashed", [count] {
         return count([](const Entry& e) {
-            return e.state == v1::AppStatus::STATE_FAILED || e.state == v1::AppStatus::STATE_CRASHED;
+            return e.state == forge_hub_app_state_STATE_FAILED || e.state == forge_hub_app_state_STATE_CRASHED;
         });
     });
     g.value("registry", "Registration endpoint", [this] { return registry_endpoint(); });
@@ -156,7 +174,7 @@ void Hub::setup_web(forge::web::Dashboard& ui) {
 }
 
 void Hub::setup_http(forge::http::Server& server) {
-    server.get_json("/api/apps", [this](const forge::http::Request&) { return forge::proto::to_json(list()); });
+    server.get_json("/api/apps", [this](const forge::http::Request&) { return to_json(list()); });
     const auto cfg = config();
     proxy_timeout_ms_ = cfg.value<int>("proxy.timeout_ms");
     const bool proxy = cfg.value<bool>("proxy.enabled");
@@ -180,8 +198,8 @@ void Hub::proxy_request(const forge::http::Request& req, forge::http::Response& 
     {
         std::lock_guard lock(mutex_);
         auto it = apps_.find(name);
-        if (it != apps_.end() && !it->second.static_entry && it->second.state == v1::AppStatus::STATE_RUNNING) {
-            port = static_cast<int>(it->second.app.http_port());
+        if (it != apps_.end() && !it->second.static_entry && it->second.state == forge_hub_app_state_STATE_RUNNING) {
+            port = static_cast<int>(it->second.app.http_port);
         }
     }
     if (port <= 0) throw forge::Error(502, "'" + name + "' is not running with a web interface");
@@ -251,11 +269,11 @@ void Hub::proxy_request(const forge::http::Request& req, forge::http::Response& 
 void Hub::setup_console(forge::Console& c) {
     c.add("apps", "apps  applications on this device", [this, &c](const forge::Console::Args&) {
         const auto l = list();
-        if (l.apps().empty()) c.print("no applications registered");
-        for (const auto& a : l.apps()) {
-            const auto state = v1::AppStatus::State_Name(a.state()).substr(6);
-            c.print("  {:<22} {:<12} pid {:<7} http {:<5} restarts {:<3} {:<28} {}", a.app().name(), state,
-                    a.app().pid(), a.app().http_port(), a.restarts(), a.supervision(), a.message());
+        if (l.apps.empty()) c.print("no applications registered");
+        for (const auto& a : l.apps) {
+            const auto state = std::string(state_name(a.state));
+            c.print("  {:<22} {:<12} pid {:<7} http {:<5} restarts {:<3} {:<28} {}", text(a.app.name), state,
+                    a.app.pid, a.app.http_port, a.restarts, text(a.supervision), text(a.message));
         }
     });
 }
@@ -282,13 +300,13 @@ void Hub::on_start() {
                 if (!s.is_object()) continue;
                 Entry e;
                 e.static_entry = true;
-                e.app.set_name(name);
-                e.app.set_title(s.value("title", name));
-                e.app.set_description(s.value("description", ""));
-                e.app.set_group(s.value("group", ""));
+                put(e.app.name, name);
+                put(e.app.title, s.value("title", name));
+                put(e.app.description, s.value("description", ""));
+                put(e.app.group, s.value("group", ""));
                 e.url = s.value("url", "");
                 e.health_url = s.value("health_url", "");
-                e.state = e.health_url.empty() ? v1::AppStatus::STATE_UNKNOWN : v1::AppStatus::STATE_STARTING;
+                e.state = e.health_url.empty() ? forge_hub_app_state_STATE_UNKNOWN : forge_hub_app_state_STATE_STARTING;
                 e.message = e.health_url.empty() ? "no health check" : "";
                 apps_[name] = std::move(e);
             }
@@ -296,11 +314,18 @@ void Hub::on_start() {
     }
     load_registry();
 
+    registry_commands_.add<forge_hub_register_request, forge_hub_register_reply>(
+        forge_hub_msg_id_register, "register", [this](const auto& req, auto& rsp) { return on_register(req.app, rsp); });
+    registry_commands_.add<forge_hub_unregister_request, forge_hub_unregister_reply>(
+        forge_hub_msg_id_unregister, "unregister", [this](const auto& req, auto&) {
+            on_unregister(req);
+            return forge::Status();
+        });
     registry_ = std::make_unique<forge::zmq::Server>(
         cfg.value<std::string>("registry.listen"),
         [this](std::string_view req) { return handle(req); });
     logger()->info("registry on {}", registry_->endpoint());
-    apps_stream_ = &stream("apps", "forge.v1.AppList", {"latest", 2});
+    apps_stream_ = &stream<forge_hub_app_status>("apps");
     every(std::chrono::milliseconds(tick_ms_), [this] { tick(); }, true);
 }
 
@@ -316,39 +341,26 @@ std::string Hub::registry_endpoint() const { return registry_ ? registry_->endpo
 // ---------------------------------------------------------------------------
 // registration (registry thread)
 
-std::string Hub::handle(std::string_view bytes) {
-    v1::HubRequest req;
-    v1::HubReply reply;
-    reply.set_hub(std::string("forge-hub ") + FORGE_HUB_VERSION);
-    reply.set_instance(instance_);
-    if (!req.ParseFromArray(bytes.data(), static_cast<int>(bytes.size()))) {
-        reply.set_error("not a forge.v1.HubRequest");
-    } else if (req.has_register_()) {
-        reply = on_register(req.register_());
-    } else if (req.has_unregister()) {
-        on_unregister(req.unregister());
-        reply.set_ok(true);
-    } else {
-        reply.set_error("empty request");
-    }
-    return reply.SerializeAsString();
+std::vector<std::string> Hub::handle(std::string_view bytes) {
+    std::vector<std::string> answers;
+    forge::tmtc::Dispatcher(registry_commands_)
+        .handle({reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()},
+                [&](std::span<const std::uint8_t> m) { answers.emplace_back(m.begin(), m.end()); });
+    return answers;
 }
 
-v1::HubReply Hub::on_register(const v1::AppRegistration& app) {
-    v1::HubReply reply;
-    reply.set_hub(std::string("forge-hub ") + FORGE_HUB_VERSION);
-    reply.set_instance(instance_);
-    const auto& name = app.name();
-    const int pid = static_cast<int>(app.pid());
-    if (!valid_name(name) || pid <= 0) {
-        reply.set_error("invalid name or pid");
-        return reply;
-    }
+forge::Status Hub::on_register(const forge_hub_app_registration& app, forge_hub_register_reply& reply) {
+    put(reply.hub, std::string("forge-hub ") + FORGE_HUB_VERSION);
+    put(reply.instance, instance_);
+    const std::string name(text(app.name));
+    const int pid = static_cast<int>(app.pid);
+    const auto refuse = [&](int code, const std::string& why) {
+        logger()->warn("registration of '{}' (pid {}) refused: {}", name, pid, why);
+        return forge::Status::error(forge::module_id::app, code, "registration refused");
+    };
+    if (!valid_name(name) || pid <= 0) return refuse(EINVAL, "invalid name or pid");
     const auto ticks = start_ticks(pid);
-    if (ticks == 0) {
-        reply.set_error("no process " + std::to_string(pid) + " on this machine (the hub only lists local applications)");
-        return reply;
-    }
+    if (ticks == 0) return refuse(ESRCH, "no such process on this machine (the hub only lists local applications)");
     // systemctl before taking the lock (slow).
     const auto unit = use_systemd_ ? systemd_->unit_of(pid) : std::string();
 
@@ -356,17 +368,13 @@ v1::HubReply Hub::on_register(const v1::AppRegistration& app) {
     auto it = apps_.find(name);
     if (it != apps_.end() && !it->second.static_entry && it->second.pid > 0 && it->second.pid != pid &&
         live(it->second.state) && alive(it->second.pid, it->second.ticks)) {
-        reply.set_error(name + " is already registered by pid " + std::to_string(it->second.pid));
-        return reply;
+        return refuse(EEXIST, "already registered by pid " + std::to_string(it->second.pid));
     }
     Entry& e = apps_[name];
-    if (e.static_entry) {
-        reply.set_error(name + " is a static entry of the hub's configuration");
-        return reply;
-    }
+    if (e.static_entry) return refuse(EEXIST, "a static entry of the hub's configuration has this name");
     // The same process registering again (retry_s heartbeat) changes nothing.
     const bool same = e.pid == pid && e.ticks == ticks &&
-                      (e.state == v1::AppStatus::STATE_RUNNING || e.state == v1::AppStatus::STATE_UNRESPONSIVE);
+                      (e.state == forge_hub_app_state_STATE_RUNNING || e.state == forge_hub_app_state_STATE_UNRESPONSIVE);
     if (!same) {
         e.pid = pid;
         e.ticks = ticks;
@@ -374,12 +382,12 @@ v1::HubReply Hub::on_register(const v1::AppRegistration& app) {
         e.next_probe = 0;
         e.cpu_at = 0;
         e.stop_requested = false;
-        e.state = v1::AppStatus::STATE_RUNNING;
+        e.state = forge_hub_app_state_STATE_RUNNING;
         e.message.clear();
         clear(e, "ended");
         clear(e, "failed");
-        logger()->info("registered: {} {} (pid {}{}{})", name, app.version(), pid,
-                       app.http_port() ? ", http " + std::to_string(app.http_port()) : std::string(),
+        logger()->info("registered: {} {} (pid {}{}{})", name, text(app.version), pid,
+                       app.http_port ? ", http " + std::to_string(app.http_port) : std::string(),
                        unit.empty() ? std::string() : ", " + unit);
     }
     e.app = app;
@@ -387,22 +395,21 @@ v1::HubReply Hub::on_register(const v1::AppRegistration& app) {
     e.last_seen_ms = unix_ms();
     if (!unit.empty()) next_unit_query_ = 0;  // pick up its policy right away
     dirty_ = true;
-    reply.set_ok(true);
-    return reply;
+    return {};
 }
 
-void Hub::on_unregister(const v1::Unregister& u) {
+void Hub::on_unregister(const forge_hub_unregister_request& u) {
     std::lock_guard lock(mutex_);
-    auto it = apps_.find(u.name());
+    auto it = apps_.find(std::string(text(u.name)));
     if (it == apps_.end() || it->second.static_entry) return;
     Entry& e = it->second;
-    if (e.pid != static_cast<int>(u.pid()) || !live(e.state)) return;
-    if (u.reason() == v1::Unregister::REASON_SIGNAL || e.stop_requested) {
+    if (e.pid != static_cast<int>(u.pid) || !live(e.state)) return;
+    if (u.reason == forge_hub_unregister_reason_REASON_SIGNAL || e.stop_requested) {
         ended(e, "stopped", false);
-    } else if (u.exit_code() == 0) {
+    } else if (u.exit_code == 0) {
         ended(e, "exited", false);
     } else {
-        ended(e, "exited with code " + std::to_string(u.exit_code()), true);
+        ended(e, "exited with code " + std::to_string(u.exit_code), true);
     }
     dirty_ = true;
 }
@@ -411,16 +418,16 @@ void Hub::on_unregister(const v1::Unregister& u) {
 // monitoring (main loop)
 
 std::string Hub::title_of(const Entry& e) const {
-    const auto& a = e.app;
-    const auto base = a.title().empty() ? a.name().substr(0, a.name().find('@')) : a.title();
-    return a.instance().empty() ? base : base + " (" + a.instance() + ")";
+    const std::string name(text(e.app.name)), title(text(e.app.title)), instance(text(e.app.instance));
+    const auto base = title.empty() ? name.substr(0, name.find('@')) : title;
+    return instance.empty() ? base : base + " (" + instance + ")";
 }
 
 void Hub::raise(const Entry& e, const std::string& kind, forge::Severity severity, const std::string& text) {
-    alarms().raise("app." + e.app.name() + "." + kind, severity, title_of(e) + ": " + text);
+    alarms().raise("app." + std::string(e.app.name) + "." + kind, severity, title_of(e) + ": " + text);
 }
 
-void Hub::clear(const Entry& e, const std::string& kind) { alarms().clear("app." + e.app.name() + "." + kind); }
+void Hub::clear(const Entry& e, const std::string& kind) { alarms().clear("app." + std::string(e.app.name) + "." + kind); }
 
 void Hub::ended(Entry& e, const std::string& why, bool failure) {
     e.pid = 0;
@@ -429,7 +436,7 @@ void Hub::ended(Entry& e, const std::string& why, bool failure) {
     e.uptime_s = 0;
     e.failing_since = 0;
     e.stop_requested = false;
-    e.state = failure ? v1::AppStatus::STATE_CRASHED : v1::AppStatus::STATE_STOPPED;
+    e.state = failure ? forge_hub_app_state_STATE_CRASHED : forge_hub_app_state_STATE_STOPPED;
     e.message = why;
     if (!e.unit.empty()) {
         // systemd decides what happens next (restart or not); the next query shows it.
@@ -438,10 +445,10 @@ void Hub::ended(Entry& e, const std::string& why, bool failure) {
         e.message += " (not a systemd unit: not restarted)";
     }
     if (failure) {
-        logger()->warn("{}: {}", e.app.name(), why);
+        logger()->warn("{}: {}", text(e.app.name), why);
         raise(e, "ended", forge::Severity::warning, why);
     } else {
-        logger()->info("{}: {}", e.app.name(), why);
+        logger()->info("{}: {}", text(e.app.name), why);
     }
 }
 
@@ -466,18 +473,18 @@ void Hub::apply_units(const std::map<std::string, UnitState>& units) {
 
         const auto policy = policy_of(u);
         if (u.active == "failed") {
-            if (e.state != v1::AppStatus::STATE_FAILED) {
-                e.state = v1::AppStatus::STATE_FAILED;
+            if (e.state != forge_hub_app_state_STATE_FAILED) {
+                e.state = forge_hub_app_state_STATE_FAILED;
                 // An automatic restart refused by the start limit leaves the last
                 // run's Result (e.g. "signal"); a manual start refused says start-limit-hit.
                 const bool gave_up = u.result == "start-limit-hit" ||
-                                     (policy.max_restarts() > 0 && u.n_restarts >= policy.max_restarts());
+                                     (policy.max_restarts > 0 && u.n_restarts >= policy.max_restarts);
                 // (NRestarts also counts the restart the start limit refused)
-                const auto restarts = policy.max_restarts() > 0 ? policy.max_restarts() : u.n_restarts;
+                const auto restarts = policy.max_restarts > 0 ? policy.max_restarts : u.n_restarts;
                 e.message = gave_up ? std::format("gave up after {} restarts in {} s (last: {})", restarts,
-                                                  policy.window_s(), result_text(u.result))
+                                                  policy.window_s, result_text(u.result))
                                     : "failed: " + result_text(u.result);
-                raise(e, "failed", e.app.critical() ? forge::Severity::critical : forge::Severity::error, e.message);
+                raise(e, "failed", e.app.critical ? forge::Severity::critical : forge::Severity::error, e.message);
                 logger()->error("{}: {}", name, e.message);
                 dirty_ = true;
             }
@@ -486,22 +493,22 @@ void Hub::apply_units(const std::map<std::string, UnitState>& units) {
         }
         clear(e, "failed");
         if (u.active == "activating") {
-            e.state = v1::AppStatus::STATE_STARTING;
+            e.state = forge_hub_app_state_STATE_STARTING;
             e.message = u.sub == "auto-restart"
                             ? std::format("{}; systemd restarts it in {} s", result_text(u.result), seconds(u.restart_us))
                             : "starting";
             e.pid = 0;
         } else if (u.active == "active") {
             if (u.main_pid > 0 && u.main_pid == e.pid) {
-                if (e.state != v1::AppStatus::STATE_UNRESPONSIVE) e.state = v1::AppStatus::STATE_RUNNING;
+                if (e.state != forge_hub_app_state_STATE_UNRESPONSIVE) e.state = forge_hub_app_state_STATE_RUNNING;
             } else if (u.main_pid > 0) {
                 // Started (again) by systemd; it registers in a moment.
-                e.state = v1::AppStatus::STATE_STARTING;
+                e.state = forge_hub_app_state_STATE_STARTING;
                 e.message = std::format("started by systemd (pid {}), waiting for it to register", u.main_pid);
             }
         } else if (u.active == "inactive" || u.active == "deactivating") {
-            if (e.state != v1::AppStatus::STATE_STOPPED) {
-                e.state = v1::AppStatus::STATE_STOPPED;
+            if (e.state != forge_hub_app_state_STATE_STOPPED) {
+                e.state = forge_hub_app_state_STATE_STOPPED;
                 e.message = u.active == "deactivating" ? "stopping" : "stopped";
                 dirty_ = true;
             }
@@ -545,15 +552,16 @@ void Hub::tick() {
                 e.cpu_at = now;
                 e.rss = u->rss_bytes;
             }
-            if (!e.probing && now >= e.next_probe && e.state != v1::AppStatus::STATE_STARTING) {
+            if (!e.probing && now >= e.next_probe && e.state != forge_hub_app_state_STATE_STARTING) {
                 std::string control;
-                const auto it = e.app.endpoints().find("control");
-                if (it != e.app.endpoints().end()) control = local_endpoint(it->second);
-                if (e.app.http_port() > 0 || !control.empty()) {
+                for (pb_size_t k = 0; k < e.app.endpoints_count; ++k) {
+                    if (text(e.app.endpoints[k].name) == "control") control = local_endpoint(e.app.endpoints[k].url);
+                }
+                if (e.app.http_port > 0 || !control.empty()) {
                     e.probing = true;
                     probes.push_back({name, e.pid,
-                                      e.app.http_port() > 0
-                                          ? std::format("http://127.0.0.1:{}/health", e.app.http_port())
+                                      e.app.http_port > 0
+                                          ? std::format("http://127.0.0.1:{}/health", e.app.http_port)
                                           : std::string(),
                                       control});
                 }
@@ -590,17 +598,18 @@ void Hub::tick() {
                     ok = true;
                 } else {
                     forge::zmq::Client c(p.control, timeout);
-                    c.set_client("forge-hub");
-                    v1::Request req;
-                    req.mutable_health();
-                    const auto h = c.call(req).health();
-                    v1::Request areq;
-                    areq.mutable_alarms();
+                    forge_health_reply h{};
+                    if (auto st = c.call(forge_msg_id_health, forge_health_request{}, h); !st.ok()) {
+                        throw std::runtime_error(st.to_string());
+                    }
                     int active = 0;
-                    const auto alarms = c.call(areq);  // keep the reply alive while iterating
-                    for (const auto& a : alarms.alarms().alarms()) active += a.active() ? 1 : 0;
+                    const auto st = c.call_parts<forge_alarms_request, forge_alarms_reply>(
+                        forge_msg_id_alarms, {}, [&](const forge_alarms_reply& page) {
+                            for (pb_size_t k = 0; k < page.alarms_count; ++k) active += page.alarms[k].active ? 1 : 0;
+                        });
+                    if (!st.ok()) throw std::runtime_error(st.to_string());
                     health = {{"status", "ok"},
-                              {"health", forge::to_string(static_cast<forge::HealthState>(h.state() ? h.state() : 1))},
+                              {"health", forge::to_string(static_cast<forge::HealthState>(h.state ? h.state : 1))},
                               {"alarms", {{"active", active}}}};
                     ok = true;
                 }
@@ -611,7 +620,9 @@ void Hub::tick() {
         });
     }
 
-    if (apps_stream_ && apps_stream_->wanted()) apps_stream_->publish(list());
+    if (apps_stream_ && apps_stream_->wanted()) {
+        for (const auto& a : list().apps) apps_stream_->publish(a);
+    }
 }
 
 void Hub::probe_done(const std::string& name, int pid, bool ok, const json& health, const std::string& error) {
@@ -646,16 +657,16 @@ void Hub::probe_done(const std::string& name, int pid, bool ok, const json& heal
     if (why.empty()) {
         e.last_seen_ms = unix_ms();
         e.failing_since = 0;
-        if (e.state == v1::AppStatus::STATE_UNRESPONSIVE || (e.static_entry && e.state != v1::AppStatus::STATE_RUNNING)) {
-            e.state = v1::AppStatus::STATE_RUNNING;
+        if (e.state == forge_hub_app_state_STATE_UNRESPONSIVE || (e.static_entry && e.state != forge_hub_app_state_STATE_RUNNING)) {
+            e.state = forge_hub_app_state_STATE_RUNNING;
             e.message.clear();
             clear(e, "unresponsive");
         }
         return;
     }
     if (!e.failing_since) e.failing_since = now;
-    if (now - e.failing_since >= unresponsive_after_s_ * 1000LL && e.state != v1::AppStatus::STATE_UNRESPONSIVE) {
-        e.state = v1::AppStatus::STATE_UNRESPONSIVE;
+    if (now - e.failing_since >= unresponsive_after_s_ * 1000LL && e.state != forge_hub_app_state_STATE_UNRESPONSIVE) {
+        e.state = forge_hub_app_state_STATE_UNRESPONSIVE;
         e.message = why + (e.unit_state && e.unit_state->watchdog_us
                                ? std::format(" (systemd's watchdog restarts a hung main loop after {} s)",
                                              seconds(e.unit_state->watchdog_us))
@@ -668,38 +679,46 @@ void Hub::probe_done(const std::string& name, int pid, bool ok, const json& heal
 // ---------------------------------------------------------------------------
 // status and actions
 
-v1::AppStatus Hub::status_of(const Entry& e) const {
-    v1::AppStatus s;
-    *s.mutable_app() = e.app;
-    if (!e.static_entry) s.mutable_app()->set_pid(live(e.state) ? static_cast<std::uint32_t>(std::max(e.pid, 0)) : 0);
-    s.set_state(e.state);
-    s.set_message(e.message);
-    s.set_health(e.health);
-    s.set_alarms_active(e.alarms_active);
-    s.set_alarms_highest(e.alarms_highest);
-    s.set_uptime_s(live(e.state) ? e.uptime_s : 0);
-    s.set_cpu_percent(e.cpu);
-    s.set_rss_bytes(e.rss);
-    s.set_supervision(e.unit.empty() ? "none" : "systemd " + e.unit);
-    s.set_last_seen_unix_ms(e.last_seen_ms);
-    s.set_url(e.url);
-    s.set_static_entry(e.static_entry);
+forge_hub_app_status Hub::status_of(const Entry& e) const {
+    forge_hub_app_status s{};
+    s.has_app = true;
+    s.app = e.app;
+    if (!e.static_entry) s.app.pid = live(e.state) ? static_cast<std::uint32_t>(std::max(e.pid, 0)) : 0;
+    s.state = e.state;
+    put(s.message, e.message);
+    put(s.health, e.health);
+    s.alarms_active = e.alarms_active;
+    put(s.alarms_highest, e.alarms_highest);
+    s.uptime_s = live(e.state) ? e.uptime_s : 0;
+    s.cpu_percent = e.cpu;
+    s.rss_bytes = e.rss;
+    put(s.supervision, e.unit.empty() ? "none" : "systemd " + e.unit);
+    s.last_seen_unix_ms = e.last_seen_ms;
+    put(s.url, e.url);
+    s.static_entry = e.static_entry;
     if (e.unit_state) {
-        s.set_restarts(e.unit_state->n_restarts);
-        *s.mutable_policy() = policy_of(*e.unit_state);
-        s.set_unit_state(e.unit_state->active + "/" + e.unit_state->sub);
-        s.set_unit_result(e.unit_state->result);
+        s.restarts = e.unit_state->n_restarts;
+        s.has_policy = true;
+        s.policy = policy_of(*e.unit_state);
+        put(s.unit_state, e.unit_state->active + "/" + e.unit_state->sub);
+        put(s.unit_result, e.unit_state->result);
     }
     return s;
 }
 
-v1::AppList Hub::list() const {
-    v1::AppList l;
-    l.set_hub(std::string("forge-hub ") + FORGE_HUB_VERSION);
-    l.set_boot_id(boot_id_);
+AppList Hub::list() const {
+    AppList l;
+    l.hub = std::string("forge-hub ") + FORGE_HUB_VERSION;
+    l.boot_id = boot_id_;
     std::lock_guard lock(mutex_);
-    for (const auto& [name, e] : apps_) *l.add_apps() = status_of(e);
+    for (const auto& [name, e] : apps_) l.apps.push_back(status_of(e));
     return l;
+}
+
+json to_json(const AppList& l) {
+    json apps = json::array();
+    for (const auto& a : l.apps) apps.push_back(forge::pb::to_json(a));
+    return {{"apps", std::move(apps)}, {"hub", l.hub}, {"boot_id", l.boot_id}};
 }
 
 std::optional<Entry> Hub::entry(const std::string& name) const {
@@ -753,7 +772,7 @@ json Hub::restart(const std::string& name) {
         if (e.unit.empty()) {
             throw forge::Error(409, "'" + name + "' is not a systemd unit: the hub cannot restart it");
         }
-        e.state = v1::AppStatus::STATE_STARTING;
+        e.state = forge_hub_app_state_STATE_STARTING;
         e.message = "restart requested";
     }
     unit_action(name, {"reset-failed", "restart"});
@@ -787,7 +806,7 @@ json Hub::start(const std::string& name) {
         if (live(e.state) && e.pid > 0 && alive(e.pid, e.ticks)) {
             throw forge::Error(409, "'" + name + "' is already running");
         }
-        e.state = v1::AppStatus::STATE_STARTING;
+        e.state = forge_hub_app_state_STATE_STARTING;
         e.message = "start requested";
     }
     unit_action(name, {"reset-failed", "start"});
@@ -815,7 +834,7 @@ void Hub::save_registry() {
     json apps = json::array();
     for (const auto& [name, e] : apps_) {
         if (e.static_entry) continue;
-        apps.push_back({{"app", forge::proto::to_json(e.app)},
+        apps.push_back({{"app", forge::pb::to_json(e.app)},
                         {"unit", e.unit},
                         {"pid", e.pid},
                         {"ticks", e.ticks},
@@ -843,24 +862,25 @@ void Hub::load_registry() {
     for (const auto& j : doc.value("apps", json::array())) {
         Entry e;
         try {
-            forge::proto::from_json_string(j.at("app").dump(), &e.app);
+            e.app = forge::pb::from_json<forge_hub_app_registration>(j.at("app"));
         } catch (const std::exception&) {
             continue;
         }
-        if (!valid_name(e.app.name()) || apps_.count(e.app.name())) continue;
+        const std::string name(text(e.app.name));
+        if (!valid_name(name) || apps_.count(name)) continue;
         e.unit = use_systemd_ ? j.value("unit", "") : std::string();
         e.pid = j.value("pid", 0);
         e.ticks = j.value("ticks", std::uint64_t{0});
-        const auto state = static_cast<v1::AppStatus::State>(j.value("state", 0));
+        const auto state = static_cast<forge_hub_app_state>(j.value("state", 0));
         if (same_boot && live(state) && alive(e.pid, e.ticks)) {
-            e.state = v1::AppStatus::STATE_RUNNING;  // checked again right away
+            e.state = forge_hub_app_state_STATE_RUNNING;  // checked again right away
         } else {
             // Units: systemd says what they are doing at the first query.
             e.pid = 0;
-            e.state = same_boot && !live(state) ? state : v1::AppStatus::STATE_UNKNOWN;
-            e.message = e.state == v1::AppStatus::STATE_UNKNOWN ? "not running" : j.value("message", "");
+            e.state = same_boot && !live(state) ? state : forge_hub_app_state_STATE_UNKNOWN;
+            e.message = e.state == forge_hub_app_state_STATE_UNKNOWN ? "not running" : j.value("message", "");
         }
-        apps_[e.app.name()] = std::move(e);
+        apps_[name] = std::move(e);
     }
     logger()->info("registry: {} application(s) from {}", apps_.size(), state_file_);
 }

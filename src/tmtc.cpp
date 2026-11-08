@@ -1,6 +1,7 @@
 #include "forge/tmtc.hpp"
 
 #include "forge/error.hpp"
+#include "forge/log.hpp"
 
 #include <array>
 #include <cerrno>
@@ -10,6 +11,18 @@
 namespace forge::tmtc {
 
 void throw_status(const Status& s) { throw Error(s.http_status(), s.to_string()); }
+
+Status guarded(const std::function<Status()>& handler) {
+    try {
+        return handler();
+    } catch (const Error& e) {
+        log::debug("tmtc: refused: {}", e.what());
+        return Status::error(module_id::tmtc, errno_for_http(e.status()), "refused");
+    } catch (const std::exception& e) {
+        log::error("tmtc: a command failed: {}", e.what());
+        return Status::error(module_id::tmtc, EIO, "the command failed");
+    }
+}
 
 void Registry::insert(Command c) {
     if (c.id == 0) throw std::logic_error("tmtc: command number 0 is not a command");

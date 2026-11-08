@@ -11,7 +11,7 @@ using forge::Severity;
 TEST_CASE("alarms: raise, repeat, acknowledge, clear") {
     forge::Alarms alarms;
     int changes = 0;
-    alarms.on_change([&] { ++changes; });
+    auto sub = alarms.on_change([&] { ++changes; });
 
     CHECK(alarms.raise("tank", Severity::warning, "level 91 %"));
     CHECK_FALSE(alarms.raise("tank", Severity::warning, "level 93 %"));  // repeat: same entry
@@ -39,6 +39,12 @@ TEST_CASE("alarms: raise, repeat, acknowledge, clear") {
     CHECK(alarms.active_count() == 0);
     CHECK_FALSE(alarms.acknowledge("nope"));
     CHECK(changes >= 5);
+
+    // Without its subscription the listener is not called any more.
+    sub.reset();
+    const int before = changes;
+    alarms.raise("tank", Severity::warning, "again");
+    CHECK(changes == before);
 }
 
 TEST_CASE("alarms: flapping condition stays one entry until acknowledged") {

@@ -40,6 +40,11 @@ namespace forge::tmtc {
 /// Throws forge::Error with the HTTP status of `s` (the JSON path).
 [[noreturn]] void throw_status(const Status& s);
 
+/// Runs a handler on the binary path: a forge::Error it throws becomes the
+/// errno of its HTTP status, any other exception EIO (module tmtc), so that
+/// nothing leaves a link thread.
+Status guarded(const std::function<Status()>& handler);
+
 template <class Req, class Rsp>
 using PartHandler = std::function<Status(const Req& req, Rsp& rsp, std::uint32_t& more)>;
 template <class Req, class Rsp>
@@ -133,7 +138,8 @@ void Registry::add_parts(std::uint16_t id, std::string name, PartHandler<Req, Rs
         Req req{};
         if (auto s = pb::decode(in, req); !s.ok()) return s;
         Rsp rsp{};
-        if (auto s = (*h)(req, rsp, more); !s.ok()) {
+        const auto s = guarded([&] { return (*h)(req, rsp, more); });
+        if (!s.ok()) {
             more = 0;
             return s;
         }

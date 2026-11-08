@@ -14,9 +14,9 @@
 //      ([console].telnet), as a backup to the web UI (same controls)
 //   8. signal handling: SIGINT/SIGTERM stop, SIGHUP reloads the config
 //   9. systemd notify + watchdog support (Type=notify units), fed by health
-//  10. the forge.v1 standard on ZeroMQ: control ([forge].control, forgectl and
-//      remote panels), events ([forge].events: state, alarms, logs, audit,
-//      health, metrics) and the application's streams ([forge].data)
+//  10. ZeroMQ: commands ([forge].control: c2 frames, forgectl and other
+//      programs), events ([forge].events: state, alarms, logs, audit, health,
+//      metrics) and the application's streams ([forge].data)
 //  11. observability: metrics (/metrics), flight recorder (trace), audit
 //      trail, crash reports, JSON logs; declared configuration (schema)
 //
@@ -51,8 +51,9 @@
 #include "forge/log.hpp"
 #include "forge/metrics.hpp"
 #include "forge/scheduler.hpp"
+#include "forge/pb.hpp"
 #include "forge/thread_pool.hpp"
-#include "forge/v1/control.pb.h"
+#include "forge/tmtc.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -115,6 +116,7 @@ namespace zmq {
 class Publisher;
 class Server;
 class Stream;
+struct StreamInfo;
 struct StreamOptions;
 }  // namespace zmq
 class Console;
@@ -191,7 +193,7 @@ public:
     /// `timeout`: throws forge::Error 503 "main loop busy" (with the loop's
     /// lag) and `fn` never runs. Once `fn` has started it is waited for, so it
     /// may refer to the caller's locals. The framework's request handlers
-    /// (forge.v1, HTTP) use it with request_timeout().
+    /// (commands, HTTP) use it with request_timeout().
     template <class F>
     auto invoke_for(std::chrono::milliseconds timeout, F&& fn) -> std::invoke_result_t<std::decay_t<F>> {
         return invoke_until(std::chrono::steady_clock::now() + timeout, std::forward<F>(fn));
@@ -291,7 +293,7 @@ public:
     http::Server* http();
     /// Control registry declared in setup_web(); valid from on_start() until run()
     /// returns, with or without HTTP. Served at /forge/ when the web UI is enabled,
-    /// and by the console and forge::zmq::serve_application().
+    /// and by the console and the built-in commands.
     web::Dashboard* dashboard() { return dashboard_.get(); }
     /// Alarm list shown in the web UI (bell, banner, panel) and the console
     /// (`alarms`, `ack`). Thread-safe.
@@ -313,11 +315,32 @@ public:
     /// Process-wide metrics (forge::metrics::registry()).
     metrics::Registry& metrics() { return metrics::registry(); }
 
-    /// A stream of `type` messages on [forge].data (created on first use;
+    /// A stream of `T` messages on [forge].data (created on first use;
     /// thread-safe publish). See forge/zmq.hpp.
-    zmq::Stream& stream(const std::string& name, const std::string& type);
-    zmq::Stream& stream(const std::string& name, const std::string& type, const zmq::StreamOptions& options);
-    v1::StreamList stream_list() const;
+    template <pb::Message T>
+    zmq::Stream& stream(const std::string& name) {
+        return stream(name, *pb::type_of<T>);
+    }
+    template <pb::Message T>
+    zmq::Stream& stream(const std::string& name, const zmq::StreamOptions& options) {
+        return stream(name, *pb::type_of<T>, options);
+    }
+    zmq::Stream& stream(const std::string& name, const pb::Type& type);
+    zmq::Stream& stream(const std::string& name, const pb::Type& type, const zmq::StreamOptions& options);
+    std::vector<zmq::StreamInfo> stream_list() const;
+
+    /// The commands this program answers, by number (links) and by name (web).
+    /// The built-in ones (proto/forge/messages.proto) use 0x0001..0x00FF.
+    tmtc::Registry& commands() { return commands_; }
+    /// A command whose handler runs on the main loop (like the controls); a
+    /// busy loop refuses it with EAGAIN after [forge].request_timeout_ms.
+    template <pb::Message Req, pb::Message Rsp>
+    void command(std::uint16_t id, std::string name, tmtc::Handler<Req, Rsp> handler) {
+        commands_.add<Req, Rsp>(id, std::move(name),
+                                [this, h = std::move(handler)](const Req& req, Rsp& rsp) {
+                                    return invoke_for(request_timeout(), [&] { return h(req, rsp); });
+                                });
+    }
     /// Endpoints this application serves (control, events, data, http, telnet).
     std::map<std::string, std::string> endpoints() const;
 
@@ -521,6 +544,7 @@ private:
 
     config::Schema schema_;
     Audit audit_;
+    tmtc::Registry commands_;
     Health health_;
     Auth auth_;
     std::unique_ptr<ControlService> control_;

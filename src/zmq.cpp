@@ -1,10 +1,13 @@
 #include "forge/zmq.hpp"
 
 #include "forge/log.hpp"
-#include "forge/proto.hpp"
 #include "forge/trace.hpp"
 
 #include <zmq_addon.hpp>
+
+#include <cerrno>
+#include <chrono>
+#include <cstdio>
 
 #include <unistd.h>
 
@@ -28,14 +31,16 @@ std::string resolved_endpoint(::zmq::socket_t& s, const std::string& fallback) {
     }
 }
 
-// Receive one multipart forge.v1 message. Returns false on no message.
+// Receive one multipart message. Returns false on no message.
 bool receive(::zmq::socket_t& s, Message& out) {
     std::vector<::zmq::message_t> parts;
     if (!::zmq::recv_multipart(s, std::back_inserter(parts), ::zmq::recv_flags::dontwait)) return false;
     out = Message{};
     if (!parts.empty()) out.topic = parts[0].to_string();
     if (parts.size() > 1 && parts[1].size() > 0) {
-        if (!out.header.ParseFromArray(parts[1].data(), static_cast<int>(parts[1].size()))) out.header.Clear();
+        if (!pb::decode({static_cast<const std::uint8_t*>(parts[1].data()), parts[1].size()}, out.header).ok()) {
+            out.header = {};
+        }
     }
     if (parts.size() > 2) out.body.assign(static_cast<const char*>(parts[2].data()), parts[2].size());
     if (parts.size() > 3) out.blob.assign(static_cast<const char*>(parts[3].data()), parts[3].size());
@@ -43,6 +48,69 @@ bool receive(::zmq::socket_t& s, Message& out) {
 }
 
 void free_owner(void*, void* hint) { delete static_cast<BlobOwner*>(hint); }
+
+std::string encode_to_string(const pb::Type& type, const void* msg) {
+    std::string out(pb::encoded_size(type, msg), '\0');
+    std::size_t n = 0;
+    if (!pb::encode(type, msg, {reinterpret_cast<std::uint8_t*>(out.data()), out.size()}, n).ok()) {
+        throw Error(std::string("cannot encode ") + type.name);
+    }
+    out.resize(n);
+    return out;
+}
+
+std::mutex& source_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::string& source_name() {
+    static std::string name = "app";
+    return name;
+}
+
+const std::string& host_name() {
+    static const std::string host = [] {
+        char buf[256] = {};
+        ::gethostname(buf, sizeof(buf) - 1);
+        return std::string(buf);
+    }();
+    return host;
+}
+
+void put_trace(forge_stream_header& h, const trace::Context& ctx) {
+    if (!ctx.valid()) return;
+    h.has_trace = true;
+    std::copy(ctx.trace_id.begin(), ctx.trace_id.end(), h.trace.trace_id);
+    std::copy(ctx.span_id.begin(), ctx.span_id.end(), h.trace.span_id);
+}
+
+trace::Context get_trace(const forge_stream_header& h) {
+    trace::Context ctx;
+    if (!h.has_trace) return ctx;
+    std::copy_n(h.trace.trace_id, ctx.trace_id.size(), ctx.trace_id.begin());
+    std::copy_n(h.trace.span_id, ctx.span_id.size(), ctx.span_id.begin());
+    return ctx;
+}
+
+// Source, host, pid, time and the trace context of the calling thread. Text
+// longer than a field is cut: a header must always go out.
+forge_stream_header make_header(std::string_view topic, const char* type) {
+    forge_stream_header h{};
+    const auto copy = [](auto& dst, std::string_view src) {
+        const auto n = std::min(src.size(), sizeof(dst) - 1);
+        std::copy_n(src.data(), n, dst);
+        dst[n] = '\0';
+    };
+    copy(h.source, source());
+    copy(h.host, host_name());
+    h.pid = static_cast<std::uint32_t>(::getpid());
+    copy(h.topic, topic);
+    copy(h.type, type);
+    h.time_unix_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    put_trace(h, trace::current());
+    return h;
+}
 
 // Send [topic][header][body][blob?]; the blob without copying when owned.
 bool send_parts(::zmq::socket_t& s, std::string_view topic, const std::string& header, const std::string& body,
@@ -66,6 +134,22 @@ bool send_parts(::zmq::socket_t& s, std::string_view topic, const std::string& h
 
 }  // namespace
 
+void set_source(std::string name) {
+    std::lock_guard lock(source_mutex());
+    source_name() = std::move(name);
+}
+
+std::string source() {
+    std::lock_guard lock(source_mutex());
+    return source_name();
+}
+
+json to_json(const StreamInfo& i) {
+    return {{"name", i.name},         {"endpoint", i.endpoint},       {"topic", i.topic},
+            {"type", i.type},         {"policy", i.policy},           {"max_rate_hz", i.max_rate_hz},
+            {"subscribers", i.subscribers}, {"sent", i.sent},         {"dropped", i.dropped}};
+}
+
 ::zmq::context_t& context() {
     static ::zmq::context_t ctx(1);
     return ctx;
@@ -79,8 +163,8 @@ std::string version() {
 // ---------------------------------------------------------------------------
 // Stream / Publisher
 
-Stream::Stream(Publisher& owner, std::string name, std::string type, StreamOptions options)
-    : owner_(owner), name_(std::move(name)), type_(std::move(type)), options_(std::move(options)) {}
+Stream::Stream(Publisher& owner, std::string name, const pb::Type& type, StreamOptions options)
+    : owner_(owner), name_(std::move(name)), type_(type), options_(std::move(options)) {}
 
 bool Stream::wanted() {
     if (subscribers_.load(std::memory_order_relaxed) == 0) return false;
@@ -93,22 +177,32 @@ bool Stream::wanted() {
     return true;
 }
 
-bool Stream::publish(const google::protobuf::Message& body) { return publish(body, nullptr, nullptr, 0); }
-
-bool Stream::publish(const google::protobuf::Message& body, BlobOwner owner, const void* data, std::size_t size) {
-    auto header = proto::make_header(name_, body.GetTypeName());
-    std::string bytes;
-    body.SerializeToString(&bytes);
-    return publish_with_header(std::move(header), std::move(bytes), std::move(owner), data, size);
+bool Stream::publish(const pb::Type& type, const void* body, BlobOwner owner, const void* data, std::size_t size) {
+    if (&type != &type_) {
+        throw std::logic_error("stream '" + name_ + "' carries " + type_.name + ", not " + type.name);
+    }
+    return enqueue(make_header(name_, type_.name), encode_to_string(type, body), std::move(owner), data, size);
 }
 
-bool Stream::publish_with_header(v1::Header header, std::string body, BlobOwner owner, const void* data,
-                                 std::size_t size) {
-    header.set_seq(++seq_);
-    if (header.topic().empty()) header.set_topic(name_);
+bool Stream::forward(const Message& m) {
+    auto header = m.header;
+    if (header.topic[0] == '\0') std::snprintf(header.topic, sizeof(header.topic), "%s", name_.c_str());
+    BlobOwner owner;
+    const void* data = nullptr;
+    if (!m.blob.empty()) {
+        auto copy = std::make_shared<std::string>(m.blob);
+        data = copy->data();
+        owner = copy;
+    }
+    return enqueue(header, m.body, std::move(owner), data, m.blob.size());
+}
+
+bool Stream::enqueue(forge_stream_header header, std::string body, BlobOwner owner, const void* data,
+                     std::size_t size) {
+    header.seq = ++seq_;
     Publisher::Outgoing out;
     out.stream = this;
-    header.SerializeToString(&out.header);
+    out.header = encode_to_string(*pb::type_of<forge_stream_header>, &header);
     out.body = std::move(body);
     out.owner = std::move(owner);
     out.data = data;
@@ -122,17 +216,17 @@ bool Stream::publish_with_header(v1::Header header, std::string body, BlobOwner 
     return owner_.enqueue(*this, std::move(out));
 }
 
-v1::StreamInfo Stream::info() const {
-    v1::StreamInfo i;
-    i.set_name(name_);
-    i.set_endpoint(owner_.endpoint());
-    i.set_topic(name_);
-    i.set_type(type_);
-    i.set_policy(options_.policy);
-    i.set_max_rate_hz(options_.max_rate_hz);
-    i.set_subscribers(subscribers_.load());
-    i.set_sent(sent_.load());
-    i.set_dropped(dropped_.load());
+StreamInfo Stream::info() const {
+    StreamInfo i;
+    i.name = name_;
+    i.endpoint = owner_.endpoint();
+    i.topic = name_;
+    i.type = type_.name;
+    i.policy = options_.policy;
+    i.max_rate_hz = options_.max_rate_hz;
+    i.subscribers = subscribers_.load();
+    i.sent = sent_.load();
+    i.dropped = dropped_.load();
     return i;
 }
 
@@ -218,10 +312,15 @@ void Publisher::update_subscriptions(std::string_view prefix, bool subscribe) {
     }
 }
 
-Stream& Publisher::add(const std::string& name, const std::string& type, StreamOptions options) {
+Stream& Publisher::add(const std::string& name, const pb::Type& type, StreamOptions options) {
     std::lock_guard lock(mutex_);
     auto it = streams_.find(name);
-    if (it != streams_.end()) return *it->second;
+    if (it != streams_.end()) {
+        if (&it->second->type() != &type) {
+            throw std::logic_error("stream '" + name + "' already carries " + it->second->type().name);
+        }
+        return *it->second;
+    }
     auto s = std::unique_ptr<Stream>(new Stream(*this, name, type, std::move(options)));
     std::size_t count = 0;
     for (const auto& [p, c] : prefixes_) {
@@ -237,9 +336,9 @@ Stream* Publisher::find(const std::string& name) {
     return it == streams_.end() ? nullptr : it->second.get();
 }
 
-std::vector<v1::StreamInfo> Publisher::list() const {
+std::vector<StreamInfo> Publisher::list() const {
     std::lock_guard lock(mutex_);
-    std::vector<v1::StreamInfo> out;
+    std::vector<StreamInfo> out;
     for (const auto& [n, s] : streams_) out.push_back(s->info());
     return out;
 }
@@ -316,22 +415,19 @@ bool Sender::send_frames(std::string_view topic, const std::string& header, cons
     return true;
 }
 
-bool Sender::publish(std::string_view topic, const google::protobuf::Message& body, const void* blob,
+bool Sender::publish(std::string_view topic, const pb::Type& type, const void* body, const void* blob,
                      std::size_t size) {
-    auto header = proto::make_header(topic, body.GetTypeName());
+    auto header = make_header(topic, type.name);
     auto it = seq_.find(topic);
     if (it == seq_.end()) it = seq_.emplace(std::string(topic), 0).first;
-    header.set_seq(++it->second);
-    std::string h, b;
-    header.SerializeToString(&h);
-    body.SerializeToString(&b);
-    return send_frames(topic, h, b, blob, size);
+    header.seq = ++it->second;
+    return send_frames(topic, encode_to_string(*pb::type_of<forge_stream_header>, &header), encode_to_string(type, body),
+                       blob, size);
 }
 
 bool Sender::send(const Message& m) {
-    std::string h;
-    m.header.SerializeToString(&h);
-    return send_frames(m.topic, h, m.body, m.blob.empty() ? nullptr : m.blob.data(), m.blob.size());
+    return send_frames(m.topic, encode_to_string(*pb::type_of<forge_stream_header>, &m.header), m.body,
+                       m.blob.empty() ? nullptr : m.blob.data(), m.blob.size());
 }
 
 std::string Sender::endpoint() const { return resolved_endpoint(const_cast<::zmq::socket_t&>(socket_), ""); }
@@ -370,13 +466,13 @@ void Receiver::run() {
             while (running_ && receive(socket_, m)) {
                 ++received_;
                 // Gaps in the sender's sequence = messages dropped on the way.
-                if (m.header.seq() > 0) {
-                    auto& last = last_seq_[m.header.source() + "/" + std::to_string(m.header.pid()) + "/" + m.topic];
-                    if (last > 0 && m.header.seq() > last + 1) lost_ += m.header.seq() - last - 1;
-                    last = m.header.seq();
+                if (m.header.seq > 0) {
+                    auto& last = last_seq_[std::string(pb::view(m.header.source)) + "/" + std::to_string(m.header.pid) +
+                                           "/" + m.topic];
+                    if (last > 0 && m.header.seq > last + 1) lost_ += m.header.seq - last - 1;
+                    last = m.header.seq;
                 }
-                trace::ContextScope scope(m.header.has_trace() ? trace::from_proto(m.header.trace())
-                                                               : trace::Context{});
+                trace::ContextScope scope(get_trace(m.header));
                 try {
                     handler_(std::move(m));
                 } catch (const std::exception& e) {
@@ -441,18 +537,21 @@ void Server::stop() {
     if (thread_.joinable()) thread_.join();
 }
 
-void Server::send_reply(::zmq::socket_t& out, const Job& job, const std::string& reply) {
+void Server::send_reply(::zmq::socket_t& out, const Job& job, const std::vector<std::string>& frames) {
     for (const auto& frame : job.envelope) out.send(::zmq::buffer(frame), ::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait);
-    out.send(::zmq::buffer(reply), ::zmq::send_flags::dontwait);
+    if (frames.empty()) {
+        out.send(::zmq::const_buffer(nullptr, 0), ::zmq::send_flags::dontwait);  // a REQ client waits for something
+        return;
+    }
+    for (std::size_t i = 0; i < frames.size(); ++i) {
+        out.send(::zmq::buffer(frames[i]),
+                 i + 1 < frames.size() ? ::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait : ::zmq::send_flags::dontwait);
+    }
 }
 
-namespace {
-std::string busy_reply(const std::string& why) {
-    std::string out;
-    proto::error_reply(503, why).SerializeToString(&out);
-    return out;
+std::vector<std::string> Server::busy(std::string_view request) const {
+    return server_options_.busy ? server_options_.busy(request) : std::vector<std::string>{};
 }
-}  // namespace
 
 void Server::work() {
     ::zmq::socket_t out(context(), ::zmq::socket_type::push);
@@ -467,15 +566,16 @@ void Server::work() {
             job = std::move(queue_.front());
             queue_.pop_front();
         }
-        std::string reply;
+        std::vector<std::string> reply;
         if (std::chrono::steady_clock::now() - job.received > server_options_.max_queue_wait) {
             ++rejected_;
-            reply = busy_reply("server busy: the request waited too long");
+            reply = busy(job.body);
         } else {
             try {
                 reply = handler_(job.body);
             } catch (const std::exception& e) {
-                proto::error_reply(500, e.what()).SerializeToString(&reply);
+                log::error("zmq: server {}: the handler failed: {}", endpoint_, e.what());
+                reply = busy(job.body);
             }
         }
         try {
@@ -549,7 +649,7 @@ void Server::run() {
                     cv_.notify_one();
                 } else {
                     ++rejected_;
-                    send_reply(socket_, job, busy_reply("server busy: too many requests waiting"));
+                    send_reply(socket_, job, busy(job.body));
                 }
             }
         } catch (const ::zmq::error_t& e) {
@@ -566,9 +666,6 @@ void Server::run() {
 
 Client::Client(std::string endpoint, std::chrono::milliseconds timeout)
     : endpoint_(std::move(endpoint)), timeout_(timeout) {
-    char host[128] = {};
-    ::gethostname(host, sizeof(host) - 1);
-    client_ = proto::source() + "@" + host;
     reconnect();
 }
 
@@ -578,76 +675,55 @@ void Client::reconnect() {
     socket_->connect(endpoint_);
 }
 
-std::string Client::exchange(const std::string& bytes) {
-    socket_->send(::zmq::buffer(bytes), ::zmq::send_flags::none);
+Status Client::request(std::uint16_t id, std::span<const std::uint8_t> payload,
+                       const std::function<Status(const c2::Message&)>& on_answer) {
+    if (payload.size() > c2::payload_max) return Status::error(module_id::zmq, EMSGSIZE, "request too large");
+    const std::uint16_t seq = ++seq_;
+    std::vector<std::uint8_t> frame(c2::header_size + payload.size());
+    std::size_t n = 0;
+    const auto hdr = c2::make_header(c2::flag::req, id, seq, static_cast<std::uint16_t>(payload.size()));
+    if (auto s = c2::encode_message(hdr, payload, frame, n); !s.ok()) return s;
+    socket_->send(::zmq::buffer(frame.data(), n), ::zmq::send_flags::none);
+
     ::zmq::pollitem_t item{socket_->handle(), 0, ZMQ_POLLIN, 0};
     if (::zmq::poll(&item, 1, timeout_) <= 0) {
-        reconnect();  // a REQ socket is stuck after a lost reply: start over
-        throw Error("no reply from " + endpoint_ + " within " + std::to_string(timeout_.count()) + " ms");
+        reconnect();  // a REQ socket is stuck after a lost answer: start over
+        return Status::error(module_id::zmq, ETIMEDOUT, "no answer");
     }
-    ::zmq::message_t msg;
-    (void)socket_->recv(msg);
-    return msg.to_string();
-}
+    std::vector<::zmq::message_t> frames;
+    (void)::zmq::recv_multipart(*socket_, std::back_inserter(frames));
 
-v1::Reply Client::request(v1::Request req) {
-    if (req.client().empty()) req.set_client(client_);
-    if (req.token().empty() && !token_.empty()) req.set_token(token_);
-    if (!req.has_trace()) {
-        const auto ctx = trace::current();
-        *req.mutable_trace() = trace::to_proto(ctx.valid() ? trace::child_of(ctx) : trace::new_trace());
+    Status result;
+    for (const auto& f : frames) {
+        c2::Message m;
+        if (!c2::decode_message({static_cast<const std::uint8_t*>(f.data()), f.size()}, m).ok() ||
+            m.header.seq != seq || m.header.cmd_id != id) {
+            return Status::error(module_id::zmq, EBADMSG, "an answer that is not for this request");
+        }
+        switch (c2::kind_of(m.header.flags)) {
+            case c2::Kind::nack: {
+                Status carried;
+                if (auto s = c2::nack_status(m.payload, carried); !s.ok()) return s;
+                return carried;
+            }
+            case c2::Kind::ack:
+            case c2::Kind::reply:
+                if (result.ok()) result = on_answer(m);
+                break;
+            default:
+                return Status::error(module_id::zmq, EBADMSG, "an answer that is not a reply");
+        }
     }
-    std::string bytes;
-    req.SerializeToString(&bytes);
-    v1::Reply reply;
-    const auto answer = exchange(bytes);
-    if (!reply.ParseFromString(answer)) throw Error("invalid reply from " + endpoint_);
-    return reply;
+    if (frames.empty()) return Status::error(module_id::zmq, EBADMSG, "an empty answer");
+    return result;
 }
 
-v1::Reply Client::call(v1::Request req) {
-    auto reply = request(std::move(req));
-    if (!reply.ok()) throw Error(reply.error(), reply.status());
-    return reply;
-}
-
-json Client::get(const std::string& id) {
-    v1::Request r;
-    r.mutable_get()->set_id(id);
-    return proto::to_json(call(std::move(r)).value());
-}
-
-json Client::set(const std::string& id, const json& value) {
-    v1::Request r;
-    r.mutable_set()->set_id(id);
-    *r.mutable_set()->mutable_value() = proto::to_value(value);
-    return proto::to_json(call(std::move(r)).value());
-}
-
-void Client::press(const std::string& id) {
-    v1::Request r;
-    r.mutable_press()->set_id(id);
-    call(std::move(r));
-}
-
-json Client::call_command(const std::string& id, const json& args) {
-    v1::Request r;
-    r.mutable_call()->set_id(id);
-    *r.mutable_call()->mutable_args() = proto::to_struct(args);
-    return proto::to_json(call(std::move(r)).value());
-}
-
-v1::Info Client::info() {
-    v1::Request r;
-    r.mutable_info();
-    return call(std::move(r)).info();
-}
-
-json Client::request_json(const json& req) {
-    const auto answer = exchange(req.dump());
-    auto reply = json::parse(answer, nullptr, false);
-    if (reply.is_discarded()) throw Error("invalid JSON reply from " + endpoint_);
-    return reply;
+Status Client::call(std::uint16_t id, const pb::Type& type, const void* req,
+                    const std::function<Status(const c2::Message&)>& on_answer) {
+    std::vector<std::uint8_t> payload(pb::encoded_size(type, req));
+    std::size_t n = 0;
+    if (auto s = pb::encode(type, req, payload, n); !s.ok()) return s;
+    return request(id, std::span(payload).first(n), on_answer);
 }
 
 }  // namespace forge::zmq

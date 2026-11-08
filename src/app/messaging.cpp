@@ -1,11 +1,43 @@
-// Messaging: forge.v1 on ZeroMQ - [forge].events, [forge].data (streams) and
-// the [forge].control endpoint.
+// Messaging on ZeroMQ: [forge].events, [forge].data (streams) and the
+// [forge].control command endpoint (c2 frames, answered by the application's
+// command registry).
 #include "services.hpp"
 
 #include "forge/control.hpp"
-#include "forge/proto.hpp"
+#include "forge/tmtc.hpp"
+
+#include <cstring>
 
 namespace forge::detail {
+namespace {
+
+template <std::size_t N>
+void put(char (&dst)[N], std::string_view src) {
+    const auto n = std::min(src.size(), N - 1);
+    std::memcpy(dst, src.data(), n);
+    dst[n] = '\0';
+}
+
+// A command the server is too busy to run: a NACK, so the client knows at once.
+std::vector<std::string> refuse_busy(std::string_view request) {
+    c2::Message m;
+    const std::span<const std::uint8_t> bytes(reinterpret_cast<const std::uint8_t*>(request.data()), request.size());
+    if (!c2::decode_message(bytes, m).ok()) return {};
+    const auto nack = c2::nack_payload(Status::error(module_id::tmtc, EAGAIN, "busy"));
+    std::string out(c2::header_size + nack.size(), '\0');
+    std::size_t n = 0;
+    c2::encode_message(c2::make_header(c2::flag::nack, m.header.cmd_id, m.header.seq, nack.size()), nack,
+                       {reinterpret_cast<std::uint8_t*>(out.data()), out.size()}, n);
+    return {out};
+}
+
+}  // namespace
+
+template <pb::Message T>
+void Messaging::publish_event(const char* topic, const T& body) {
+    if (!events_pub_) return;
+    if (auto* s = events_pub_->find(topic); s && s->wanted()) s->publish(body);
+}
 
 void Messaging::start(const Config& cfg) {
     auto logger = app_.logger();
@@ -14,27 +46,52 @@ void Messaging::start(const Config& cfg) {
         zmq::SocketOptions so;
         so.send_hwm = 1000;
         events_pub_ = std::make_unique<zmq::Publisher>(events, so);
-        events_pub_->add("state", "forge.v1.Values");
-        events_pub_->add("alarms", "forge.v1.AlarmList");
-        events_pub_->add("log", "forge.v1.LogRecord");
-        events_pub_->add("audit", "forge.v1.AuditRecord");
-        events_pub_->add("health", "forge.v1.Health");
-        events_pub_->add("metrics", "forge.v1.MetricsSnapshot");
-        app_.alarms().on_change([this] {
-            if (!events_pub_) return;
+        events_pub_->add<forge_state_report>("state");
+        events_pub_->add<forge_alarm>("alarms");
+        events_pub_->add<forge_log_record>("log");
+        events_pub_->add<forge_audit_record>("audit");
+        events_pub_->add<forge_health_reply>("health");
+        events_pub_->add<forge_metrics_reply>("metrics");
+        subscriptions_.push_back(app_.alarms().on_change([this] {
             auto* s = events_pub_->find("alarms");
             if (!s || s->subscribers() == 0) return;
-            v1::Request r;
-            r.mutable_alarms();
-            Caller internal;
-            const auto reply = app_.control().handle(r, internal);
-            s->publish(reply.alarms());
-        });
-        app_.audit().on_record([this](const v1::AuditRecord& r) { publish_event("audit", r); });
-        app_.health().on_change([this](const v1::Health& h) { publish_event("health", h); });
-        log_listener_ = log::add_listener([this](const v1::LogRecord& r) { publish_event("log", r); });
+            // One message per alarm: a subscriber keeps the latest of each id.
+            for (const auto& a : app_.alarms().list()) {
+                forge_alarm msg{};
+                fill(msg, a);
+                s->publish(msg);
+            }
+        }));
+        subscriptions_.push_back(app_.audit().on_record([this](const Audit::Record& r) {
+            forge_audit_record msg{};
+            fill(msg, r);
+            publish_event("audit", msg);
+        }));
+        subscriptions_.push_back(app_.health().on_change([this](const Health::Report& h) {
+            forge_health_reply msg{};
+            fill(msg, h);
+            publish_event("health", msg);
+        }));
+        subscriptions_.push_back(log::add_listener([this](const log::Record& r) {
+            forge_log_record msg{};
+            fill(msg, r);
+            publish_event("log", msg);
+        }));
         const auto interval = std::chrono::seconds(std::max(cfg.value<int>("forge.metrics_interval_s"), 1));
-        app_.every(interval, [this] { publish_event("metrics", metrics::registry().snapshot()); });
+        app_.every(interval, [this] {
+            auto* s = events_pub_->find("metrics");
+            if (!s || !s->wanted()) return;
+            // The same pages as the "metrics" command, one message each.
+            const auto* cmd = app_.commands().find(forge_msg_id_metrics);
+            std::uint32_t more = 0;
+            std::array<std::uint8_t, forge_metrics_reply_size> buf{};
+            do {
+                std::size_t n = 0;
+                if (!cmd->run_binary({}, buf, n, more).ok()) return;
+                forge_metrics_reply page{};
+                if (pb::decode(std::span(buf).first(n), page).ok()) s->publish(page);
+            } while (more != 0);
+        });
         logger->info("forge: events on {}", events_pub_->endpoint());
     }
     const auto data = cfg.value<std::string>("forge.data");
@@ -45,8 +102,22 @@ void Messaging::start(const Config& cfg) {
     }
     const auto control = cfg.value<std::string>("forge.control");
     if (!control.empty()) {
-        control_server_ = zmq::serve_control(app_.control(), control, cfg.value<int>("forge.control_workers"));
-        logger->info("forge: control on {}", control_server_->endpoint());
+        zmq::ServerOptions options;
+        options.workers = cfg.value<int>("forge.control_workers");
+        options.thread_name = "forge-control";
+        options.busy = refuse_busy;
+        control_server_ = std::make_unique<zmq::Server>(
+            control,
+            [this](std::string_view request) {
+                CallerScope caller(app_.control().identify("link", "zmq", {}));
+                std::vector<std::string> answers;
+                tmtc::Dispatcher(app_.commands())
+                    .handle({reinterpret_cast<const std::uint8_t*>(request.data()), request.size()},
+                            [&](std::span<const std::uint8_t> m) { answers.emplace_back(m.begin(), m.end()); });
+                return answers;
+            },
+            options);
+        logger->info("forge: commands on {}", control_server_->endpoint());
     }
 }
 
@@ -55,8 +126,7 @@ void Messaging::stop_control() {
 }
 
 void Messaging::stop() {
-    if (log_listener_ >= 0) log::remove_listener(log_listener_);
-    log_listener_ = -1;
+    subscriptions_.clear();
     {
         std::lock_guard lock(data_mutex_);
         if (data_pub_) data_pub_->stop();
@@ -73,10 +143,10 @@ void Messaging::reset() {
     events_pub_.reset();
 }
 
-zmq::Stream& Messaging::stream(const std::string& name, const std::string& type, const zmq::StreamOptions& o) {
+zmq::Stream& Messaging::stream(const std::string& name, const pb::Type& type, const zmq::StreamOptions& o) {
     std::lock_guard lock(data_mutex_);
     if (!data_pub_) {
-        // No [forge].data configured: an ephemeral port, listed in Info.endpoints.
+        // No [forge].data configured: an ephemeral port, listed in the endpoints.
         const auto ep = app_.config().value<std::string>("forge.data");
         data_pub_ = std::make_unique<zmq::Publisher>(ep.empty() ? "tcp://*:0" : ep);
         app_.logger()->info("forge: streams on {}", data_pub_->endpoint());
@@ -84,13 +154,9 @@ zmq::Stream& Messaging::stream(const std::string& name, const std::string& type,
     return data_pub_->add(name, type, o);
 }
 
-v1::StreamList Messaging::stream_list() const {
-    v1::StreamList l;
+std::vector<zmq::StreamInfo> Messaging::stream_list() const {
     std::lock_guard lock(data_mutex_);
-    if (data_pub_) {
-        for (auto& s : data_pub_->list()) *l.add_streams() = std::move(s);
-    }
-    return l;
+    return data_pub_ ? data_pub_->list() : std::vector<zmq::StreamInfo>{};
 }
 
 void Messaging::add_endpoints(std::map<std::string, std::string>& e) const {
@@ -98,11 +164,6 @@ void Messaging::add_endpoints(std::map<std::string, std::string>& e) const {
     if (events_pub_) e["events"] = events_pub_->endpoint();
     std::lock_guard lock(data_mutex_);
     if (data_pub_) e["data"] = data_pub_->endpoint();
-}
-
-void Messaging::publish_event(const std::string& topic, const google::protobuf::Message& body) {
-    if (!events_pub_) return;
-    if (auto* s = events_pub_->find(topic); s && s->wanted()) s->publish(body);
 }
 
 bool Messaging::wants_state() const {
@@ -114,13 +175,15 @@ bool Messaging::wants_state() const {
 void Messaging::publish_state(const json& current) {
     auto* s = events_pub_ ? events_pub_->find("state") : nullptr;
     if (!s) return;
-    v1::Values v;
     for (const auto& [id, value] : current.items()) {
         auto it = last_state_.find(id);
-        if (it == last_state_.end() || *it != value) (*v.mutable_values())[id] = proto::to_value(value);
+        if (it != last_state_.end() && *it == value) continue;
+        forge_state_report msg{};
+        put(msg.id, id);
+        put(msg.value, value.dump(-1, ' ', false, json::error_handler_t::replace));
+        s->publish(msg);
     }
     last_state_ = current;
-    if (v.values_size() > 0) s->publish(v);
 }
 
 }  // namespace forge::detail

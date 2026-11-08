@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+import "forge/messages.proto";
+
+package forge.hub;
+
+// forge-hub: the registry and dashboard of the applications on a device.
+// Applications register over [hub].endpoint with these two commands; the
+// hub's web page reads app_list as JSON.
+
+enum msg_id {
+    none = 0;
+    register = 0x0100;
+    unregister = 0x0101;
+}
+
+enum restart_mode {
+    MODE_UNSPECIFIED = 0;
+    MODE_NEVER = 1;       // Restart=no
+    MODE_ON_FAILURE = 2;  // Restart=on-failure (and on-abnormal, on-watchdog, on-abort)
+    MODE_ALWAYS = 3;      // Restart=always
+}
+
+message restart_policy {
+    restart_mode mode = 1;
+    uint32 max_restarts = 2;  // within window_s, then the unit fails (0: no limit)
+    uint32 window_s = 3;
+    uint32 delay_s = 4;
+    uint32 watchdog_s = 6;    // a hung main loop is killed and restarted after this (0: off)
+    string restart = 7 [(nanopb).max_size = 16];  // Restart= as systemd reports it
+}
+
+message app_registration {
+    string name = 1 [(nanopb).max_size = 48];
+    string version = 2 [(nanopb).max_size = 32];
+    string description = 3 [(nanopb).max_size = 160];
+    uint32 pid = 4;
+    uint32 http_port = 5;                                              // 0: no web interface
+    repeated forge.endpoint endpoints = 6 [(nanopb).max_count = 8];    // control, events, data, telnet
+    string group = 8 [(nanopb).max_size = 48];                         // dashboard grouping
+    string title = 9 [(nanopb).max_size = 64];                         // display name (default: name)
+    string unit = 10 [(nanopb).max_size = 96];                         // its systemd unit, as it sees it
+    string forgecpp = 11 [(nanopb).max_size = 16];
+    bool critical = 12;                                                // its unit failing is a critical alarm
+    string instance = 13 [(nanopb).max_size = 48];
+}
+
+message register_request {
+    app_registration app = 1;
+}
+
+message register_reply {
+    string hub = 1 [(nanopb).max_size = 64];       // hub name and version
+    string instance = 2 [(nanopb).max_size = 48];  // changes when the hub restarts
+}
+
+enum unregister_reason {
+    REASON_UNSPECIFIED = 0;
+    REASON_SIGNAL = 1;  // asked to stop (SIGTERM, SIGINT, systemctl stop)
+    REASON_EXIT = 2;    // the application ended on its own (exit_code)
+}
+
+message unregister_request {
+    string name = 1 [(nanopb).max_size = 48];
+    uint32 pid = 2;
+    unregister_reason reason = 3;
+    int32 exit_code = 4;
+}
+
+message unregister_reply {}
+
+enum app_state {
+    STATE_UNSPECIFIED = 0;
+    STATE_RUNNING = 1;
+    STATE_STARTING = 2;      // systemd is (re)starting it
+    STATE_STOPPED = 3;       // stopped on request or exited cleanly
+    STATE_CRASHED = 4;       // ended without unregistering (not a systemd unit: not restarted)
+    STATE_FAILED = 5;        // the unit failed: too many restarts, or it cannot start
+    STATE_UNRESPONSIVE = 6;  // process alive, health checks failing
+    STATE_UNKNOWN = 7;       // known from an earlier boot, not running since
+}
+
+message app_status {
+    app_registration app = 1;
+    app_state state = 2;
+    string message = 3 [(nanopb).max_size = 160];     // why it is in this state
+    string health = 4 [(nanopb).max_size = 12];       // ok | degraded | failed (its own view)
+    uint32 alarms_active = 5;
+    string alarms_highest = 6 [(nanopb).max_size = 12];
+    uint64 uptime_s = 7;
+    double cpu_percent = 8;
+    uint64 rss_bytes = 9;
+    uint32 restarts = 10;                             // systemd's NRestarts
+    string supervision = 12 [(nanopb).max_size = 112]; // "systemd <unit>" or "none"
+    int64 last_seen_unix_ms = 13;
+    string url = 14 [(nanopb).max_size = 160];        // static entries: page URL ("{host}": the browser's host)
+    bool static_entry = 15;                           // from the hub's configuration, not registered
+    restart_policy policy = 16;
+    string unit_state = 17 [(nanopb).max_size = 32];  // ActiveState/SubState, e.g. "active/running"
+    string unit_result = 18 [(nanopb).max_size = 32]; // Result of the last run, e.g. "exit-code"
+}

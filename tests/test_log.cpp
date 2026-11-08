@@ -1,6 +1,6 @@
 #include <forge/log.hpp>
+#include <forge/json.hpp>
 #include <forge/log_rt.hpp>
-#include <forge/proto.hpp>
 #include <forge/testing.hpp>
 #include <forge/trace.hpp>
 
@@ -89,8 +89,8 @@ TEST_CASE("log: history, listeners and the caller's trace context") {
     forge::log::init(quiet("hist"));
     Captured out;
     std::mutex m;
-    std::vector<forge::v1::LogRecord> seen;
-    const int id = forge::log::add_listener([&](const forge::v1::LogRecord& r) {
+    std::vector<forge::log::Record> seen;
+    auto sub = forge::log::add_listener([&](const forge::log::Record& r) {
         std::lock_guard lock(m);
         seen.push_back(r);
     });
@@ -101,19 +101,20 @@ TEST_CASE("log: history, listeners and the caller's trace context") {
     }
     forge::log::info("outside");
     forge::log::flush();
-    forge::log::remove_listener(id);
+    sub.reset();
+    CHECK_FALSE(sub.active());
 
     std::lock_guard lock(m);
     REQUIRE(seen.size() >= 2);
     const auto& traced = seen[seen.size() - 2];
-    CHECK(traced.message() == "inside a trace");
-    CHECK(traced.level() == "warning");
-    CHECK(traced.logger() == "hist");
-    CHECK(forge::trace::from_proto(traced.trace()).trace_hex() == ctx.trace_hex());
-    CHECK_FALSE(seen.back().has_trace());
+    CHECK(traced.message == "inside a trace");
+    CHECK(traced.level == forge::log::Level::warn);
+    CHECK(traced.logger == "hist");
+    CHECK(traced.trace.trace_hex() == ctx.trace_hex());
+    CHECK_FALSE(seen.back().trace.valid());
     const auto h = forge::log::history(1);
     REQUIRE(h.size() == 1);
-    CHECK(h[0].message() == "outside");
+    CHECK(h[0].message == "outside");
 }
 
 TEST_CASE("log: real-time macros format on the background thread") {

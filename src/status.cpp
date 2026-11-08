@@ -65,6 +65,7 @@ std::map<std::uint16_t, std::string>& names() {
                                                   {module_id::c2, "c2"},
                                                   {module_id::tmtc, "tmtc"},
                                                   {module_id::pb, "pb"},
+                                                  {module_id::zmq, "zmq"},
                                                   {module_id::nrf, "nrf"},
                                                   {module_id::zephyr, "zephyr"}};
     return n;
@@ -168,6 +169,21 @@ int Status::http_status() const {
             return 504;
         default:
             return 500;
+    }
+}
+
+int errno_for_http(int http_status) {
+    switch (http_status) {
+        case 400: return EINVAL;
+        case 401:
+        case 403: return EACCES;
+        case 404: return ENOENT;
+        case 409: return EBUSY;
+        case 410:
+        case 501: return ENOSYS;
+        case 503: return EAGAIN;
+        case 504: return ETIMEDOUT;
+        default: return http_status >= 200 && http_status < 300 ? 0 : EIO;
     }
 }
 

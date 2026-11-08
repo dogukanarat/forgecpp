@@ -4,7 +4,6 @@
 
 #include "forge/component.hpp"
 #include "forge/control.hpp"
-#include "forge/proto.hpp"
 #include "forge/trace.hpp"
 #include "forge/version.hpp"
 #include "forge/web.hpp"
@@ -26,10 +25,8 @@ class WebLog {
 public:
     WebLog(std::shared_ptr<http::EventStream> stream, std::size_t history, log::Level min)
         : stream_(std::move(stream)), max_(std::max<std::size_t>(history, 1)), min_(min) {}
-    ~WebLog() { log::remove_listener(id_); }
-
     void start() {
-        id_ = log::add_listener([this](const v1::LogRecord& r) { on_record(r); });
+        subscription_ = log::add_listener([this](const log::Record& r) { on_record(r); });
     }
 
     json history() {
@@ -38,17 +35,16 @@ public:
     }
 
 private:
-    void on_record(const v1::LogRecord& r) {
-        const auto level = log::parse_level(r.level());
-        if (level < min_) return;
-        const auto t = static_cast<std::time_t>(r.time_unix_ns() / 1000000000);
-        const auto ms = (r.time_unix_ns() / 1000000) % 1000;
+    void on_record(const log::Record& r) {
+        if (r.level < min_) return;
+        const auto t = static_cast<std::time_t>(r.time_unix_ns / 1000000000);
+        const auto ms = (r.time_unix_ns / 1000000) % 1000;
         std::tm tm{};
         ::localtime_r(&t, &tm);
         json entry{{"time", std::format("{:02}:{:02}:{:02}.{:03}", tm.tm_hour, tm.tm_min, tm.tm_sec, ms)},
-                   {"level", r.level()},
-                   {"logger", r.logger()},
-                   {"message", r.message()}};
+                   {"level", log::to_string(r.level)},
+                   {"logger", r.logger},
+                   {"message", r.message}};
         {
             std::lock_guard lock(mutex_);
             history_.push_back(entry);
@@ -62,7 +58,7 @@ private:
     log::Level min_;
     std::mutex mutex_;
     std::deque<json> history_;
-    int id_ = -1;
+    Subscription subscription_;  // last: it goes first, before what on_record uses
 };
 
 void HttpFrontend::create(const Config& cfg) {
@@ -88,11 +84,9 @@ void HttpFrontend::create(const Config& cfg) {
         auto& health = app_.health();
         const auto h = health.snapshot();
         json components = json::array();
-        for (const auto& c : h.components()) {
-            components.push_back({{"name", c.name()},
-                                  {"state", to_string(static_cast<HealthState>(c.state()))},
-                                  {"message", c.message()},
-                                  {"critical", c.critical()}});
+        for (const auto& c : h.components) {
+            components.push_back(
+                {{"name", c.name}, {"state", to_string(c.state)}, {"message", c.message}, {"critical", c.critical}});
         }
         const auto overall = health.overall();
         const auto loop_age = app_.loop_age_ms();
@@ -171,7 +165,7 @@ void HttpFrontend::create_web(const Config& cfg) {
                     {"pid", ::getpid()},
                     {"uptime_s", std::chrono::duration_cast<std::chrono::seconds>(app_.uptime()).count()},
                     {"logs", weblog_ != nullptr},
-                    {"protocol", "forge.v1"},
+                    {"protocol", "c2"},
                     {"endpoints", app_.endpoints()}};
     });
     // What needs the main loop waits at most [forge].request_timeout_ms for it.
@@ -266,40 +260,47 @@ void HttpFrontend::create_web(const Config& cfg) {
 
     // Read-only views that do not need the main loop.
     http_->get_json(api + "/metrics", [](const http::Request& req) {
-        return proto::to_json(metrics::registry().snapshot(req.get_param_value("prefix")));
+        return metrics::to_json(metrics::registry().snapshot(req.get_param_value("prefix")));
     });
     http_->get_json(api + "/audit", [this](const http::Request& req) {
         json a = json::array();
         const auto n = req.has_param("limit") ? std::stoul(req.get_param_value("limit")) : 200;
-        for (const auto& r : app_.audit().list(n)) a.push_back(proto::to_json(r));
+        for (const auto& r : app_.audit().list(n)) a.push_back(to_json(r));
         return a;
     });
-    http_->get_json(api + "/health", [this](const http::Request&) { return proto::to_json(app_.health().snapshot()); });
-    http_->get_json(api + "/streams", [this](const http::Request&) { return proto::to_json(app_.stream_list()); });
+    http_->get_json(api + "/health", [this](const http::Request&) { return to_json(app_.health().snapshot()); });
+    http_->get_json(api + "/streams", [this](const http::Request&) {
+        json a = json::array();
+        for (const auto& i : app_.stream_list()) a.push_back(zmq::to_json(i));
+        return json{{"streams", std::move(a)}};
+    });
     http_->get(api + "/trace", [](const http::Request& req, http::Response& res) {
         const unsigned seconds = req.has_param("seconds") ? std::stoul(req.get_param_value("seconds")) : 0;
         auto d = trace::dump(seconds);
         res.set_header("Content-Disposition", "attachment; filename=\"trace.json\"");
         res.set_content(std::move(d.chrome_json), "application/json");
     });
-    // forge.v1 over HTTP: protobuf (application/x-protobuf) or its JSON mapping.
-    http_->post(api + "/rpc", [&control](const http::Request& req, http::Response& res) {
-        Caller transport = control.identify("http-rpc", req.remote_addr, {}, req.get_header_value("Authorization"));
-        const auto type = req.get_header_value("Content-Type");
-        if (type.find("json") != std::string::npos) {
-            v1::Request r;
-            try {
-                proto::from_json_string(req.body, &r);
-            } catch (const std::exception& e) {
-                throw Error(400, e.what());
-            }
-            Caller c = control.identify("http-rpc", r.client().empty() ? req.remote_addr : r.client(), r.token(),
-                                        req.get_header_value("Authorization"));
-            res.set_content(proto::to_json_string(control.handle(r, c)), "application/json");
-        } else {
-            // A user from the Authorization header wins; otherwise Request.token decides.
-            res.set_content(control.handle_bytes(req.body, transport, req.remote_addr), "application/x-protobuf");
+    // The commands of the program, the same handlers as over a link, in JSON.
+    http_->get_json(api + "/tmtc", [this](const http::Request&) {
+        json list = json::array();
+        for (const auto* c : app_.commands().list()) {
+            list.push_back({{"id", c->id},
+                            {"name", c->name},
+                            {"request", c->req ? json(c->req->name) : json(nullptr)},
+                            {"reply", c->rsp->name},
+                            {"push", c->is_push()}});
         }
+        return list;
+    });
+    http_->post_json(api + "/tmtc/:name", [this, &control](const http::Request& req, const json& body) {
+        const auto& name = req.path_params.at("name");
+        const bool number = !name.empty() && name.find_first_not_of("0123456789") == std::string::npos;
+        const auto* cmd = number && name.size() <= 5 ? app_.commands().find(static_cast<std::uint16_t>(std::stoul(name)))
+                                                     : app_.commands().find(std::string_view(name));
+        if (!cmd) throw Error(404, "no command '" + name + "'");
+        if (cmd->is_push()) throw Error(501, "'" + name + "' is a report, not a command");
+        CallerScope caller(control.identify("web", req.remote_addr, {}, req.get_header_value("Authorization")));
+        return cmd->run_json(body);
     });
     http_->get_json(api + "/logs", [this](const http::Request&) {
         return weblog_ ? weblog_->history() : json::array();
@@ -313,10 +314,10 @@ void HttpFrontend::create_web(const Config& cfg) {
         if (!alarms.acknowledge(id, "web " + req.remote_addr)) throw Error(404, "unknown alarm '" + id + "'");
         return to_json(*alarms.get(id));
     });
-    alarms.on_change([this] { alarms_dirty_ = true; });
-    app_.audit().on_record([this](const v1::AuditRecord& r) {
-        if (events_) events_->publish("audit", proto::to_json(r));
-    });
+    subscriptions_.push_back(alarms.on_change([this] { alarms_dirty_ = true; }));
+    subscriptions_.push_back(app_.audit().on_record([this](const Audit::Record& r) {
+        if (events_) events_->publish("audit", to_json(r));
+    }));
     http_->events(api + "/events", events_);
 
     // "/" shows the application's own index.html when there is one, else the dashboard.
@@ -337,6 +338,7 @@ void HttpFrontend::start(const Config& cfg) {
 
 void HttpFrontend::stop() {
     if (http_) http_->stop();
+    subscriptions_.clear();
     weblog_.reset();
 }
 

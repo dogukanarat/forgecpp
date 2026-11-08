@@ -16,6 +16,9 @@
 // Colours: level colours on a terminal (not when it is not one, not with
 // NO_COLOR, not under journald: there each line carries its syslog priority).
 
+#include "forge/subscription.hpp"
+#include "forge/trace.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -28,10 +31,6 @@
 #include <utility>
 #include <vector>
 
-namespace forge::v1 {
-class LogRecord;
-}
-
 namespace forge {
 namespace log {
 
@@ -40,7 +39,7 @@ enum class Level : int { trace = 0, debug, info, warn, error, critical, off };
 /// Parse a level name (trace|debug|info|warn|warning|error|err|critical|fatal|off|none).
 /// Throws std::invalid_argument for unknown names.
 Level parse_level(std::string_view level);
-/// "trace", "debug", "info", "warning", "error", "critical", "off" (JSON, forge.v1).
+/// "trace", "debug", "info", "warning", "error", "critical", "off" (JSON, log records).
 std::string_view to_string(Level level);
 /// Three letters, so log lines line up: "TRC", "DBG", "INF", "WRN", "ERR", "CRT", "OFF".
 std::string_view short_name(Level level);
@@ -158,14 +157,21 @@ void set_logger_level(const std::string& logger, std::string_view level);
 std::vector<std::pair<std::string, std::string>> logger_levels();
 
 // --- history and live listeners (independent of the web UI) ---------------------
+struct Record {
+    std::int64_t time_unix_ns = 0;
+    Level level = Level::info;
+    std::string logger;
+    std::string message;
+    std::uint64_t thread = 0;
+    trace::Context trace;  ///< invalid when the line had none
+};
+
 /// Newest last; limit 0 = everything kept.
-std::vector<v1::LogRecord> history(std::size_t limit = 0);
-using Listener = std::function<void(const v1::LogRecord&)>;
-/// Called for every record that is logged (on the logging background thread).
-/// A listener must not wait for a thread that is removing a listener.
-int add_listener(Listener listener);
-/// Returns once the listener is not running and will not be called again.
-void remove_listener(int id);
+std::vector<Record> history(std::size_t limit = 0);
+/// Called for every record that is logged, on the logging thread, until the
+/// Subscription goes. A listener must not wait for a thread that is ending a
+/// Subscription.
+[[nodiscard]] Subscription add_listener(std::function<void(const Record&)> listener);
 
 /// Where terminal lines go instead of stderr while it is set (forge::Console
 /// prints them above the line being typed). `plain` is the line as text,

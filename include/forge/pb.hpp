@@ -70,6 +70,9 @@ Status encode(const Type& type, const void* msg, std::span<std::uint8_t> out, st
 /// EBADMSG when the bytes are not a valid message of `type`. `msg` is reset first.
 Status decode(const Type& type, std::span<const std::uint8_t> in, void* msg);
 
+/// Bytes `msg` takes when encoded.
+std::size_t encoded_size(const Type& type, const void* msg);
+
 template <Message T>
 Status encode(const T& msg, std::span<std::uint8_t> out, std::size_t& written) {
     return encode(*type_of<T>, &msg, out, written);

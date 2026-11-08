@@ -4,7 +4,7 @@
 // ControlService, the control registry (web::Dashboard) and application code
 // throw it; each channel maps it to its own form:
 //   HTTP          status code, {"error": message} or `details` as the body
-//   forge.v1      Reply.status / Reply.error
+//   commands      NACK with the errno of the status (forge::errno_for_http)
 //   console       "error: message"
 //
 // http::HttpError derives from it, so code that throws HttpError keeps

@@ -78,14 +78,11 @@ else()
     set(FORGECPP_CPPZMQ_TARGET cppzmq-static)
 endif()
 set(FORGECPP_HAS_ZMQ ON)
-# protobuf: the bundled one installs a CMake package; distributions ship FindProtobuf.
+# Messages are nanopb structs (third_party/nanopb); the build only needs protoc
+# and Python's protobuf module to generate them (cmake/ForgeHelpers.cmake).
+# The bundled protobuf installs protoc with a CMake package.
 find_package(protobuf CONFIG QUIET)
-if(NOT protobuf_FOUND)
-    find_package(Protobuf REQUIRED)
-endif()
-if(NOT TARGET protobuf::libprotobuf)
-    message(FATAL_ERROR "protobuf found but protobuf::libprotobuf is missing")
-endif()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(FORGECPP_PROTO_DIR "${PROJECT_SOURCE_DIR}/proto")
 
 # BS::thread_pool is a single header without a CMake package; we ship it
@@ -108,6 +105,7 @@ include("${PROJECT_SOURCE_DIR}/cmake/ForgeHelpers.cmake")
 
 add_library(forgecpp
     src/application.cpp
+    src/app/commands.cpp
     src/app/http_frontend.cpp
     src/app/messaging.cpp
     src/app/remote_console.cpp
@@ -130,7 +128,6 @@ add_library(forgecpp
     src/log.cpp
     src/metrics.cpp
     src/pb.cpp
-    src/proto.cpp
     src/rt.cpp
     src/scheduler.cpp
     src/status.cpp
@@ -142,9 +139,8 @@ add_library(forgecpp
     src/zmq.cpp)
 add_library(forgecpp::forgecpp ALIAS forgecpp)
 
-# forge.v1 messages, generated into the library (forge/v1/*.pb.h).
-_forge_add_protobuf_legacy(forgecpp ROOT proto PROTOS
-    forge/v1/common.proto forge/v1/observability.proto forge/v1/control.proto forge/v1/hub.proto
+# The framework's messages, generated into the library (forge/messages.forge.hpp, ...).
+forge_add_proto(forgecpp ROOT proto PROTOS forge/messages.proto forge/hub.proto
     PYTHON "${PROJECT_BINARY_DIR}/python")
 
 # Built-in dashboard (src/web/*) compiled into the library, served at /forge/.
@@ -167,8 +163,7 @@ target_link_libraries(forgecpp
         nlohmann_json::nlohmann_json
         tomlplusplus::tomlplusplus
         httplib::httplib
-        ${FORGECPP_CPPZMQ_TARGET}
-        protobuf::libprotobuf)
+        ${FORGECPP_CPPZMQ_TARGET})
 
 # linenoise (BSD-2-Clause, third_party/linenoise): line editing for forge::Console,
 # compiled into the library with hidden symbols (no clash with an application's own copy).
@@ -270,7 +265,7 @@ install(TARGETS ${_forge_targets}
 install(DIRECTORY include/forge DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         FILES_MATCHING PATTERN "*.hpp")
 install(DIRECTORY "${PROJECT_BINARY_DIR}/forge_proto/forgecpp/forge" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-        FILES_MATCHING PATTERN "*.pb.h")
+        FILES_MATCHING PATTERN "*.pb.h" PATTERN "*.forge.hpp")
 install(DIRECTORY proto/forge DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp/proto)
 # forge-v1 Python package: the generated forge/v1/*_pb2.py and the framing
 # helpers, in site-packages (from a build directory: PYTHONPATH=<build>/python).
@@ -308,7 +303,7 @@ install(FILES
     DESTINATION ${FORGECPP_CMAKE_DIR})
 
 # pkg-config for non-CMake consumers (plain Makefiles, autotools, meson).
-set(FORGECPP_PC_REQUIRES "protobuf libzmq")
+set(FORGECPP_PC_REQUIRES "libzmq")
 if(TARGET OpenSSL::SSL)
     string(APPEND FORGECPP_PC_REQUIRES " openssl")
 endif()

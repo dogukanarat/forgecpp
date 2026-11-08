@@ -1,0 +1,364 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+
+package forge;
+
+// The commands every forgecpp program answers, and the messages it publishes.
+//
+// Numbers 0x0001..0x00FF belong to forgecpp; an application numbers its own
+// commands from 0x0100 (docs/CODING_STANDARDS.md, F-008). Every field has a
+// bound, so no message allocates.
+//
+// Control values, command arguments and results are JSON text: they are the
+// web panel's values (a number, a flag, a text, sometimes a list), and the
+// binary side only passes them through.
+//
+// A list (controls, alarms, logs, ...) comes back in parts: one reply per
+// page, all but the last with c2's "more" flag.
+
+enum msg_id {
+    none = 0;
+
+    ping = 0x01;
+    info = 0x02;
+    controls = 0x03;
+    get = 0x04;
+    set = 0x05;
+    press = 0x06;
+    call = 0x07;
+    commands = 0x08;
+    alarms = 0x09;
+    ack = 0x0A;
+    logs = 0x0B;
+    metrics = 0x0C;
+    audit = 0x0D;
+    lease = 0x0E;
+    release = 0x0F;
+    health = 0x10;
+    streams = 0x11;
+    log_level = 0x12;
+
+    // Reports: published, never requested.
+    state_changed = 0x80;   // state_report
+    alarm_changed = 0x81;   // alarm
+    log_written = 0x82;     // log_record
+    audit_written = 0x83;   // audit_record
+    health_changed = 0x84;  // health_reply
+}
+
+enum severity {
+    severity_unspecified = 0;
+    info_level = 1;
+    warning = 2;
+    error = 3;
+    critical = 4;
+}
+
+message trace_context {
+    bytes trace_id = 1 [(nanopb).max_size = 16, (nanopb).fixed_length = true];
+    bytes span_id = 2 [(nanopb).max_size = 8, (nanopb).fixed_length = true];
+}
+
+// --- ping, info ------------------------------------------------------------------------
+
+message ping_request {
+    uint32 token = 1;  // sent back unchanged
+}
+
+message ping_reply {
+    uint32 token = 1;
+    uint64 uptime_ms = 2;
+}
+
+message info_request {}
+
+message endpoint {
+    string name = 1 [(nanopb).max_size = 16];  // control, events, data, http, telnet
+    string url = 2 [(nanopb).max_size = 96];
+}
+
+message info_reply {
+    string name = 1 [(nanopb).max_size = 48];
+    string version = 2 [(nanopb).max_size = 32];
+    string description = 3 [(nanopb).max_size = 160];
+    string forgecpp = 4 [(nanopb).max_size = 16];
+    string host = 5 [(nanopb).max_size = 64];
+    uint32 pid = 6;
+    int64 uptime_s = 7;
+    repeated endpoint endpoints = 8 [(nanopb).max_count = 8];
+}
+
+// --- controls and commands -------------------------------------------------------------
+
+message controls_request {}
+
+message control {
+    string id = 1 [(nanopb).max_size = 48];
+    string group = 2 [(nanopb).max_size = 64];
+    string label = 3 [(nanopb).max_size = 64];
+    string kind = 4 [(nanopb).max_size = 16];  // button | toggle | slider | number | text | select | value
+    string value = 5 [(nanopb).max_size = 256];  // JSON
+    string unit = 6 [(nanopb).max_size = 16];
+    string help = 7 [(nanopb).max_size = 160];
+    bool has_range = 8;
+    double min = 9;
+    double max = 10;
+    double step = 11;
+    int32 precision = 12;  // -1: not set
+    repeated string options = 13 [(nanopb).max_count = 16, (nanopb).max_size = 48];
+    bool readonly = 14;
+    string role = 15 [(nanopb).max_size = 16];  // needed to change it
+    bool persistent = 16;
+    string lease_holder = 17 [(nanopb).max_size = 64];
+}
+
+message controls_reply {
+    string title = 1 [(nanopb).max_size = 64];
+    repeated control controls = 2 [(nanopb).max_count = 8];
+}
+
+message get_request {
+    string id = 1 [(nanopb).max_size = 48];
+}
+
+message get_reply {
+    string value = 1 [(nanopb).max_size = 256];  // JSON
+}
+
+message set_request {
+    string id = 1 [(nanopb).max_size = 48];
+    string value = 2 [(nanopb).max_size = 256];  // JSON
+}
+
+message set_reply {
+    string value = 1 [(nanopb).max_size = 256];  // the value now, JSON
+}
+
+message press_request {
+    string id = 1 [(nanopb).max_size = 48];
+}
+
+message press_reply {}
+
+message call_request {
+    string id = 1 [(nanopb).max_size = 48];
+    string args = 2 [(nanopb).max_size = 512];  // JSON object
+}
+
+message call_reply {
+    string result = 1 [(nanopb).max_size = 1024];  // JSON
+}
+
+message commands_request {}
+
+message parameter {
+    string name = 1 [(nanopb).max_size = 32];
+    string type = 2 [(nanopb).max_size = 16];  // number | integer | bool | text | select
+    string help = 3 [(nanopb).max_size = 160];
+    string default_value = 4 [(nanopb).max_size = 128];  // JSON
+    repeated string options = 5 [(nanopb).max_count = 8, (nanopb).max_size = 48];
+    bool required = 6;
+}
+
+message command {
+    string id = 1 [(nanopb).max_size = 48];
+    string label = 2 [(nanopb).max_size = 64];
+    string help = 3 [(nanopb).max_size = 160];
+    string role = 4 [(nanopb).max_size = 16];
+    repeated parameter params = 5 [(nanopb).max_count = 8];
+}
+
+message commands_reply {
+    repeated command commands = 1 [(nanopb).max_count = 2];
+}
+
+// --- leases ----------------------------------------------------------------------------
+
+message lease_request {
+    string id = 1 [(nanopb).max_size = 72];  // control id or "group:<title>"
+    uint32 seconds = 2;                       // 0: 60
+}
+
+message lease_reply {
+    uint32 seconds = 1;
+}
+
+message release_request {
+    string id = 1 [(nanopb).max_size = 72];
+}
+
+message release_reply {}
+
+// --- alarms ----------------------------------------------------------------------------
+
+message alarm {
+    string id = 1 [(nanopb).max_size = 48];
+    severity severity = 2;
+    string message = 3 [(nanopb).max_size = 160];
+    bool active = 4;
+    bool acknowledged = 5;
+    string acknowledged_by = 6 [(nanopb).max_size = 64];
+    uint64 count = 7;
+    int64 raised_unix_ms = 8;
+    int64 last_unix_ms = 9;
+    int64 cleared_unix_ms = 10;       // 0: not cleared
+    int64 acknowledged_unix_ms = 11;  // 0: not acknowledged
+}
+
+message alarms_request {}
+
+message alarms_reply {
+    repeated alarm alarms = 1 [(nanopb).max_count = 16];
+}
+
+message ack_request {
+    string id = 1 [(nanopb).max_size = 48];  // "all": every alarm
+}
+
+message ack_reply {
+    uint32 count = 1;
+}
+
+// --- logs, audit -----------------------------------------------------------------------
+
+message log_record {
+    int64 time_unix_ns = 1;
+    string level = 2 [(nanopb).max_size = 12];
+    string logger = 3 [(nanopb).max_size = 48];
+    string message = 4 [(nanopb).max_size = 256];  // a longer line is cut here; the log file has all of it
+    uint64 thread = 5;
+    trace_context trace = 6;
+}
+
+message logs_request {
+    uint32 limit = 1;  // newest records; 0: all that are kept
+}
+
+message logs_reply {
+    repeated log_record records = 1 [(nanopb).max_count = 16];
+}
+
+message log_level_request {
+    string logger = 1 [(nanopb).max_size = 48];  // empty: every logger
+    string level = 2 [(nanopb).max_size = 12];
+}
+
+message log_level_reply {}
+
+message audit_record {
+    int64 time_unix_ns = 1;
+    string channel = 2 [(nanopb).max_size = 16];  // web | link | console | telnet | internal
+    string client = 3 [(nanopb).max_size = 64];
+    string user = 4 [(nanopb).max_size = 32];
+    string action = 5 [(nanopb).max_size = 16];   // set | press | call | ack | lease | release | log-level
+    string target = 6 [(nanopb).max_size = 72];
+    string old_value = 7 [(nanopb).max_size = 128];  // JSON, cut when longer
+    string new_value = 8 [(nanopb).max_size = 128];  // JSON, cut when longer
+    bool ok = 9;
+    string error = 10 [(nanopb).max_size = 160];
+    trace_context trace = 11;
+}
+
+message audit_request {
+    uint32 limit = 1;
+}
+
+message audit_reply {
+    repeated audit_record records = 1 [(nanopb).max_count = 8];
+}
+
+// --- metrics, health, streams ----------------------------------------------------------
+
+message label {
+    string key = 1 [(nanopb).max_size = 32];
+    string value = 2 [(nanopb).max_size = 64];
+}
+
+enum metric_type {
+    metric_type_unspecified = 0;
+    counter = 1;
+    gauge = 2;
+    histogram = 3;
+}
+
+message metric {
+    string name = 1 [(nanopb).max_size = 64];
+    string help = 2 [(nanopb).max_size = 160];
+    metric_type type = 3;
+    string unit = 4 [(nanopb).max_size = 16];
+    double value = 5;                                          // counter, gauge
+    repeated double bounds = 6 [(nanopb).max_count = 24];      // histogram upper bounds
+    repeated uint64 buckets = 7 [(nanopb).max_count = 25];     // cumulative counts; the last is +Inf
+    uint64 count = 8;
+    double sum = 9;
+    repeated label labels = 10 [(nanopb).max_count = 4];
+}
+
+message metrics_request {
+    string prefix = 1 [(nanopb).max_size = 64];
+}
+
+message metrics_reply {
+    int64 time_unix_ns = 1;
+    repeated metric metrics = 2 [(nanopb).max_count = 8];
+}
+
+enum health_state {
+    health_state_unspecified = 0;
+    ok = 1;
+    degraded = 2;
+    failed = 3;
+}
+
+message component_health {
+    string name = 1 [(nanopb).max_size = 48];
+    health_state state = 2;
+    string message = 3 [(nanopb).max_size = 160];
+    bool critical = 4;
+    int64 since_unix_ms = 5;
+}
+
+message health_request {}
+
+message health_reply {
+    health_state state = 1;  // the worst of the components
+    repeated component_health components = 2 [(nanopb).max_count = 16];
+}
+
+message stream_info {
+    string name = 1 [(nanopb).max_size = 48];
+    string endpoint = 2 [(nanopb).max_size = 96];
+    string topic = 3 [(nanopb).max_size = 48];
+    string type = 4 [(nanopb).max_size = 64];
+    string policy = 5 [(nanopb).max_size = 8];  // all | latest
+    double max_rate_hz = 6;
+    uint64 subscribers = 7;
+    uint64 sent = 8;
+    uint64 dropped = 9;
+}
+
+message streams_request {}
+
+message streams_reply {
+    repeated stream_info streams = 1 [(nanopb).max_count = 8];
+}
+
+// --- reports and the stream header -----------------------------------------------------
+
+message state_report {
+    string id = 1 [(nanopb).max_size = 48];
+    string value = 2 [(nanopb).max_size = 256];  // JSON
+}
+
+// In front of the body of every message on a ZeroMQ stream or event socket.
+message stream_header {
+    string source = 1 [(nanopb).max_size = 48];  // program name
+    string host = 2 [(nanopb).max_size = 64];
+    uint32 pid = 3;
+    string topic = 4 [(nanopb).max_size = 48];
+    uint64 seq = 5;                              // per topic, +1 per message: a gap means a drop
+    int64 time_unix_ns = 6;
+    string type = 7 [(nanopb).max_size = 64];    // full name of the body message
+    trace_context trace = 8;
+}

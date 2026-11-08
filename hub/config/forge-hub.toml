@@ -30,11 +30,11 @@ systemd = true                  # follow the applications' units (state, restart
 # description = "RTSP camera server"
 # group = "Video"
 
-# forge.v1: the hub is a forgecpp application too (forgectl, panels)
+# Commands and events: the hub is a forgecpp application too (forgectl, panels)
 [forge]
 control = "tcp://*:5551"        # forgectl -e tcp://<device>:5551 call restart name=<app>
 events = "tcp://*:5552"         # alarms (crashes, restarts given up), state
-data = "tcp://*:5553"           # stream "apps" (forge.v1.AppList)
+data = "tcp://*:5553"           # stream "apps" (forge.hub.app_status, one per application)
 
 [console]
 telnet = ""                     # e.g. "0.0.0.0:2300" for a remote console

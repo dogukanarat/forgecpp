@@ -243,24 +243,16 @@ nlohmann::json Alarms::summary() const {
             {"highest", highest ? nlohmann::json(to_string(*highest)) : nlohmann::json(nullptr)}};
 }
 
-void Alarms::on_change(Listener listener) {
-    std::lock_guard lock(mutex_);
-    listeners_.push_back(std::move(listener));
-}
-
-void Alarms::notify() {
-    std::vector<Listener> listeners;
-    {
-        std::lock_guard lock(mutex_);
-        listeners = listeners_;
-    }
-    for (auto& l : listeners) {
+Subscription Alarms::on_change(std::function<void()> listener) {
+    return listeners_.add([l = std::move(listener)] {
         try {
             l();
         } catch (const std::exception& e) {
             log::error("alarm listener failed: {}", e.what());
         }
-    }
+    });
 }
+
+void Alarms::notify() { listeners_.notify(); }
 
 }  // namespace forge

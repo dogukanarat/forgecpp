@@ -9,11 +9,11 @@
 //   app.metrics().gauge_fn("rx.queue", [this] { return double(queue_.size()); });
 //
 // Exposed on GET /metrics (Prometheus text format, names with '.' -> '_'),
-// /forge/api/metrics (JSON), forge.v1 GetMetrics (forgectl metrics) and the
+// /forge/api/metrics (JSON), the "metrics" command (forgectl metrics) and the
 // "metrics" event topic. Instruments are created once and never removed, so
 // keep the returned references; updates are lock-free.
 
-#include "forge/v1/observability.pb.h"
+#include "forge/json.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -79,6 +79,28 @@ private:
     std::chrono::steady_clock::time_point start_;
 };
 
+enum class Type { counter, gauge, histogram };
+const char* to_string(Type t);
+
+/// One metric as read at a moment.
+struct Sample {
+    std::string name, help, unit;
+    Type type = Type::counter;
+    double value = 0;                    ///< counter, gauge (NaN when a computed gauge failed)
+    std::vector<double> bounds;          ///< histogram upper bounds
+    std::vector<std::uint64_t> buckets;  ///< histogram counts, cumulative, per bound
+    std::uint64_t count = 0;             ///< histogram observations
+    double sum = 0;
+    std::map<std::string, std::string> labels;
+};
+
+struct Snapshot {
+    std::int64_t time_unix_ns = 0;
+    std::vector<Sample> metrics;
+};
+
+json to_json(const Snapshot& s);
+
 class Registry {
 public:
     Registry() = default;
@@ -97,21 +119,21 @@ public:
     /// Labels added to every exported metric (e.g. app="radio-controller").
     void set_labels(std::map<std::string, std::string> labels);
 
-    v1::MetricsSnapshot snapshot(const std::string& prefix = {}) const;
+    Snapshot snapshot(const std::string& prefix = {}) const;
     /// Prometheus text exposition format 0.0.4.
     std::string prometheus() const;
     std::vector<std::string> names() const;
 
 private:
     struct Entry {
-        v1::Metric::Type type = v1::Metric::TYPE_UNSPECIFIED;
+        Type type = Type::counter;
         std::string help, unit;
         std::unique_ptr<Counter> counter;
         std::unique_ptr<Gauge> gauge;
         std::unique_ptr<Histogram> histogram;
         std::function<double()> fn;
     };
-    Entry& entry(const std::string& name, v1::Metric::Type type, const std::string& help, const std::string& unit);
+    Entry& entry(const std::string& name, Type type, const std::string& help, const std::string& unit);
 
     mutable std::mutex mutex_;
     std::map<std::string, Entry> entries_;

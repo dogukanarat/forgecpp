@@ -1,6 +1,6 @@
 /* System pages of the control panel (/forge/): health, metrics, streams,
    audit trail, leases and the flight recorder. Same data as forgectl and the
-   forge.v1 control endpoint, read from /forge/api/*. */
+   command endpoint, read from /forge/api/*. */
 (function () {
   'use strict';
 
@@ -79,7 +79,7 @@
       const filter = $('forge-metrics-filter').value.trim().toLowerCase();
       const rows = [];
       (snap.metrics || []).forEach(function (m) {
-        const hist = m.type === 'TYPE_HISTOGRAM', n = Number(m.count || 0);
+        const hist = m.type === 'histogram', n = Number(m.count || 0);
         const v = hist ? (n ? Number(m.sum || 0) / n : 0) : Number(m.value || 0);
         const h = trends[m.name] = (trends[m.name] || []).concat([v]).slice(-40);
         if (filter && m.name.toLowerCase().indexOf(filter) < 0) return;
@@ -113,9 +113,7 @@
     audit: async function () {
       const list = await forge.api('audit?limit=200');
       fill('forge-audit-rows', list.slice().reverse().map(function (a) {
-        const trace = a.trace && a.trace.trace_id ? atob(a.trace.trace_id).split('').map(function (ch) {
-          return ch.charCodeAt(0).toString(16).padStart(2, '0');
-        }).join('').slice(0, 16) : '';
+        const trace = a.trace_id ? a.trace_id.slice(0, 16) : '';
         return row([td(time(Number(a.time_unix_ns) / 1e6)), td(a.channel), td(a.client), td(a.user), td(a.action),
                     td(a.target), td(a.old_value !== undefined || a.new_value !== undefined
                       ? short(a.old_value) + ' → ' + short(a.new_value) : ''),

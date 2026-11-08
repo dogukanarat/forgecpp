@@ -7,7 +7,7 @@
 //   LayoutStore      card layouts of the web pages ([web].layout_file)
 //   Watchdog         systemd watchdog pings, paused when a critical component failed
 //   HubRegistration  registration with forge-hub ([hub])
-//   Messaging        forge.v1 on ZeroMQ: events, streams, control endpoint ([forge])
+//   Messaging        ZeroMQ: events, streams and the command endpoint ([forge])
 //   RemoteConsole    command registry, local REPL and telnet ([console])
 //   HttpFrontend     HTTP server, framework routes, web events and logs ([http], [web])
 
@@ -18,12 +18,15 @@
 #include "forge/telnet.hpp"
 #include "forge/zmq.hpp"
 
+#include "forge/hub.forge.hpp"
+
 #include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace forge::detail {
 
@@ -96,7 +99,7 @@ public:
     explicit HubRegistration(Application& app) : app_(app) {}
     void start(const Config& cfg);
     /// Tell the hub why the application ends.
-    void stop(v1::Unregister::Reason reason, int exit_code);
+    void stop(forge_hub_unregister_reason reason, int exit_code);
     void reset() { client_.reset(); }
 
 private:
@@ -104,33 +107,42 @@ private:
     std::unique_ptr<hub::Client> client_;
 };
 
-/// forge.v1 on ZeroMQ: [forge].events, [forge].data (streams), [forge].control.
+/// ZeroMQ: [forge].events, [forge].data (streams), [forge].control (commands).
 class Messaging {
 public:
     explicit Messaging(Application& app) : app_(app) {}
     void start(const Config& cfg);
-    /// Stop the control endpoint (may wait for requests on the main loop).
+    /// Stop the command endpoint (may wait for commands on the main loop).
     void stop_control();
     void stop();
     void reset();
 
-    zmq::Stream& stream(const std::string& name, const std::string& type, const zmq::StreamOptions& options);
-    v1::StreamList stream_list() const;
+    zmq::Stream& stream(const std::string& name, const pb::Type& type, const zmq::StreamOptions& options);
+    std::vector<zmq::StreamInfo> stream_list() const;
     void add_endpoints(std::map<std::string, std::string>& e) const;
-    void publish_event(const std::string& topic, const google::protobuf::Message& body);
-    /// "state" event with the values that changed since the last one (main loop).
+    /// "state" events for the values that changed since the last call (main loop).
     void publish_state(const json& current);
     bool wants_state() const;
 
 private:
+    template <pb::Message T>
+    void publish_event(const char* topic, const T& body);
+
     Application& app_;
     std::unique_ptr<zmq::Publisher> events_pub_;
     mutable std::mutex data_mutex_;
     std::unique_ptr<zmq::Publisher> data_pub_;
     std::unique_ptr<zmq::Server> control_server_;
-    int log_listener_ = -1;
+    std::vector<Subscription> subscriptions_;
     json last_state_ = json::object();
 };
+
+/// The built-in commands (commands.cpp), and the conversions the events share.
+void register_builtin_commands(Application& app);
+void fill(forge_alarm& out, const Alarm& a);
+void fill(forge_log_record& out, const log::Record& r);
+void fill(forge_audit_record& out, const Audit::Record& r);
+void fill(forge_health_reply& out, const Health::Report& h, std::size_t from = 0);
 
 /// Console commands (one registry for -i and telnet), the local REPL, telnet.
 class RemoteConsole {
@@ -179,6 +191,7 @@ private:
     std::unique_ptr<http::Server> http_;
     std::shared_ptr<http::EventStream> events_;
     std::shared_ptr<WebLog> weblog_;  // log lines for the dashboard (web.logs)
+    std::vector<Subscription> subscriptions_;
     std::atomic<bool> alarms_dirty_{true};
     LayoutStore layouts_;
 };

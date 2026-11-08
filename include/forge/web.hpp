@@ -155,7 +155,7 @@ public:
     Control button(const std::string& id, const std::string& label, std::function<void()> action);
 
     /// Command with parameters (RPC): the panel shows a form, the console
-    /// takes `call <id> name=value ...`, forge.v1 has Request.call. Arguments
+    /// takes `call <id> name=value ...`, forgectl and links the "call" command. Arguments
     /// are validated (types, ranges, choices, defaults) before `handler` runs
     /// on the main loop; its JSON result goes back to the caller.
     CommandRef command(const std::string& id, const std::string& label, std::vector<Param> params,

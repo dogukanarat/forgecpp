@@ -2,7 +2,6 @@
 
 #include "forge/crash.hpp"
 #include "forge/log_rt.hpp"
-#include "forge/proto.hpp"
 #include "forge/trace.hpp"
 
 #include <nlohmann/json.hpp>
@@ -246,23 +245,20 @@ public:
         return w;
     }
 
-    std::vector<v1::LogRecord> history(std::size_t limit) {
+    std::vector<Record> history(std::size_t limit) {
         std::lock_guard lock(mutex_);
         const std::size_t n = limit == 0 ? records_.size() : std::min(limit, records_.size());
         return {records_.end() - static_cast<std::ptrdiff_t>(n), records_.end()};
     }
-    int add(Listener l) {
-        std::lock_guard lock(listener_mutex_);
-        listeners_[++next_] = std::move(l);
-        return next_;
-    }
-    /// Returns when the listener is no longer running: what it uses may be destroyed then.
-    void remove(int id) {
-        {
-            std::lock_guard lock(listener_mutex_);
-            listeners_.erase(id);
-        }
-        std::lock_guard wait(call_mutex_);  // recursive: a listener may remove itself
+    Subscription add(std::function<void(const Record&)> listener) {
+        // On the logging thread nothing can log about a listener that throws: stderr it is.
+        return listeners_.add([l = std::move(listener)](const Record& r) {
+            try {
+                l(r);
+            } catch (const std::exception& e) {
+                write_fd(STDERR_FILENO, std::string("forge log: a listener failed: ") + e.what() + "\n");
+            }
+        });
     }
 
     void write_log(quill::MacroMetadata const* metadata, std::uint64_t timestamp, std::string_view thread_id,
@@ -286,13 +282,13 @@ public:
             trace_hex = tags.substr(0, colon);
         }
 
-        v1::LogRecord record;
-        record.set_time_unix_ns(static_cast<std::int64_t>(timestamp));
-        record.set_level(std::string(to_string(e.level)));
-        record.set_logger(std::string(logger_name));
-        record.set_message(std::string(message));
-        record.set_thread(std::strtoull(std::string(thread_id).c_str(), nullptr, 10));
-        if (ctx.valid()) *record.mutable_trace() = trace::to_proto(ctx);
+        Record record;
+        record.time_unix_ns = static_cast<std::int64_t>(timestamp);
+        record.level = e.level;
+        record.logger = std::string(logger_name);
+        record.message = std::string(message);
+        record.thread = std::strtoull(std::string(thread_id).c_str(), nullptr, 10);
+        record.trace = ctx;
 
         {
             std::lock_guard lock(mutex_);
@@ -323,19 +319,7 @@ public:
             while (records_.size() > std::max<std::size_t>(config_.history, 1)) records_.pop_front();
         }
 
-        std::lock_guard calling(call_mutex_);
-        std::map<int, Listener> ls;
-        {
-            std::lock_guard lock(listener_mutex_);
-            if (listeners_.empty()) return;
-            ls = listeners_;
-        }
-        for (auto& [id, l] : ls) {
-            try {
-                l(record);
-            } catch (...) {
-            }
-        }
+        listeners_.notify(record);
     }
 
     void flush_sink() override {
@@ -373,12 +357,8 @@ private:
     TerminalWriter writer_;
     std::FILE* file_ = nullptr;
     std::size_t file_size_ = 0;
-    std::deque<v1::LogRecord> records_;
-
-    std::mutex listener_mutex_;
-    std::map<int, Listener> listeners_;
-    std::recursive_mutex call_mutex_;  // held while the listeners run (remove() waits for it)
-    int next_ = 0;
+    std::deque<Record> records_;
+    Listeners<Record> listeners_;
 };
 
 // --- loggers --------------------------------------------------------------------------
@@ -614,9 +594,10 @@ std::vector<std::pair<std::string, std::string>> logger_levels() {
     return out;  // std::map: sorted by name
 }
 
-std::vector<v1::LogRecord> history(std::size_t limit) { return state().sink->history(limit); }
-int add_listener(Listener listener) { return state().sink->add(std::move(listener)); }
-void remove_listener(int id) { state().sink->remove(id); }
+std::vector<Record> history(std::size_t limit) { return state().sink->history(limit); }
+Subscription add_listener(std::function<void(const Record&)> listener) {
+    return state().sink->add(std::move(listener));
+}
 
 TerminalWriter set_terminal_writer(TerminalWriter writer) {
     flush();  // what is queued goes out the old way

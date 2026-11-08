@@ -1,11 +1,11 @@
 // Framework services: metrics, trace, config schema, roles, leases, audit,
 // commands, persistence, health, buffer pool, real-time settings, telnet,
-// HTTP RPC, JSON logs and crash reports.
+// tmtc over HTTP, JSON logs and crash reports.
 #include <forge/buffer_pool.hpp>
 #include <forge/control.hpp>
 #include <forge/crash.hpp>
 #include <forge/forge.hpp>
-#include <forge/proto.hpp>
+#include <forge/messages.forge.hpp>
 #include <forge/rt.hpp>
 #include <forge/testing.hpp>
 #include <forge/trace.hpp>
@@ -22,7 +22,6 @@
 
 using forge::json;
 using namespace std::chrono_literals;
-namespace v1 = forge::v1;
 
 TEST_CASE("metrics: counters, gauges, histograms, Prometheus text and snapshots") {
     forge::metrics::Registry reg;
@@ -49,13 +48,15 @@ TEST_CASE("metrics: counters, gauges, histograms, Prometheus text and snapshots"
     CHECK(text.find("queue_depth{app=\"t\"} 7") != std::string::npos);
 
     const auto snap = reg.snapshot("rx.");
-    CHECK(snap.metrics_size() == 3);
-    const auto hist = std::find_if(snap.metrics().begin(), snap.metrics().end(),
-                                   [](const v1::Metric& m) { return m.name() == "rx.read_seconds"; });
-    REQUIRE(hist != snap.metrics().end());
-    CHECK(hist->count() == 3);
-    CHECK(hist->buckets(0) == 1);
-    CHECK(hist->buckets(2) == 2);
+    CHECK(snap.metrics.size() == 3);
+    const auto hist = std::find_if(snap.metrics.begin(), snap.metrics.end(),
+                                   [](const forge::metrics::Sample& m) { return m.name == "rx.read_seconds"; });
+    REQUIRE(hist != snap.metrics.end());
+    CHECK(hist->type == forge::metrics::Type::histogram);
+    CHECK(hist->count == 3);
+    CHECK(hist->buckets[0] == 1);
+    CHECK(hist->buckets[2] == 2);
+    CHECK(forge::metrics::to_json(snap)["metrics"].size() == 3);
 }
 
 TEST_CASE("trace: spans, counters, thread names and the trace id in a Chrome trace") {
@@ -197,34 +198,37 @@ TEST_CASE("control: roles, leases, audit, commands and persistence") {
         // Audit: who, what, old and new value; refusals too.
         const auto audit = r->audit().list();
         auto find = [&](const std::string& user, const std::string& target, bool ok) {
-            return std::find_if(audit.begin(), audit.end(), [&](const v1::AuditRecord& a) {
-                return a.user() == user && a.target() == target && a.ok() == ok;
+            return std::find_if(audit.begin(), audit.end(), [&](const forge::Audit::Record& a) {
+                return a.user == user && a.target == target && a.ok == ok;
             });
         };
         auto set = find("otto", "gain", true);
         REQUIRE(set != audit.end());
-        CHECK(forge::proto::to_json(set->old_value()) == 10);
-        CHECK(forge::proto::to_json(set->new_value()) == 20);
-        CHECK(set->channel() == "zmq");
-        CHECK(set->client() == "o-host");
+        CHECK(set->old_value == 10);
+        CHECK(set->new_value == 20);
+        CHECK(set->channel == "zmq");
+        CHECK(set->client == "o-host");
         CHECK(find("vera", "gain", false) != audit.end());
-        CHECK(find("otto", "sweep", true)->action() == "call");
+        CHECK(find("otto", "sweep", true)->action == "call");
 
-        // forge.v1 request with a token
-        v1::Request req;
-        req.set_token("v");
-        req.mutable_set()->set_id("gain");
-        *req.mutable_set()->mutable_value() = forge::proto::to_value(40);
-        const auto reply = svc.handle(req, svc.identify("zmq", "x", req.token()));
-        CHECK_FALSE(reply.ok());
-        CHECK(reply.status() == 403);
-        CHECK(reply.error().find("vera") != std::string::npos);
-        // schema shows roles and persistence
-        const auto schema = svc.schema();
-        const auto power = std::find_if(schema.controls().begin(), schema.controls().end(),
-                                        [](const v1::Control& c) { return c.id() == "power"; });
-        CHECK(power->role() == "admin");
-        CHECK(schema.commands(0).params_size() == 4);
+        // A token names the user.
+        try {
+            svc.set("gain", 40, svc.identify("link", "x", "v"));
+            FAIL("no error");
+        } catch (const forge::Error& e) {
+            CHECK(e.status() == 403);
+            CHECK(std::string(e.what()).find("vera") != std::string::npos);
+        }
+        // The command lists show roles and parameters.
+        const auto controls = r->commands().find("controls")->run_json({});
+        bool power = false;
+        for (const auto& page : controls.is_array() ? controls : json::array({controls})) {
+            for (const auto& c : page["controls"]) power = power || (c["id"] == "power" && c["role"] == "admin");
+        }
+        CHECK(power);
+        const auto commands = r->commands().find("commands")->run_json({});
+        const auto& first = commands.is_array() ? commands[0] : commands;
+        CHECK(first["commands"][0]["params"].size() == 4);
     }
     // persist(): gain survives a restart, power does not.
     CHECK(forge::load_json(state)["gain"] == 30);
@@ -267,24 +271,17 @@ TEST_CASE("health: components, overall state, strict /health and HTTP endpoints"
     res = http.Get("/forge/api/trace?seconds=60");
     CHECK(json::parse(res->body).contains("traceEvents"));
 
-    // forge.v1 over HTTP: protobuf and its JSON mapping.
-    v1::Request req;
-    req.mutable_set()->set_id("gain");
-    *req.mutable_set()->mutable_value() = forge::proto::to_value(33);
-    std::string body;
-    req.SerializeToString(&body);
-    res = http.Post("/forge/api/rpc", body, "application/x-protobuf");
-    v1::Reply reply;
-    REQUIRE(reply.ParseFromString(res->body));
-    CHECK(reply.ok());
-    CHECK(forge::proto::to_json(reply.value()) == 33);
-    res = http.Post("/forge/api/rpc", R"({"get":{"id":"gain"}})", "application/json");
-    CHECK(json::parse(res->body)["value"] == 33);
+    // The commands of the link, in JSON.
+    res = http.Post("/forge/api/tmtc/set", R"({"id": "gain", "value": "33"})", "application/json");
+    REQUIRE(res);
+    CHECK(res->status == 200);
+    res = http.Post("/forge/api/tmtc/get", R"({"id": "gain"})", "application/json");
+    CHECK(json::parse(json::parse(res->body)["value"].get<std::string>()) == 33);
     // The web JSON API goes through the same audit trail.
     res = http.Post("/forge/api/controls/gain", R"({"value": 34})", "application/json");
     CHECK(res->status == 200);
     const auto audit = r->audit().list(1);
-    CHECK(audit.back().channel() == "web");
+    CHECK(audit.back().channel == "web");
     CHECK(r->gain == 34);
 }
 
@@ -411,8 +408,8 @@ TEST_CASE("telnet: remote console sessions with login, roles, commands and live 
     }
     CHECK(r->gain == 42);
     const auto audit = r->audit().list();
-    CHECK(std::any_of(audit.begin(), audit.end(), [](const v1::AuditRecord& a) {
-        return a.channel() == "telnet" && a.user() == "otto" && a.target() == "gain";
+    CHECK(std::any_of(audit.begin(), audit.end(), [](const forge::Audit::Record& a) {
+        return a.channel == "telnet" && a.user == "otto" && a.target == "gain";
     }));
 }
 
@@ -427,9 +424,9 @@ TEST_CASE("logs: JSON format with trace id, history and listeners") {
     forge::log::init(o);
     std::mutex seen_mutex;
     std::vector<std::string> seen;
-    const int id = forge::log::add_listener([&](const v1::LogRecord& r) {  // on the logging thread
+    auto listener = forge::log::add_listener([&](const forge::log::Record& r) {  // on the logging thread
         std::lock_guard lock(seen_mutex);
-        seen.push_back(r.message());
+        seen.push_back(r.message);
     });
     const auto ctx = forge::trace::new_trace();
     {
@@ -437,7 +434,7 @@ TEST_CASE("logs: JSON format with trace id, history and listeners") {
         forge::log::get()->info("structured {}", 42);
     }
     forge::log::flush();  // listeners run on the logging background thread
-    forge::log::remove_listener(id);
+    listener.reset();
     std::ifstream in(file);
     std::string line;
     std::getline(in, line);
@@ -447,7 +444,7 @@ TEST_CASE("logs: JSON format with trace id, history and listeners") {
     CHECK(j["logger"] == "jsonlog");
     CHECK(j["trace"] == ctx.trace_hex());
     CHECK(seen == std::vector<std::string>{"structured 42"});
-    CHECK(forge::log::history(1).back().message() == "structured 42");
+    CHECK(forge::log::history(1).back().message == "structured 42");
     forge::log::Options plain;
     plain.console = false;
     forge::log::init(plain);
@@ -536,11 +533,9 @@ TEST_CASE("framework: a blocked main loop does not hang requests (invoke_for, 50
     CHECK(http.Get("/forge/api/controls/gain")->status == 503);
     res = http.Post("/forge/api/controls/gain", R"({"value": 50})", "application/json");
     CHECK(res->status == 503);
-    res = http.Post("/forge/api/rpc", R"({"get":{"id":"gain"}})", "application/json");
+    res = http.Post("/forge/api/tmtc/get", R"({"id": "gain"})", "application/json");
     REQUIRE(res);
-    const auto rpc = json::parse(res->body);
-    CHECK_FALSE(rpc.value("ok", false));
-    CHECK(rpc["status"] == 503);
+    CHECK(res->status == 503);
     CHECK_THROWS_AS(r->invoke_for(20ms, [] { return 1; }), forge::Error);
     // What does not need the main loop still answers.
     CHECK(http.Get("/health")->status == 200);
@@ -744,9 +739,9 @@ TEST_CASE("threading: background(), call() on the loop, the dashboard's owner, s
     CHECK(r->invoke([&] { return r->dashboard()->get("gain"); }) == 10.0);
 
     // A slow task is counted (and logged).
-    const auto before = forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics(0).value();
+    const auto before = forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics.at(0).value;
     r->invoke([] { std::this_thread::sleep_for(std::chrono::milliseconds(60)); });
-    CHECK(forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics(0).value() == before + 1);
+    CHECK(forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics.at(0).value == before + 1);
 }
 
 TEST_CASE("instances: --instance names the application <name>@<instance>") {
