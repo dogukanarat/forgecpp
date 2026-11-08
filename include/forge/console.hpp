@@ -12,7 +12,7 @@
 
 #include "forge/auth.hpp"
 
-#include <spdlog/fmt/fmt.h>
+#include <format>
 
 #include <functional>
 #include <memory>
@@ -80,8 +80,8 @@ public:
     /// Thread-safe output that does not disturb the prompt.
     void write(std::string_view text);
     template <class... T>
-    void print(fmt::format_string<T...> format, T&&... args) {
-        write(fmt::format(format, std::forward<T>(args)...) + "\n");
+    void print(std::format_string<T...> format, T&&... args) {
+        write(std::format(format, std::forward<T>(args)...) + "\n");
     }
     void error(std::string_view message);
 

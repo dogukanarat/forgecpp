@@ -2,7 +2,7 @@
 
 #include "forge/config.hpp"
 
-#include <spdlog/fmt/fmt.h>
+#include <format>
 
 #include <algorithm>
 #include <cmath>
@@ -142,19 +142,19 @@ Schema::Result Schema::validate(const Config& cfg) const {
     for (const auto& [path, k] : keys_) {
         const auto v = cfg.get<json>(path);
         if (!v) {
-            if (k.is_required) r.errors.push_back(fmt::format("{}: required ({})", path, to_string(k.type)));
+            if (k.is_required) r.errors.push_back(std::format("{}: required ({})", path, to_string(k.type)));
             continue;
         }
         if (!type_matches(k.type, *v)) {
-            r.errors.push_back(fmt::format("{}: expected {}, got {}", path, to_string(k.type), v->dump()));
+            r.errors.push_back(std::format("{}: expected {}, got {}", path, to_string(k.type), v->dump()));
             continue;
         }
         if (v->is_number() && (k.min || k.max)) {
             const double d = v->get<double>();
             if ((k.min && d < *k.min) || (k.max && d > *k.max) || std::isnan(d)) {
-                r.errors.push_back(fmt::format("{}: {} is outside {} .. {}{}", path, v->dump(),
-                                               k.min ? fmt::format("{}", *k.min) : "-inf",
-                                               k.max ? fmt::format("{}", *k.max) : "+inf",
+                r.errors.push_back(std::format("{}: {} is outside {} .. {}{}", path, v->dump(),
+                                               k.min ? std::format("{}", *k.min) : "-inf",
+                                               k.max ? std::format("{}", *k.max) : "+inf",
                                                k.unit_text.empty() ? "" : " " + k.unit_text));
             }
         }
@@ -162,7 +162,7 @@ Schema::Result Schema::validate(const Config& cfg) const {
             std::find(k.choice_values.begin(), k.choice_values.end(), v->get<std::string>()) == k.choice_values.end()) {
             std::string list;
             for (const auto& c : k.choice_values) list += (list.empty() ? "" : " | ") + c;
-            r.errors.push_back(fmt::format("{}: \"{}\" is not one of {}", path, v->get<std::string>(), list));
+            r.errors.push_back(std::format("{}: \"{}\" is not one of {}", path, v->get<std::string>(), list));
         }
     }
     // Unknown keys inside declared sections: probably typos.
@@ -195,8 +195,8 @@ Schema::Result Schema::validate(const Config& cfg) const {
                 best = kp;
             }
         }
-        r.warnings.push_back(best.empty() ? fmt::format("{}: unknown key", path)
-                                          : fmt::format("{}: unknown key (did you mean {}?)", path, best));
+        r.warnings.push_back(best.empty() ? std::format("{}: unknown key", path)
+                                          : std::format("{}: unknown key (did you mean {}?)", path, best));
     }
     return r;
 }
@@ -240,8 +240,8 @@ std::string Schema::help() const {
         const bool has_keys = kit != by_section.end();
         const bool has_doc = sit != sections_.end() && !sit->second.doc.empty();
         if (!has_keys && !has_doc) continue;
-        out += sec.empty() ? "\n# (top level)\n" : fmt::format("\n[{}]\n", sec);
-        if (has_doc) out += fmt::format("# {}\n", sit->second.doc);
+        out += sec.empty() ? "\n# (top level)\n" : std::format("\n[{}]\n", sec);
+        if (has_doc) out += std::format("# {}\n", sit->second.doc);
         if (sit != sections_.end() && sit->second.open) out += "# (free-form keys)\n";
         if (!has_keys) continue;
         for (const Key* k : kit->second) {
@@ -250,8 +250,8 @@ std::string Schema::help() const {
             if (k->type == Type::table) def = "{}";
             std::string note = to_string(k->type);
             if (k->min || k->max) {
-                note += fmt::format(", {} .. {}", k->min ? fmt::format("{}", *k->min) : "",
-                                    k->max ? fmt::format("{}", *k->max) : "");
+                note += std::format(", {} .. {}", k->min ? std::format("{}", *k->min) : "",
+                                    k->max ? std::format("{}", *k->max) : "");
             }
             if (!k->unit_text.empty()) note += " " + k->unit_text;
             if (!k->choice_values.empty()) {
@@ -260,7 +260,7 @@ std::string Schema::help() const {
                 note += ": " + list;
             }
             if (k->is_required) note += ", required";
-            out += fmt::format("{:<36} # {}{}\n", name + " = " + def, k->doc_text.empty() ? "" : k->doc_text + " ",
+            out += std::format("{:<36} # {}{}\n", name + " = " + def, k->doc_text.empty() ? "" : k->doc_text + " ",
                                "(" + note + ")");
         }
     }

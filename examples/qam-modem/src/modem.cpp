@@ -116,7 +116,7 @@ void QamModem::setup_web(forge::web::Dashboard& ui) {
         .unit("kHz");
     link.value("raw_rate", "16QAM bit rate", [this] { return params_.symbol_rate() * 4 / 1e3; }).unit("kbit/s");
     link.value("equalizer", "Equalizer", [this] {
-        return params_.equalizer ? fmt::format("DFE {} + {} taps", params_.eq_ff, params_.eq_fb) : std::string("off");
+        return params_.equalizer ? std::format("DFE {} + {} taps", params_.eq_ff, params_.eq_fb) : std::string("off");
     });
     link.button("configure_radio", "Configure radio", [this] { configure_radio(); });
     link.button("reset_stats", "Reset statistics", [this] { reset_stats(); });
@@ -311,7 +311,7 @@ void QamModem::configure_radio() {
             configuring_ = false;
             radio_ok_ = error.empty();
             if (radio_ok_) {
-                radio_status_ = fmt::format("{:.3f} MHz, {:.3f} MSPS", lo_mhz, rate_msps);
+                radio_status_ = std::format("{:.3f} MHz, {:.3f} MSPS", lo_mhz, rate_msps);
                 alarms().clear(kRadioAlarm);
                 logger()->info("modem: radio-controller set up ({})", radio_status_);
             } else {
@@ -341,13 +341,13 @@ void QamModem::tick() {
     }
     const auto late = rx_late_.load();
     alarms().set("modem.rx_late", late != last_rx_late_, forge::Severity::warning,
-                 fmt::format("the receiver is behind real time and skips RX buffers ({} so far): too little CPU "
+                 std::format("the receiver is behind real time and skips RX buffers ({} so far): too little CPU "
                              "(equalizer = false saves some)",
                              late));
     last_rx_late_ = late;
     const bool rx_missing = now - last_rx > 2s;
     alarms().set(kNoRxAlarm, rx_missing && radio_ok_, forge::Severity::warning,
-                 fmt::format("no RX{} samples at {} MSPS from radio-controller ({}): is it streaming, is RX{} in its "
+                 std::format("no RX{} samples at {} MSPS from radio-controller ({}): is it streaming, is RX{} in its "
                              "rx_channels?",
                              rx_channel_, params_.sample_rate / 1e6, radio_data_, rx_channel_));
 }

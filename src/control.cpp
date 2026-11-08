@@ -7,7 +7,7 @@
 #include "forge/version.hpp"
 #include "forge/web.hpp"
 
-#include <spdlog/fmt/fmt.h>
+#include <format>
 
 #include <algorithm>
 
@@ -83,7 +83,7 @@ Caller ControlService::identify(std::string channel, std::string client, std::st
 void ControlService::require(Role needed, const Caller& caller, const std::string& what) const {
     if (static_cast<int>(caller.role) >= static_cast<int>(needed)) return;
     throw Error(caller.user.empty() && app_.auth().enabled() ? 401 : 403,
-                    fmt::format("{} needs role {} ({} is {})", what, to_string(needed), caller.describe(),
+                    std::format("{} needs role {} ({} is {})", what, to_string(needed), caller.describe(),
                                 to_string(caller.role)));
 }
 
@@ -116,7 +116,7 @@ std::string ControlService::lease_holder(const std::string& id) const {
 void ControlService::check_lease(const std::string& id, const Caller& caller) {
     const auto holder = lease_holder(id);
     if (!holder.empty() && holder != caller.describe()) {
-        throw Error(409, fmt::format("'{}' is leased by {}", id, holder));
+        throw Error(409, std::format("'{}' is leased by {}", id, holder));
     }
 }
 
@@ -242,7 +242,7 @@ std::chrono::seconds ControlService::lease(const std::string& id, unsigned secon
         auto& l = leases_[id];
         const auto now = std::chrono::steady_clock::now();
         if (!l.holder.empty() && l.expires > now && l.holder != caller.describe()) {
-            throw Error(409, fmt::format("'{}' is leased by {}", id, l.holder));
+            throw Error(409, std::format("'{}' is leased by {}", id, l.holder));
         }
         l.holder = caller.describe();
         l.expires = now + duration;
@@ -258,7 +258,7 @@ void ControlService::release(const std::string& id, const Caller& caller) {
         auto it = leases_.find(id);
         if (it == leases_.end()) return;
         if (it->second.holder != caller.describe() && caller.role != Role::admin) {
-            throw Error(409, fmt::format("'{}' is leased by {}", id, it->second.holder));
+            throw Error(409, std::format("'{}' is leased by {}", id, it->second.holder));
         }
         leases_.erase(it);
     }

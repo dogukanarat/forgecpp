@@ -2,7 +2,7 @@
 
 #include "forge/config.hpp"
 
-#include <spdlog/fmt/fmt.h>
+#include <format>
 
 #include <stdexcept>
 

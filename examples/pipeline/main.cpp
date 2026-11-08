@@ -225,7 +225,7 @@ private:
                 const auto limit = queue_limit_.load();
                 if (depth > limit) {
                     alarms().raise("pipeline.backlog", forge::Severity::warning,
-                                   fmt::format("Job backlog {} exceeds {} - workers cannot keep up", depth, limit));
+                                   std::format("Job backlog {} exceeds {} - workers cannot keep up", depth, limit));
                 } else if (depth < limit / 2) {
                     alarms().clear("pipeline.backlog");
                 }
@@ -280,7 +280,7 @@ private:
             latency_max_ = window_max_;
             const double fail_pct = 100.0 * static_cast<double>(failed_window_) / static_cast<double>(done_window_);
             alarms().set("pipeline.failures", fail_pct > 10, forge::Severity::error,
-                         fmt::format("{:.1f} % of jobs failed in the last second", fail_pct));
+                         std::format("{:.1f} % of jobs failed in the last second", fail_pct));
         }
         done_window_ = failed_window_ = 0;
         latency_sum_ = window_max_ = 0;

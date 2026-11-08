@@ -2,7 +2,7 @@
 
 #include "forge/proto.hpp"
 
-#include <spdlog/fmt/fmt.h>
+#include <format>
 
 #include <algorithm>
 #include <cmath>
@@ -41,7 +41,7 @@ std::string prom_escape(const std::string& v) {
 std::string prom_number(double v) {
     if (std::isnan(v)) return "NaN";
     if (std::isinf(v)) return v > 0 ? "+Inf" : "-Inf";
-    return fmt::format("{}", v);
+    return std::format("{}", v);
 }
 
 }  // namespace
@@ -182,28 +182,28 @@ std::string Registry::prometheus() const {
         const std::string n = prom_name(m.name());
         std::string labels;
         for (const auto& [k, v] : m.labels()) {
-            labels += fmt::format("{}{}=\"{}\"", labels.empty() ? "" : ",", prom_name(k), prom_escape(v));
+            labels += std::format("{}{}=\"{}\"", labels.empty() ? "" : ",", prom_name(k), prom_escape(v));
         }
         auto with = [&](const std::string& extra) {
             const std::string all = labels.empty() ? extra : (extra.empty() ? labels : labels + "," + extra);
             return all.empty() ? std::string() : "{" + all + "}";
         };
-        if (!m.help().empty()) out += fmt::format("# HELP {} {}\n", n, prom_escape(m.help()));
+        if (!m.help().empty()) out += std::format("# HELP {} {}\n", n, prom_escape(m.help()));
         switch (m.type()) {
             case v1::Metric::TYPE_COUNTER:
-                out += fmt::format("# TYPE {} counter\n{}{} {}\n", n, n, with(""), prom_number(m.value()));
+                out += std::format("# TYPE {} counter\n{}{} {}\n", n, n, with(""), prom_number(m.value()));
                 break;
             case v1::Metric::TYPE_GAUGE:
-                out += fmt::format("# TYPE {} gauge\n{}{} {}\n", n, n, with(""), prom_number(m.value()));
+                out += std::format("# TYPE {} gauge\n{}{} {}\n", n, n, with(""), prom_number(m.value()));
                 break;
             case v1::Metric::TYPE_HISTOGRAM:
-                out += fmt::format("# TYPE {} histogram\n", n);
+                out += std::format("# TYPE {} histogram\n", n);
                 for (int i = 0; i < m.bounds_size(); ++i) {
-                    out += fmt::format("{}_bucket{} {}\n", n, with(fmt::format("le=\"{}\"", prom_number(m.bounds(i)))),
+                    out += std::format("{}_bucket{} {}\n", n, with(std::format("le=\"{}\"", prom_number(m.bounds(i)))),
                                        m.buckets(i));
                 }
-                out += fmt::format("{}_bucket{} {}\n", n, with("le=\"+Inf\""), m.count());
-                out += fmt::format("{}_sum{} {}\n{}_count{} {}\n", n, with(""), prom_number(m.sum()), n, with(""),
+                out += std::format("{}_bucket{} {}\n", n, with("le=\"+Inf\""), m.count());
+                out += std::format("{}_sum{} {}\n{}_count{} {}\n", n, with(""), prom_number(m.sum()), n, with(""),
                                    m.count());
                 break;
             default:

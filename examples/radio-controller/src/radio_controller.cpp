@@ -205,7 +205,7 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
         .help("Writable in manual gain mode; shows the AGC gain otherwise");
     rx.value("rx_power_dbfs", "RX power", rx_power_dbfs_).unit("dBFS").precision(1);
     rx.value("peak", "Strongest signal", [this] {
-        return fmt::format("{:+.1f} kHz @ {:.1f} dBFS", peak_offset_khz_, peak_dbfs_);
+        return std::format("{:+.1f} kHz @ {:.1f} dBFS", peak_offset_khz_, peak_dbfs_);
     });
     rx.value("rx_rate_msps", "Measured rate", rx_rate_msps_).unit("MSPS").precision(3);
     rx.value("rx_overflows", "Overflows", [this] { return rx_overflows_.load(); });
@@ -233,10 +233,10 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
 
     auto& roles = ui.group("Channels");
     roles.value("hw_channels", "Transceiver", [this] {
-        return connected_ ? fmt::format("{}R{}T", hw_rx_channels_.load(), hw_tx_channels_.load()) : std::string("-");
+        return connected_ ? std::format("{}R{}T", hw_rx_channels_.load(), hw_tx_channels_.load()) : std::string("-");
     });
     roles.value("rx_channels", "Listens to (IQ stream)", [this] { return channel_array(rx_mask_); });
-    roles.value("tx_channel", "Drives", [this] { return fmt::format("TX{}", tx_channel_ + 1); });
+    roles.value("tx_channel", "Drives", [this] { return std::format("TX{}", tx_channel_ + 1); });
     roles.value("tap_channels", "Shares (tap)", [this] { return channel_array(tap_mask_); });
     roles.value("tap_blocks", "Tap blocks sent", [this] { return tap_blocks_.load(); });
     roles.value("tap_subscriptions", "Tap subscribers", [this] { return tap_subscriptions_.load(); });
@@ -491,7 +491,7 @@ void RadioController::open_backend() {
         // The configured roles must fit the hardware (AD9364: RX1/TX1 only).
         const unsigned rx_need = (rx_mask_ | tap_mask_) & Backend::kRx2 ? 2 : 1;
         if (rx_need > b->rx_channel_count() || tx_channel_ + 1 > b->tx_channel_count()) {
-            throw DeviceError(fmt::format(
+            throw DeviceError(std::format(
                 "the configuration uses {} and TX{} but the transceiver has {} RX / {} TX channel(s); "
                 "set [radio] rx_channels, tap_rx and tx_channel to channels it has (RX2/TX2 need an "
                 "AD9361/AD9363 in 2R2T mode)",
@@ -791,7 +791,7 @@ void RadioController::telemetry() {
     if (overflows != last_rx_overflows_) {
         last_overflow_ = now;
         alarms().raise(kOverflowAlarm, forge::Severity::warning,
-                       fmt::format("RX overflow: samples lost ({} total); lower the sample rate or speed up clients",
+                       std::format("RX overflow: samples lost ({} total); lower the sample rate or speed up clients",
                                    overflows));
     } else if (now - last_overflow_ > 5s) {
         alarms().clear(kOverflowAlarm);
@@ -800,13 +800,13 @@ void RadioController::telemetry() {
 
     const auto underflows = tx_underflows_.load();
     alarms().set(kUnderflowAlarm, underflows != last_tx_underflows_, forge::Severity::warning,
-                 fmt::format("TX underflow: the sender is not keeping up ({} total)", underflows));
+                 std::format("TX underflow: the sender is not keeping up ({} total)", underflows));
     last_tx_underflows_ = underflows;
 
     if (temperature_) {
         if (*temperature_ > temperature_alarm_c_) {
             alarms().raise(kTemperatureAlarm, forge::Severity::warning,
-                           fmt::format("Transceiver temperature {:.1f} °C above {:.0f} °C", *temperature_,
+                           std::format("Transceiver temperature {:.1f} °C above {:.0f} °C", *temperature_,
                                        temperature_alarm_c_));
         } else if (*temperature_ < temperature_alarm_c_ - 3) {
             alarms().clear(kTemperatureAlarm);

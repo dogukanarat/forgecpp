@@ -56,7 +56,7 @@ Settings settings_from_json(const json& j, Settings base) {
         }
         const double v = j[key].get<double>();
         if (v < lo || v > hi) {
-            errors[key] = fmt::format("must be between {} and {}", lo, hi);
+            errors[key] = std::format("must be between {} and {}", lo, hi);
             return;
         }
         out = v;
@@ -182,7 +182,7 @@ private:
         if (!fault_) {
             if (room_ > settings_.high_alarm) {
                 alarms().raise("temperature.high", forge::Severity::warning,
-                               fmt::format("{}: {:.1f} °C is above {:.1f} °C", settings_.room, room_, settings_.high_alarm));
+                               std::format("{}: {:.1f} °C is above {:.1f} °C", settings_.room, room_, settings_.high_alarm));
             } else if (room_ < settings_.high_alarm - 0.5) {
                 alarms().clear("temperature.high");
             }

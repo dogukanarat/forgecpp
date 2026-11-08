@@ -57,7 +57,7 @@ std::string local_endpoint(std::string ep) {
 
 std::string seconds(std::uint64_t us) {
     const auto s = us / 1000000.0;
-    return s == static_cast<std::uint64_t>(s) ? std::to_string(static_cast<std::uint64_t>(s)) : fmt::format("{:.1f}", s);
+    return s == static_cast<std::uint64_t>(s) ? std::to_string(static_cast<std::uint64_t>(s)) : std::format("{:.1f}", s);
 }
 
 /// The restart policy of a unit as forge.v1 describes it.
@@ -95,7 +95,7 @@ Hub::Hub(std::unique_ptr<Systemd> systemd)
     : Application({"forge-hub", FORGE_HUB_VERSION, "Applications on this device"}), systemd_(std::move(systemd)) {
     disable_hub_registration();  // the hub does not register with itself
     std::random_device rd;
-    instance_ = fmt::format("{:08x}{:08x}", rd(), rd());
+    instance_ = std::format("{:08x}{:08x}", rd(), rd());
 }
 
 // ---------------------------------------------------------------------------
@@ -459,7 +459,7 @@ void Hub::apply_units(const std::map<std::string, UnitState>& units) {
         e.unit_state = u;
         if (u.n_restarts > e.seen_restarts) {
             raise(e, "ended", forge::Severity::warning,
-                  fmt::format("{}; restarted by systemd ({} time{})", result_text(u.result), u.n_restarts,
+                  std::format("{}; restarted by systemd ({} time{})", result_text(u.result), u.n_restarts,
                               u.n_restarts == 1 ? "" : "s"));
         }
         e.seen_restarts = u.n_restarts;
@@ -474,7 +474,7 @@ void Hub::apply_units(const std::map<std::string, UnitState>& units) {
                                      (policy.max_restarts() > 0 && u.n_restarts >= policy.max_restarts());
                 // (NRestarts also counts the restart the start limit refused)
                 const auto restarts = policy.max_restarts() > 0 ? policy.max_restarts() : u.n_restarts;
-                e.message = gave_up ? fmt::format("gave up after {} restarts in {} s (last: {})", restarts,
+                e.message = gave_up ? std::format("gave up after {} restarts in {} s (last: {})", restarts,
                                                   policy.window_s(), result_text(u.result))
                                     : "failed: " + result_text(u.result);
                 raise(e, "failed", e.app.critical() ? forge::Severity::critical : forge::Severity::error, e.message);
@@ -488,7 +488,7 @@ void Hub::apply_units(const std::map<std::string, UnitState>& units) {
         if (u.active == "activating") {
             e.state = v1::AppStatus::STATE_STARTING;
             e.message = u.sub == "auto-restart"
-                            ? fmt::format("{}; systemd restarts it in {} s", result_text(u.result), seconds(u.restart_us))
+                            ? std::format("{}; systemd restarts it in {} s", result_text(u.result), seconds(u.restart_us))
                             : "starting";
             e.pid = 0;
         } else if (u.active == "active") {
@@ -497,7 +497,7 @@ void Hub::apply_units(const std::map<std::string, UnitState>& units) {
             } else if (u.main_pid > 0) {
                 // Started (again) by systemd; it registers in a moment.
                 e.state = v1::AppStatus::STATE_STARTING;
-                e.message = fmt::format("started by systemd (pid {}), waiting for it to register", u.main_pid);
+                e.message = std::format("started by systemd (pid {}), waiting for it to register", u.main_pid);
             }
         } else if (u.active == "inactive" || u.active == "deactivating") {
             if (e.state != v1::AppStatus::STATE_STOPPED) {
@@ -553,7 +553,7 @@ void Hub::tick() {
                     e.probing = true;
                     probes.push_back({name, e.pid,
                                       e.app.http_port() > 0
-                                          ? fmt::format("http://127.0.0.1:{}/health", e.app.http_port())
+                                          ? std::format("http://127.0.0.1:{}/health", e.app.http_port())
                                           : std::string(),
                                       control});
                 }
@@ -628,7 +628,7 @@ void Hub::probe_done(const std::string& name, int pid, bool ok, const json& heal
     if (ok) {
         if (!e.static_entry && health.contains("pid") && health["pid"].is_number() &&
             health["pid"].get<int>() != e.pid) {
-            why = fmt::format("its web port is answered by pid {}", health["pid"].get<int>());
+            why = std::format("its web port is answered by pid {}", health["pid"].get<int>());
         } else if (health.value("status", "ok") == "stalled") {
             why = "main loop stalled";
         }
@@ -657,7 +657,7 @@ void Hub::probe_done(const std::string& name, int pid, bool ok, const json& heal
     if (now - e.failing_since >= unresponsive_after_s_ * 1000LL && e.state != v1::AppStatus::STATE_UNRESPONSIVE) {
         e.state = v1::AppStatus::STATE_UNRESPONSIVE;
         e.message = why + (e.unit_state && e.unit_state->watchdog_us
-                               ? fmt::format(" (systemd's watchdog restarts a hung main loop after {} s)",
+                               ? std::format(" (systemd's watchdog restarts a hung main loop after {} s)",
                                              seconds(e.unit_state->watchdog_us))
                                : std::string());
         logger()->warn("{}: unresponsive: {}", name, why);

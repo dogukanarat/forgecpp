@@ -194,7 +194,7 @@ TEST_CASE("channel-emulator: 16QAM modem packet error rate per preset") {
     for (const auto& name : channel::preset_names()) {
         const auto r = run(channel::preset(name));
         res[name] = r;
-        table += fmt::format("{:<14} {:>5}/{:<4} {:>7.1f} {:>8} {:>8}\n", name, r.ok, r.sent, r.evm, r.st.crc_errors,
+        table += std::format("{:<14} {:>5}/{:<4} {:>7.1f} {:>8} {:>8}\n", name, r.ok, r.sent, r.evm, r.st.crc_errors,
                              r.st.header_errors);
     }
     MESSAGE(table);

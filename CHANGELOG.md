@@ -15,6 +15,9 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
   examples. Supported toolchains: GCC ≥ 13 or Clang ≥ 17 with libstdc++ 13
   (Yocto scarthgap, Ubuntu 24.04, the armhf cross compiler). Applications
   built against forgecpp must compile as C++20.
+- `std::format` instead of `fmt::format` everywhere (forgecpp no longer
+  re-exports fmt). Applications that used `fmt::format` through forgecpp's
+  headers include `<format>` and use `std::format`.
 - **Console: linenoise instead of replxx** (unmaintained since 2021).
   linenoise is compiled into libforgecpp (no separate library). History, tab
   completion and hints stay (the hint now also shows a command's arguments

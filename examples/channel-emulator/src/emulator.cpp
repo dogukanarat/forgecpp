@@ -47,7 +47,7 @@ std::string format_paths(const std::vector<channel::Path>& paths) {
     std::string s;
     for (const auto& p : paths) {
         if (!s.empty()) s += ", ";
-        s += fmt::format("{:g}:{:g}:{:g}", p.delay_us, p.gain_db, p.phase_deg);
+        s += std::format("{:g}:{:g}:{:g}", p.delay_us, p.gain_db, p.phase_deg);
     }
     return s;
 }
@@ -142,7 +142,7 @@ void ChannelEmulator::setup_web(forge::web::Dashboard& ui) {
     bind(f, "clock", "Sample clock offset", &S::clock);
     bind(f, "clock_ppm", "Clock error", &S::clock_ppm, -1000, 1000, 0.1, "ppm");
     f.value("timing_resets", "Clock: resets in gaps / forced",
-            [this] { return fmt::format("{} / {}", timing_resets_.load(), timing_forced_.load()); });
+            [this] { return std::format("{} / {}", timing_resets_.load(), timing_forced_.load()); });
 
     auto& mp = ui.group("Multipath and fading");
     bind(mp, "multipath", "Multipath", &S::multipath);
@@ -279,7 +279,7 @@ void ChannelEmulator::tick() {
     last_samples_ = samples;
     const bool busy = cpu_ > 0.9 && dt > 0 && samples > 0;
     alarms().set(kCpuAlarm, busy, forge::Severity::warning,
-                 fmt::format("processing takes {:.0f} % of real time: turn impairments off or lower the sample rate",
+                 std::format("processing takes {:.0f} % of real time: turn impairments off or lower the sample rate",
                              cpu_ * 100));
 }
 

@@ -360,7 +360,7 @@ void HttpFrontend::push_state() {
 }
 
 void HttpFrontend::add_endpoints(std::map<std::string, std::string>& e) const {
-    if (http_ && http_->port() > 0) e["http"] = fmt::format("http://{}:{}/", host_name(), http_->port());
+    if (http_ && http_->port() > 0) e["http"] = std::format("http://{}:{}/", host_name(), http_->port());
 }
 
 // ---------------------------------------------------------------------------

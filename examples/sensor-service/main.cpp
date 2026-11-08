@@ -152,7 +152,7 @@ protected:
             ++exceedances_;
             if (!alarm_enabled_) return;
             alarms().raise("sensor.high_mean", forge::parse_severity(alarm_severity_),
-                           fmt::format("Window mean {:.1f} exceeds threshold {:.1f}", e.mean, e.threshold));
+                           std::format("Window mean {:.1f} exceeds threshold {:.1f}", e.mean, e.threshold));
         });
 
         // Producer: an independent thread that never touches application state.

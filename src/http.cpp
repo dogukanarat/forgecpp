@@ -268,7 +268,7 @@ Server& Server::assets(const std::vector<web::Asset>& list) {
             h ^= a.data[i];
             h *= 1099511628211ULL;
         }
-        assets_[a.path] = StoredAsset{a, fmt::format("\"{:016x}-{:x}\"", h, a.size), web::mime_type(a.path)};
+        assets_[a.path] = StoredAsset{a, std::format("\"{:016x}-{:x}\"", h, a.size), web::mime_type(a.path)};
     }
     return *this;
 }

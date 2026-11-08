@@ -108,7 +108,7 @@ Application::Application(AppInfo info, std::string installed_config)
     cli.name(info_.name);
     cli.description(info_.description.empty() ? info_.name : info_.description);
     cli.set_version_flag("-V,--version",
-                         fmt::format("{} {} (forgecpp {})", info_.name, info_.version, version_string));
+                         std::format("{} {} (forgecpp {})", info_.name, info_.version, version_string));
     cli.option_defaults()->group("Framework options");
 
     cli.add_option("-c,--config", config_file_, "Configuration file (TOML)");
@@ -166,7 +166,7 @@ void Application::loop_busy() const {
         "forge.control.timeouts", "Requests that gave up waiting for a busy main loop");
     timeouts.inc();
     const auto lag = loop_age_ms();
-    throw Error(503, fmt::format("main loop busy (last heartbeat {} ms ago)", lag),
+    throw Error(503, std::format("main loop busy (last heartbeat {} ms ago)", lag),
                           json{{"error", "main loop busy"}, {"loop_age_ms", lag},
                                {"timeout_ms", request_timeout_ms_.load()}});
 }
@@ -874,7 +874,7 @@ void Application::start_observability(const Config& cfg) {
             std::ifstream in(*report);
             std::string first;
             std::getline(in, first);
-            const auto kept = fmt::format("{}/{}-crash-{}.txt", dir, info_.name,
+            const auto kept = std::format("{}/{}-crash-{}.txt", dir, info_.name,
                                           std::chrono::duration_cast<std::chrono::seconds>(
                                               std::chrono::system_clock::now().time_since_epoch())
                                               .count());
@@ -882,7 +882,7 @@ void Application::start_observability(const Config& cfg) {
             std::filesystem::rename(*report, kept, ec);
             logger_->error("the previous run crashed ({}); report: {}", first, ec ? *report : kept);
             alarms_.raise("forge.crashed", Severity::error,
-                          fmt::format("The previous run crashed ({}). Report: {}", first, ec ? *report : kept));
+                          std::format("The previous run crashed ({}). Report: {}", first, ec ? *report : kept));
         }
         crash::install(info_.name, dir);
     }

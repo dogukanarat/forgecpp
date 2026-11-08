@@ -40,7 +40,7 @@ if (pressure_bar > limit_bar) {
     if (!over_since_) over_since_ = now();
     if (now() - *over_since_ >= alarm_after_) {
         alarms().raise("pump.overpressure", forge::Severity::error,
-                       fmt::format("Pressure {:.1f} bar above {:.1f} bar", pressure_bar, limit_bar));
+                       std::format("Pressure {:.1f} bar above {:.1f} bar", pressure_bar, limit_bar));
     }
 } else if (pressure_bar < limit_bar * 0.95) {
     over_since_.reset();

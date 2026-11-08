@@ -21,8 +21,8 @@ std::string format_duration(std::chrono::steady_clock::duration d) {
     auto secs = std::chrono::duration_cast<std::chrono::seconds>(d).count();
     const auto days = secs / 86400;
     secs %= 86400;
-    return days > 0 ? fmt::format("{}d {:02}:{:02}:{:02}", days, secs / 3600, (secs % 3600) / 60, secs % 60)
-                    : fmt::format("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60);
+    return days > 0 ? std::format("{}d {:02}:{:02}:{:02}", days, secs / 3600, (secs % 3600) / 60, secs % 60)
+                    : std::format("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60);
 }
 }  // namespace
 
@@ -37,7 +37,7 @@ void RemoteConsole::create(const Config& cfg) {
         if (const char* home = std::getenv("HOME")) o.history_file = std::string(home) + "/." + info.name + "_history";
     }
     o.color = cfg.get_or<bool>("console.color", ::isatty(STDOUT_FILENO) != 0);  // computed default
-    o.banner = fmt::format("{} {} - type 'help' for commands, 'exit' to quit", info.name, info.version);
+    o.banner = std::format("{} {} - type 'help' for commands, 'exit' to quit", info.name, info.version);
 
     console_ = std::make_unique<Console>(o);
     // Commands run on the main loop so they never race with application state.
@@ -68,7 +68,7 @@ void RemoteConsole::start_telnet(const Config& cfg) {
     o.max_sessions = cfg.value<std::size_t>("console.telnet_max_sessions");
     o.idle_s = cfg.value<unsigned>("console.telnet_idle_s");
     o.prompt = cfg.value<std::string>("console.prompt");
-    o.banner = fmt::format("{} {} on {} (forgecpp {})", info.name, info.version, host_name(), version_string);
+    o.banner = std::format("{} {} on {} (forgecpp {})", info.name, info.version, host_name(), version_string);
     telnet_ = std::make_unique<Telnet>(*console_, app_.auth(), o);
     telnet_->start();
     app_.logger()->info("console: telnet on {}", telnet_->endpoint());
@@ -94,7 +94,7 @@ void RemoteConsole::register_builtins(Console& c) {
         c.print("{} {} (forgecpp {})", info.name, info.version, version_string);
         c.print("  pid          {}", ::getpid());
         c.print("  uptime       {}", format_duration(app_.uptime()));
-        c.print("  log level    {}", spdlog::level::to_string_view(log::level()));
+        c.print("  log level    {}", std::string_view(spdlog::level::to_string_view(log::level()).data(), spdlog::level::to_string_view(log::level()).size()));
         c.print("  workers      {} ({} tasks queued)", app_.pool().get_thread_count(), app_.pool().get_tasks_queued());
         c.print("  timers       {}", app_.scheduler().pending());
         if (auto* http = app_.http()) c.print("  http         port {}", http->port());
@@ -105,7 +105,7 @@ void RemoteConsole::register_builtins(Console& c) {
             // log-level <level> | log-level <logger> <level>
             if (args.size() == 1) app_.control().set_log_level({}, args[0], console_caller());
             if (args.size() >= 2) app_.control().set_log_level(args[0], args[1], console_caller());
-            c.print("log level: {}", spdlog::level::to_string_view(log::level()));
+            c.print("log level: {}", std::string_view(spdlog::level::to_string_view(log::level()).data(), spdlog::level::to_string_view(log::level()).size()));
             for (const auto& [name, lvl] : log::logger_levels()) c.print("  {:<24} {}", name, lvl);
         },
         [](const Console::Args& so_far) -> std::vector<std::string> {
@@ -136,7 +136,7 @@ void RemoteConsole::register_builtins(Console& c) {
             ::localtime_r(&t, &tm);
             c.print("  {:<8} {:<9} {:<20} {:02}:{:02}:{:02} {}{}", to_string(a.severity),
                     a.pending() ? "ACTIVE" : (a.active ? "ACKED" : "CLEARED"), a.id, tm.tm_hour, tm.tm_min,
-                    tm.tm_sec, a.message, a.count > 1 ? fmt::format(" (x{})", a.count) : "");
+                    tm.tm_sec, a.message, a.count > 1 ? std::format(" (x{})", a.count) : "");
         }
     });
     c.add(

@@ -4,7 +4,7 @@
 #include "forge/log.hpp"
 #include "forge/v1/observability.pb.h"
 
-#include <spdlog/fmt/fmt.h>
+#include <format>
 
 #include <arpa/inet.h>
 #include <cerrno>
@@ -203,7 +203,7 @@ void Telnet::accept_loop() {
         ::inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
         auto s = std::make_shared<Session>();
         s->fd = fd;
-        s->peer = fmt::format("{}:{}", ip, ntohs(peer.sin_port));
+        s->peer = std::format("{}:{}", ip, ntohs(peer.sin_port));
 
         std::lock_guard lock(mutex_);
         // Forget closed sessions.
@@ -216,7 +216,7 @@ void Telnet::accept_loop() {
             }
         }
         if (sessions_.size() >= options_.max_sessions) {
-            s->print(fmt::format("too many sessions ({}), try again later\n", options_.max_sessions));
+            s->print(std::format("too many sessions ({}), try again later\n", options_.max_sessions));
             ::close(fd);
             continue;
         }
@@ -294,7 +294,7 @@ void Telnet::serve(std::shared_ptr<Session> s) {
         }
     }
     if (ok) {
-        s->print(fmt::format("signed in as {} ({}) - 'help' for commands, 'logs on' to follow the log, 'exit' to "
+        s->print(std::format("signed in as {} ({}) - 'help' for commands, 'logs on' to follow the log, 'exit' to "
                              "leave\n",
                              cs.user.empty() ? "anonymous" : cs.user, to_string(cs.role)));
         std::vector<std::string> history;
@@ -312,11 +312,11 @@ void Telnet::serve(std::shared_ptr<Session> s) {
                 continue;
             }
             if (cmd == "history") {
-                for (std::size_t i = 0; i < history.size(); ++i) s->print(fmt::format("{:>4}  {}\n", i + 1, history[i]));
+                for (std::size_t i = 0; i < history.size(); ++i) s->print(std::format("{:>4}  {}\n", i + 1, history[i]));
                 continue;
             }
             if (cmd == "whoami") {
-                s->print(fmt::format("{} ({}) from {}\n", cs.user.empty() ? "anonymous" : cs.user, to_string(cs.role),
+                s->print(std::format("{} ({}) from {}\n", cs.user.empty() ? "anonymous" : cs.user, to_string(cs.role),
                                      s->peer));
                 continue;
             }
@@ -334,7 +334,7 @@ void Telnet::serve(std::shared_ptr<Session> s) {
                         const auto t = static_cast<std::time_t>(r.time_unix_ns() / 1000000000);
                         std::tm tm{};
                         ::localtime_r(&t, &tm);
-                        p->print(fmt::format("{:02}:{:02}:{:02} [{}] [{}] {}\n", tm.tm_hour, tm.tm_min, tm.tm_sec,
+                        p->print(std::format("{:02}:{:02}:{:02} [{}] [{}] {}\n", tm.tm_hour, tm.tm_min, tm.tm_sec,
                                              r.level(), r.logger(), r.message()));
                     });
                     s->print("following the log (logs off to stop)\n");

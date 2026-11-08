@@ -448,7 +448,7 @@ Console::Console(Options options) : impl_(std::make_shared<Impl>(std::move(optio
             if (auto sep = summary.find("  "); sep != std::string::npos && starts_with(summary, name)) {
                 summary = summary.substr(summary.find_first_not_of(' ', sep));
             }
-            out += fmt::format("  {:<{}}  {}\n", name, width, summary);
+            out += std::format("  {:<{}}  {}\n", name, width, summary);
         }
         write(out);
     });
@@ -458,7 +458,7 @@ Console::Console(Options options) : impl_(std::make_shared<Impl>(std::move(optio
     add("history", "history  show command history", [this](const Args&) {
         std::string out;
         int i = 1;
-        for (const auto& text : impl_->history) out += fmt::format("{:>4}  {}\n", i++, text);
+        for (const auto& text : impl_->history) out += std::format("{:>4}  {}\n", i++, text);
         write(out);
     });
     std::lock_guard lock(impl_->mutex);
@@ -541,9 +541,9 @@ void Console::write(std::string_view text) {
 
 void Console::error(std::string_view message) {
     if (impl_->options.color) {
-        write(fmt::format("\033[31merror:\033[0m {}\n", message));
+        write(std::format("\033[31merror:\033[0m {}\n", message));
     } else {
-        write(fmt::format("error: {}\n", message));
+        write(std::format("error: {}\n", message));
     }
 }
 

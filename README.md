@@ -694,7 +694,7 @@ visible until an operator acknowledges it:
 ```cpp
 // callable from any thread; raising the same id again does not create a new entry:
 // message/time are updated and a counter increases (x12) - no flood of messages
-alarms().raise("tank.level", forge::Severity::warning, fmt::format("Tank {:.0f} % full", level));
+alarms().raise("tank.level", forge::Severity::warning, std::format("Tank {:.0f} % full", level));
 alarms().clear("tank.level");                                   // condition is gone
 alarms().set("sensor.fault", fault, forge::Severity::error, "Sensor not responding");  // by condition
 ```

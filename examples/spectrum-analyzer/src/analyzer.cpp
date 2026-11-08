@@ -60,9 +60,9 @@ json tenths_array(const std::vector<double>& v) {
 }
 
 std::string fmt_freq(double hz) {
-    if (std::abs(hz) >= 1e9) return fmt::format("{:.6f} GHz", hz / 1e9);
-    if (std::abs(hz) >= 1e6) return fmt::format("{:.4f} MHz", hz / 1e6);
-    return fmt::format("{:.2f} kHz", hz / 1e3);
+    if (std::abs(hz) >= 1e9) return std::format("{:.6f} GHz", hz / 1e9);
+    if (std::abs(hz) >= 1e6) return std::format("{:.4f} MHz", hz / 1e6);
+    return std::format("{:.2f} kHz", hz / 1e3);
 }
 
 json settings_json(const Settings& s, double ref, double scale, bool limit_on, double limit) {
@@ -301,10 +301,10 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
         const auto f = engine_ ? engine_->latest() : nullptr;
         if (!f) return std::string("-");
         if (f->plan.fixed) {
-            return fmt::format("RX{} of radio-controller (LO {:.3f} MHz, {:.3f} MSPS)", channel_,
+            return std::format("RX{} of radio-controller (LO {:.3f} MHz, {:.3f} MSPS)", channel_,
                                f->plan.segments.front().lo_hz / 1e6, f->plan.sample_rate_hz / 1e6);
         }
-        return f->plan.swept ? fmt::format("swept, {} segments", f->plan.segments.size()) : std::string("realtime");
+        return f->plan.swept ? std::format("swept, {} segments", f->plan.segments.size()) : std::string("realtime");
     });
 
     // --- bandwidth ------------------------------------------------------------------
@@ -352,14 +352,14 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
     });
     bw.value("sample_rate", "Sample rate", [this] {
         const auto f = latest();
-        return f ? fmt::format("{:.3f} MSPS", f->plan.sample_rate_hz / 1e6) : std::string("-");
+        return f ? std::format("{:.3f} MSPS", f->plan.sample_rate_hz / 1e6) : std::string("-");
     });
 
     // --- amplitude -----------------------------------------------------------------
     auto& am = ui.group("Amplitude");
     am.number("ref_level", "Reference level", ref_level_).range(-150, 30, 0.1).unit("dB").precision(1);
     am.select("scale_db", "Scale", {"1", "2", "5", "10", "20"},
-              [this] { return fmt::format("{}", static_cast<int>(scale_db_)); },
+              [this] { return std::format("{}", static_cast<int>(scale_db_)); },
               [this](const std::string& v) {
                   scale_db_ = std::stod(v);
                   dirty_ = true;
@@ -407,7 +407,7 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
     // --- traces --------------------------------------------------------------------
     auto& tr = ui.group("Traces");
     for (std::size_t i = 0; i < kTraces; ++i) {
-        tr.select(fmt::format("trace{}_mode", i + 1), fmt::format("Trace {}", i + 1), trace_mode_names(),
+        tr.select(std::format("trace{}_mode", i + 1), std::format("Trace {}", i + 1), trace_mode_names(),
                   [this, i] { return settings_.trace_modes[i]; },
                   [this, i](const std::string& m) {
                       settings_.trace_modes[i] = m;
@@ -451,7 +451,7 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
                   changed();
               });
     for (std::size_t i = 0; i < kMarkers; ++i) {
-        mk.toggle(fmt::format("m{}_on", i + 1), fmt::format("Marker {}", i + 1),
+        mk.toggle(std::format("m{}_on", i + 1), std::format("Marker {}", i + 1),
                   [this, i] { return settings_.markers[i].enabled; },
                   [this, i](bool on) {
                       auto& m = settings_.markers[i];
@@ -474,7 +474,7 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
                       m.enabled = on;
                       changed();
                   });
-        mk.number(fmt::format("m{}_mhz", i + 1), fmt::format("Marker {} frequency", i + 1),
+        mk.number(std::format("m{}_mhz", i + 1), std::format("Marker {} frequency", i + 1),
                   [this, i] { return mhz(settings_.markers[i].freq_hz); },
                   [this, i](double v) {
                       auto& m = settings_.markers[i];
@@ -487,7 +487,7 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
             .unit("MHz")
             .precision(4);
         if (i > 0) {
-            mk.toggle(fmt::format("m{}_delta", i + 1), fmt::format("Marker {} delta", i + 1),
+            mk.toggle(std::format("m{}_delta", i + 1), std::format("Marker {} delta", i + 1),
                       [this, i] { return settings_.markers[i].delta; },
                       [this, i](bool on) {
                           settings_.markers[i].delta = on;
@@ -544,8 +544,8 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
     ms.value("result", "Result", [this] {
         const auto f = latest();
         if (!f) return std::string("-");
-        if (f->channel_power) return fmt::format("{:.2f} {}", *f->channel_power, f->unit);
-        if (f->obw) return fmt::format("{} OBW", fmt_freq(f->obw->bandwidth_hz));
+        if (f->channel_power) return std::format("{:.2f} {}", *f->channel_power, f->unit);
+        if (f->obw) return std::format("{} OBW", fmt_freq(f->obw->bandwidth_hz));
         return std::string("-");
     });
     ms.toggle("limit_on", "Limit line", limit_on_).help("Raise an alarm when the live trace crosses the line");
@@ -579,7 +579,7 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
         .unit("Hz");
     sw.value("sweep_time", "Sweep time", [this] {
         const auto f = latest();
-        return f ? fmt::format("{:.1f} ms", f->sweep_ms) : std::string("-");
+        return f ? std::format("{:.1f} ms", f->sweep_ms) : std::string("-");
     });
     sw.value("connected", "Connected", [this] { return status_.connected; });
     sw.value("backend", "Backend", [this] { return status_.connected ? status_.backend : backend_kind_ + " (not connected)"; });
@@ -597,7 +597,7 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
 
 void Analyzer::require_gain_control() const {
     if (!control_gain_) {
-        throw HttpError(409, fmt::format("the gain of RX{} is not the analyzer's to set ([analyzer] control_gain = "
+        throw HttpError(409, std::format("the gain of RX{} is not the analyzer's to set ([analyzer] control_gain = "
                                          "false): change it where that channel is used",
                                          channel_));
     }
@@ -748,9 +748,9 @@ void Analyzer::setup_http(forge::http::Server& server) {
         }
         os << "\n";
         for (std::size_t i = 0; i < f->points; ++i) {
-            os << fmt::format("{:.1f},{:.2f}", point_freq(i, f->start_hz, f->stop_hz, f->points), f->live[i]);
+            os << std::format("{:.1f},{:.2f}", point_freq(i, f->start_hz, f->stop_hz, f->points), f->live[i]);
             for (std::size_t t = 0; t < kTraces; ++t) {
-                if (!f->traces[t].empty()) os << fmt::format(",{:.2f}", f->traces[t][i]);
+                if (!f->traces[t].empty()) os << std::format(",{:.2f}", f->traces[t][i]);
             }
             os << "\n";
         }
@@ -762,8 +762,8 @@ void Analyzer::setup_http(forge::http::Server& server) {
         const auto c = engine_->last_capture();
         if (c.iq.empty()) throw HttpError(409, "no capture yet (IQ is kept for realtime spans only)");
         res.set_header("Content-Disposition", "attachment; filename=\"capture.cs16\"");
-        res.set_header("X-Sample-Rate", fmt::format("{:.0f}", c.sample_rate_hz));
-        res.set_header("X-Center-Frequency", fmt::format("{:.0f}", c.center_hz));
+        res.set_header("X-Sample-Rate", std::format("{:.0f}", c.sample_rate_hz));
+        res.set_header("X-Center-Frequency", std::format("{:.0f}", c.center_hz));
         res.set_content(std::string(reinterpret_cast<const char*>(c.iq.data()), c.iq.size() * sizeof(std::int16_t)),
                         "application/octet-stream");
     });
@@ -786,7 +786,7 @@ void Analyzer::setup_console(forge::Console& c) {
                 continue;
             }
             c.print("  M{}  {:>18}  {:8.2f} {}{}", i + 1, fmt_freq(m.freq_hz), m.level, f->unit,
-                    m.delta ? fmt::format("   delta {} / {:+.2f} dB", fmt_freq(m.dfreq_hz), m.dlevel_db) : "");
+                    m.delta ? std::format("   delta {} / {:+.2f} dB", fmt_freq(m.dfreq_hz), m.dlevel_db) : "");
         }
     });
 }
@@ -873,7 +873,7 @@ void Analyzer::publish_frame() {
         if (!limit_alarm_ && *it > limit_level_) {
             limit_alarm_ = true;
             alarms().raise(kLimitAlarm, forge::Severity::warning,
-                           fmt::format("Signal at {} is {:.1f} dB above the limit ({:.1f} {})",
+                           std::format("Signal at {} is {:.1f} dB above the limit ({:.1f} {})",
                                        fmt_freq(point_freq(i, f->start_hz, f->stop_hz, f->points)),
                                        *it - limit_level_, limit_level_, f->unit));
         } else if (limit_alarm_ && *it < limit_level_ - 1) {
