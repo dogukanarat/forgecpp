@@ -20,7 +20,7 @@ LEVELS = {
                  "channel", "thread_pool", "buffer_pool", "rt", "systemd", "version"]),
     1: ("services", ["log", "log_rt", "metrics", "events", "scheduler", "health", "alarms", "audit", "auth",
                      "assets"]),
-    2: ("link", ["c2", "zmq", "http", "hub"]),
+    2: ("link", ["c2", "tmtc", "zmq", "http", "hub"]),
     3: ("front ends", ["console", "telnet", "web"]),
     4: ("application", ["component", "control", "application"]),
 }

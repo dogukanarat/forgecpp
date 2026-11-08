@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+
+package forge_test;
+
+// Commands for the tmtc tests.
+
+message echo_request {
+    uint32 token = 1;
+    string text = 2 [(nanopb).max_size = 16];
+}
+
+message echo_reply {
+    uint32 token = 1;
+    string text = 2 [(nanopb).max_size = 16];
+}
+
+message count_request {
+    uint32 to = 1;
+}
+
+message count_reply {
+    uint32 value = 1;
+}
+
+message level_report {
+    int32 dbm = 1;
+}

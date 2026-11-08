@@ -17,8 +17,9 @@ forge_add_test(forgecpp_tests
 # The source tree, for the check that defaults are written only in the schema.
 target_compile_definitions(forgecpp_tests PRIVATE FORGE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
-forge_add_test(forgecpp_pb_tests SOURCES test_pb.cpp)
-forge_add_proto(forgecpp_pb_tests ROOT proto PROTOS forge_test/all_types.proto PYTHON "${CMAKE_CURRENT_BINARY_DIR}/pb_python")
+forge_add_test(forgecpp_pb_tests SOURCES test_pb.cpp test_tmtc.cpp)
+forge_add_proto(forgecpp_pb_tests ROOT proto PROTOS forge_test/all_types.proto forge_test/commands.proto
+    PYTHON "${CMAKE_CURRENT_BINARY_DIR}/pb_python")
 # Golden data from Google's protobuf for Python (the generator needs it anyway).
 add_custom_command(
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/pb_golden.jsonl"

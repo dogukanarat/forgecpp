@@ -136,6 +136,7 @@ add_library(forgecpp
     src/status.cpp
     src/systemd.cpp
     src/telnet.cpp
+    src/tmtc.cpp
     src/trace.cpp
     src/web.cpp
     src/zmq.cpp)
