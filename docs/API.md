@@ -9,12 +9,12 @@ in CI on every change.
 |---|---|---|
 | C++: `include/forge/*.hpp`, namespace `forge` | yes, except `forge::detail` | `tools/api-check.py` (exported symbols); `examples/`, `examples/pump` (the tutorials) and a freshly scaffolded project must build |
 | `forge::detail`, `src/` (`src/app/` services) | no: may change in any release | |
-| forge.v1 messages (`proto/forge/v1`) | yes: compatible changes only, always | `tools/proto-compat.py` against `proto/forge/v1/API.json` |
+| Messages and command numbers (`proto/forge`), the c2 frame | yes: compatible changes only, always | `tools/proto-compat.py` against `proto/forge/API.json`; the zephyrus compatibility tests (`-DFORGE_ZEPHYRUS_DIR`) |
 | Configuration keys the framework declares | yes | `tools/api-check.py` (config keys) |
 | HTTP routes under `/forge/api/`, `/health`, `/metrics` | yes | the framework tests |
 | `forgectl` commands, application command line flags | yes | the CI smoke test |
 | CMake: `forge_add_app`, `forge_add_web`, `forge_add_test`, `forge_add_proto`, `forge_install_python` | yes | examples, scaffolder, CI |
-| Python: `forge.v1` package | yes | CI (the clients) |
+| Python: `forge` package (`framing`, `c2`, `messages_pb2`) | yes | CI (the clients) |
 | Log text, metric names of internals, web page markup | no | |
 
 ## Versions
@@ -28,8 +28,10 @@ forgecpp uses semantic versions (`CHANGELOG.md`).
   listed in the CHANGELOG with what to do instead.
 - **From 1.0.** Breaks only in a new major version; deprecated APIs stay at
   least one minor version (`[[deprecated("use X")]]`) before they go.
-- **forge.v1** never breaks: new fields and messages only, removed numbers are
-  reserved. A device with old and new applications keeps working.
+- **The messages** never break: new fields, messages and commands only,
+  removed numbers are reserved, bounds only grow (a peer built with the old
+  bound must still fit). A device with old and new applications keeps
+  working, and so does a zephyrus device on the same link.
 
 ## Changing the API
 

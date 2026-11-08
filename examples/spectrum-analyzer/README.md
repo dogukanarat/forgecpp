@@ -3,14 +3,14 @@
 A spectrum analyzer for the **AD936x** transceivers on ADI's `ad9361` driver
 (AD9364, AD9361, AD9363), operated from the browser. Built on forgecpp: every setting is a
 dashboard control, so the analyzer page, the generic control panel
-(`/forge/`), `forgectl` (forge.v1), the console and telnet all drive the same
+(`/forge/`), `forgectl` (the command link), the console and telnet all drive the same
 instrument.
 
 ```
                       engine thread                                   main loop
 cf-ad9361-lpc  -->  capture -> window -> FFT -> average  -->  frame  -->  SSE "frame"     --> browser  /
-ad9361-phy     <--  LO / rate / bandwidth / gain per segment              [forge].data    --> clients  5566 "spectrum" (sa.v1.Spectrum)
-                                                                          [forge].control <-> forgectl 5567 (forge.v1)
+ad9361-phy     <--  LO / rate / bandwidth / gain per segment              [forge].data    --> clients  5566 "spectrum" (sa.spectrum)
+                                                                          [forge].control <-> forgectl 5567 (c2 commands)
                                                                           [forge].events  --> watch    5569
                                                                           telnet          <-> console  2324
 ```
@@ -126,23 +126,24 @@ peak left/right, <kbd>C</kbd> marker → center, <kbd>Space</kbd> run/hold,
 (headers `X-Sample-Rate`, `X-Center-Frequency`), `POST /api/tune`
 `{"center_hz": ..., "span_hz": ...}` (one retune for both).
 
-**Spectrum stream** (`[forge].data`, topic `spectrum`, `sa.v1.Spectrum`, see
-[`proto/sa/v1/spectrum.proto`](proto/sa/v1/spectrum.proto)): the live trace
-of every sweep, newest only (a slow display skips sweeps instead of lagging):
+**Spectrum stream** (`[forge].data`, topic `spectrum`, `sa.spectrum`, see
+[`proto/sa/spectrum.proto`](proto/sa/spectrum.proto)): the live trace of
+every sweep, newest only (a slow display skips sweeps instead of lagging).
+The levels are the blob: `points` float32 values, little endian:
 
 ```
-Spectrum { seq: 512, start_hz: 2405e6, stop_hz: 2445e6, points: 1001, unit: "dBFS",
-           rbw_hz: 48876.9, sweep_mode: "realtime", overload: false, channel: 2, levels: [...] }
+spectrum { seq: 512, start_hz: 2405e6, stop_hz: 2445e6, points: 1001, unit: "dBFS",
+           rbw_hz: 48876.9, sweep_mode: "realtime", overload: false, channel: 2 }  + 1001 x float32
 ```
 
 `clients/spectrum_watch.py tcp://board:5566` prints the strongest signal per
-sweep, or every sweep as JSON (`--json`, the protobuf JSON mapping a remote
-panel can use as is):
+sweep, or every sweep as JSON (`--json`):
 
 ```python
-topic, header, body = s.recv_multipart()           # s: SUB to tcp://board:5566, topic b"spectrum"
-sp = spectrum_pb2.Spectrum(); sp.ParseFromString(body)   # from sa.v1 import spectrum_pb2
-freqs = numpy.linspace(sp.start_hz, sp.stop_hz, sp.points); levels = numpy.array(sp.levels)
+from forge import framing                                 # s: SUB to tcp://board:5566, topic b"spectrum"
+from sa import spectrum_pb2
+topic, header, sp, blob = framing.parse(s.recv_multipart(), spectrum_pb2.spectrum)
+freqs = numpy.linspace(sp.start_hz, sp.stop_hz, sp.points); levels = numpy.frombuffer(blob, "<f4")
 ```
 
 **Control** (`[forge].control`): the dashboard controls, as for every
@@ -188,9 +189,9 @@ second per segment.
 |---|---|
 | `src/spectrum.*` | planning (realtime / swept segments, FFT size for an RBW), bin stitching, detectors, traces, peak search, channel power, OBW: pure functions, unit tested |
 | `src/engine.*` | the acquisition thread: owns the radio, retunes per segment, builds `Frame`s; reconnects on errors |
-| `src/radio_tap.*` | `backend = "radio"`: `radio.v1.IqBlock` stream of a channel radio-controller shares, its gain through radio-controller's forge.v1 control endpoint (fixed tuning) |
+| `src/radio_tap.*` | `backend = "radio"`: `radio.iq_block` stream of a channel radio-controller shares, its gain through radio-controller's command endpoint (`forge::Remote`, fixed tuning) |
 | `src/analyzer.*` | the forgecpp application: config schema, controls, markers, alarms, HTTP routes, spectrum stream, persistence |
-| `proto/sa/v1` | `sa.v1.Spectrum` |
+| `proto/sa` | `sa.spectrum` |
 | `clients/` | `spectrum_watch.py` |
 | `web/` | the analyzer page (canvas spectrum and waterfall, no dependencies) |
 | `../common/ad936x` | AD936x access through libiio, the simulator, FFT and windows (shared with radio-controller) |
@@ -199,4 +200,4 @@ Tests (`tests/`) cover the DSP scaling, plans, detectors, traces, peaks and
 measurements, the engine on the simulator (realtime and swept spans, markers,
 peak track, single sweep, device errors, bounded DMA buffers), the RX2 mode
 against a stand-in and against the real radio-controller (TX1 → RX2 loopback
-on a simulated AD9361) and the whole application over forge.v1.
+on a simulated AD9361) and the whole application over the command link.

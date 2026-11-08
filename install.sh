@@ -160,7 +160,7 @@ while [[ $# -gt 0 ]]; do
         --without-ssl)  WITH_SSL="OFF"; shift ;;
         --with-ssl)     WITH_SSL="ON"; shift ;;
         --without-zlib) WITH_ZLIB="OFF"; shift ;;
-        --without-zmq)  die "--without-zmq: ZeroMQ is part of forgecpp now (the forge.v1 control and streams use it)" ;;
+        --without-zmq)  die "--without-zmq: ZeroMQ is part of forgecpp now (the command link and the streams use it)" ;;
         --system-protobuf) SYSTEM_PROTOBUF="ON"; shift ;;
         --protoc)       need_arg "$@"; HOST_PROTOC="$2"; shift 2 ;;
         --protoc=*)     HOST_PROTOC="${1#*=}"; shift ;;

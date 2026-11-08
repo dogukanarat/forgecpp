@@ -14,7 +14,7 @@ if(NOT TARGET forgecpp::forgecpp)
     find_package(forgecpp 0.4 REQUIRED)
 endif()
 
-# radio.v1 messages (IqBlock, TxBlock), shared with radio-controller.
+# radio messages (iq_block, tx_block), shared with radio-controller.
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/ad936x ${CMAKE_CURRENT_BINARY_DIR}/ad936x)
 
 # The DSP alone (no forgecpp): framing, modulator, demodulator.

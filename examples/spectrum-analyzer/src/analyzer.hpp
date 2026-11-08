@@ -4,7 +4,7 @@
 //   Web UI     /            analyzer display (spectrum, waterfall, markers, menus)
 //              /forge/      generic control panel
 //              /api/frame   latest sweep as JSON, /api/trace.csv, /api/iq.cs16
-//   forge.v1   [forge].data     stream "spectrum" (sa.v1.Spectrum, latest only)
+//   ZeroMQ     [forge].data     stream "spectrum" (sa.spectrum + float32 levels, latest only)
 //              [forge].control  controls, commands, alarms (forgectl, panels)
 //              [forge].events   state, alarms, logs, audit, health, metrics
 //   Console    -i or telnet [console].telnet (controls / set / press / peaks / markers)

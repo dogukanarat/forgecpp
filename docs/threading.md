@@ -31,7 +31,7 @@ touches your members there, so you need no locks for them.
 | You are… | and want… | use |
 |---|---|---|
 | anywhere but the loop | a value from the state | `invoke([&] { return x_; })` |
-| an HTTP or forge.v1 handler | the same, without hanging if the loop is stuck | `invoke_for(request_timeout(), ...)` (503 "main loop busy") |
+| an HTTP handler or a command on a link | the same, without hanging if the loop is stuck | `invoke_for(request_timeout(), ...)` (503 "main loop busy") |
 | anywhere but the loop | to change the state, not waiting | `post([=] { x_ = v; })` |
 | anywhere | a future to wait on later | `call(fn)` (runs at once when already on the loop) |
 | on the loop | to do something slow (file, network, DSP) | `background(work, then)` |
@@ -53,8 +53,8 @@ touches your members there, so you need no locks for them.
   (200) logs a warning (at most every 10 s) and counts in
   `forge.loop.slow_tasks`; `forge.loop.lag_seconds` shows how long tasks wait.
   The trace (`/forge/` → System → trace) shows which one.
-- **A stuck loop does not take the control channels with it.** forge.v1 and
-  the framework's HTTP routes answer 503 after `[forge].request_timeout_ms`,
+- **A stuck loop does not take the control channels with it.** Commands on a
+  link (a NACK with EAGAIN) and the framework's HTTP routes (503) give up after `[forge].request_timeout_ms`,
   and `/health` reports `"stalled"`; the systemd watchdog restarts a loop
   that stays stuck.
 

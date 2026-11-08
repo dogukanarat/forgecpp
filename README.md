@@ -11,15 +11,17 @@ console, signal handling and systemd integration.
 Every application is operated, observed and connected **the same way**, so an
 engineer moving between applications finds the same tools everywhere:
 
-- **One message standard, forge.v1 (protobuf).** Controls, commands, alarms,
-  logs, metrics, health, audit records and the application's own data streams
-  travel as protobuf messages over ZeroMQ (or HTTP). Every message carries a
-  header with its source, sequence number, time and trace context, so it can be
-  followed from one daemon to the next and gaps are detected. A remote control
-  panel receives these messages directly, in binary or as JSON.
+- **One message standard, binary and JSON.** Every command is a request and a
+  reply with a number, defined in a `.proto` file with fixed bounds (nanopb: no
+  allocation). Links (ZeroMQ, later UART or CAN) carry them as c2 frames, byte
+  for byte like [zephyrus](https://github.com/embedded-aviation/zephyrus) on
+  the microcontrollers; the web sends the same commands as JSON. One handler
+  answers both. Streams carry a header with source, sequence number, time and
+  trace context, so data can be followed from one daemon to the next and gaps
+  are detected.
 - **The same ways in.** You declare controls and commands once in C++;
   forgecpp publishes them as a web control panel (`/forge/`), `data-forge-*`
-  attributes for your own pages, the forge.v1 endpoint (`forgectl`), the local
+  attributes for your own pages, the command link (`forgectl`), the local
   console (`-i`) and a **remote console over telnet**. All of them go through one
   control service with roles, leases and an audit trail.
 - **Built-in observability.** Metrics (Prometheus `/metrics`), a flight
@@ -79,15 +81,17 @@ kill -HUP $(pidof pump)            # reload the configuration
 | [toml++](https://github.com/marzer/tomlplusplus) | v3.4.0 | TOML configuration | `forge::Config` |
 | [cpp-httplib](https://github.com/yhirose/cpp-httplib) | v0.65.0 | HTTP/HTTPS client and server | `forge::http::Server`, `forge::http::Client` |
 | [doctest](https://github.com/doctest/doctest) | v2.5.3 | Unit testing | `forge/testing.hpp`, `forge_add_test()` |
-| [libzmq](https://github.com/zeromq/libzmq) + [cppzmq](https://github.com/zeromq/cppzmq) | v4.3.5 / v4.11.0 | ZeroMQ messaging (pub/sub, push/pull, request/reply) | `forge/zmq.hpp`, forge.v1 endpoints |
-| [protobuf](https://github.com/protocolbuffers/protobuf) | v21.12 | Message standard (binary + JSON mapping), `protoc` | `proto/forge/v1`, `forge_add_proto()`, `forgectl` |
+| [libzmq](https://github.com/zeromq/libzmq) + [cppzmq](https://github.com/zeromq/cppzmq) | v4.3.5 / v4.11.0 | ZeroMQ messaging (pub/sub, push/pull, request/reply) | `forge/zmq.hpp`, `[forge]` endpoints |
+| [nanopb](https://github.com/nanopb/nanopb) | 0.4.9.2 | Protobuf messages as C structs with fixed bounds (compiled in) | `forge/pb.hpp`, `proto/forge`, `forge_add_proto()` |
+| [protobuf](https://github.com/protocolbuffers/protobuf) | v21.12 | `protoc`, on the build machine only (nothing links libprotobuf) | `forge_add_proto()` |
 | [libiio](https://github.com/analogdevicesinc/libiio) | v0.26 | Industrial I/O devices (ADI transceivers, ADCs, ...) | `examples/radio-controller`, `examples/spectrum-analyzer` |
 
 ## Installation
 
 Requirements: CMake ≥ 3.16, a C++20 compiler (GCC ≥ 13 / Clang ≥ 17 with libstdc++ 13), git,
-libxml2 (for libiio; skip with `--without-iio`). Python 3 with `pyzmq` and
-`protobuf` for the Python clients (optional).
+libxml2 (for libiio; skip with `--without-iio`). Python 3 with `protobuf`
+(the message generator runs at build time; `apt install python3-protobuf`), and
+`pyzmq` for the Python clients (optional).
 Optional: `ninja`, OpenSSL (for HTTPS), zlib (for compression), libusb-1.0 (`--iio-usb`).
 
 ```sh
@@ -118,7 +122,7 @@ into the same prefix (each with its own `find_package` config), then builds
 | `--package [--arch A]` | Produce `forgecpp-<version>-<arch>.tar.gz` without touching the system |
 | `--without-ssl`, `--with-ssl`, `--without-zlib` | cpp-httplib features |
 | `--without-iio`, `--iio-usb` | Skip libiio, or build libiio's USB backend |
-| `--system-protobuf`, `--protoc PATH` | Use the system's protobuf; host `protoc` for cross builds (default: built from the bundled sources with `HOST_CC`/`HOST_CXX`) |
+| `--system-protobuf`, `--protoc PATH` | Use the `protoc` on the PATH, or this one (default: built from the bundled sources with `HOST_CC`/`HOST_CXX`; it only runs on the build machine) |
 | `--profile embedded` | MinSizeRel, LTO, static libraries, no tests (small targets) |
 | `--sanitize LIST` | `address,undefined` or `thread`, applied to the dependencies too (use a separate prefix) |
 | `--libdir DIR` | e.g. `lib64` instead of `lib` |
@@ -146,11 +150,11 @@ my-daemon/
 ├── CMakeLists.txt              find_package(forgecpp) + forge_add_app() (systemd unit with
 │                               its restart policy) + forge_proto + forge_add_test()
 ├── src/my_daemon.hpp, main.cpp forge::Application subclass (schema, controls, commands, stream)
-├── proto/my_daemon/v1/my_daemon.proto   its own messages (a "ticks" stream)
+├── proto/my_daemon/my_daemon.proto   its own messages (a "status" command, a "ticks" stream)
 ├── web/index.html              the application's own page (embedded in the binary)
 ├── config/my-daemon.toml       default configuration
 ├── tests/test_my_daemon.cpp    doctest + forge::testing::AppRunner
-├── clients/watch.py            Python client of the stream (forge.v1 package)
+├── clients/watch.py            Python client of the stream (forge package)
 └── README.md
 ```
 
@@ -293,15 +297,15 @@ telnet = ""              # remote console, e.g. "0.0.0.0:2323"
 telnet_max_sessions = 4
 telnet_idle_s = 0
 
-[forge]                  # forge.v1 endpoints (empty = off; "tcp://127.0.0.1:*" = any free port)
-control = ""             # requests from REQ clients (forgectl, panels), e.g. "tcp://*:5557"
+[forge]                  # ZeroMQ endpoints (empty = off; "tcp://127.0.0.1:*" = any free port)
+control = ""             # commands (c2 frames) from REQ clients (forgectl, programs), e.g. "tcp://*:5557"
 events = ""              # PUB: state, alarms, log, audit, health, metrics
 data = ""                # PUB: the application's streams (ephemeral port when empty and used)
 metrics_interval_s = 5
 control_workers = 2      # [forge].control requests handled at the same time
 request_timeout_ms = 2000 # requests waiting for a busy main loop answer 503 after this
 
-[auth]                   # users and roles for web, forge.v1 and telnet (see below)
+[auth]                   # users and roles for web, the command link and telnet (see below)
 enabled = false
 default_role = "viewer"
 # [auth.users.<name>] password / token / role
@@ -425,7 +429,8 @@ an unknown path with 404, each with a JSON error object.
 Errors of requests are `forge::Error{status, message, details}`
 (`<forge/error.hpp>`), whatever channel the request came in on: the control
 registry, `ControlService`, forge-hub and handlers throw it, and each channel
-maps it (HTTP status and body, `forge.v1.Reply.status`/`error`, console text).
+maps it (HTTP status and body, a NACK with the errno of the status on the
+link, console text).
 `http::HttpError` is a `forge::Error`; `http::Client` throws it, and code that
 throws it keeps working.
 
@@ -537,31 +542,97 @@ HTTPS, put the application behind a reverse proxy or use cpp-httplib's
 controls are available through `controls`, `set <id> <value>`, `press <id>`,
 and alarms through `alarms` and `ack <id|all>` (with tab completion).
 
-### forge.v1: one message standard for every application
+### Commands and streams: one message standard for every application
 
-The protocol is defined in [`proto/forge/v1`](proto/forge/v1) (installed in
-`share/forgecpp/proto`). Python: the `forge-v1` package (`forge.v1.*_pb2`
-and `forge.v1.framing`) is installed into site-packages; applications install
-their own messages next to it with `forge_install_python(DIRECTORY <dir>)`
-(the `PYTHON` dir of `forge_add_proto`), so scripts simply
-`from forge.v1 import framing` and `from radio.v1 import radio_pb2` (from a
-build directory: `PYTHONPATH=<build>/python`):
+Messages are protobuf messages with a bound on every string, bytes and
+repeated field (`[(nanopb).max_size = 64]`). nanopb turns them into plain C
+structs: nothing allocates, and the same `.proto` file builds on a
+microcontroller. forgecpp's own are in [`proto/forge`](proto/forge)
+(`messages.proto`, `hub.proto`; installed in `share/forgecpp/proto`).
+
+**Commands.** Every command is a request and a reply with a number (unique in
+the program; `0x0001..0x00FF` are forgecpp's: ping, info, controls, get, set,
+press, call, alarms, ack, logs, metrics, audit, lease, release, health,
+streams, log level). One handler answers both ways in:
+
+```proto
+// proto/pump/pump.proto
+enum msg_id { none = 0; flush = 0x0100; }
+message flush_request { uint32 seconds = 1; }
+message flush_reply { string message = 1 [(nanopb).max_size = 64]; }
+```
+
+```cpp
+// CMake: forge_add_proto(pump ROOT proto PROTOS pump/pump.proto PYTHON ${CMAKE_BINARY_DIR}/python)
+#include "pump/pump.forge.hpp"
+
+// In the constructor (or setup_web()); the handler runs on the main loop.
+command<pump_flush_request, pump_flush_reply>(pump_msg_id_flush, "flush", [this](const auto& req, auto& rsp) {
+    if (req.seconds > 60) return forge::Status::error(forge::module_id::app, EINVAL, "at most 60 s");
+    start_flush(req.seconds);
+    return forge::pb::assign(rsp.message, "flushing");
+});
+```
+
+- On a link (`[forge].control`, ZeroMQ REQ/REP) each message is one **c2
+  frame**: an 8-byte header (version, flags, command number, sequence number,
+  length) and the encoded request. The answer is a reply, an ACK (empty
+  reply), a NACK with the 32-bit status (module and errno, numbered like
+  Zephyr), or several replies flagged "more" for lists. These are the frames
+  of zephyrus: a gateway can pass them to a device unchanged.
+- On the web: `POST /forge/api/tmtc/<name or number>` with the request as
+  JSON, answered with the reply as JSON (64-bit numbers as strings, enums by
+  name, bytes as base64); a refusal is an HTTP error. `GET /forge/api/tmtc`
+  lists the commands.
+
+```cpp
+forge::Remote radio("tcp://board:5557");              // get / set / press / call over the link
+radio.set("rx_lo_mhz", 2412);
+forge::zmq::Client c("tcp://board:5557");             // any command (timeout + reconnect)
+pump_flush_reply rsp{};
+c.call(pump_msg_id_flush, pump_flush_request{10}, rsp);
+```
+
+```python
+from forge import c2, messages_pb2 as m              # forgecpp's Python package (site-packages)
+link = c2.Client("tcp://board:5557")
+link.call(m.set, m.set_request(id="rx_lo_mhz", value="2412"), m.set_reply)
+```
 
 | Endpoint (`[forge]`) | Socket | Carries |
 |---|---|---|
-| `control` | ROUTER (REQ clients) | `forge.v1.Request` → `forge.v1.Reply`: info, schema, state, get/set/press, call (commands), alarms/ack, logs, metrics, trace, audit, health, streams, lease/release, log level |
-| `events` | PUB | topics `state` (`Values`), `alarms`, `log`, `audit`, `health`, `metrics` |
-| `data` | PUB | the application's own streams (its messages, e.g. `radio.v1.IqBlock`) |
-| HTTP `POST /forge/api/rpc` | | the same `Request`/`Reply`, as protobuf (`application/x-protobuf`) or JSON |
+| `control` | ROUTER (REQ clients) | c2 commands (forgecpp's and the application's) |
+| `events` | PUB | topics `state`, `alarms`, `log`, `audit`, `health`, `metrics` |
+| `data` | PUB | the application's own streams (its messages, e.g. `radio.iq_block`) |
 
-Published messages are multipart: **topic**, **`forge.v1.Header`** (source,
-host, pid, sequence number per topic, time, body type, trace context),
-**body** (the protobuf message) and an optional **blob** (raw bytes such as IQ
-samples, described by the body). Receivers count gaps in the sequence numbers;
-the trace context continues across daemons, so a request can be followed
-from the panel through every application it touches (audit records carry it too).
+**Streams.** Published messages are multipart: **topic**,
+**`forge.stream_header`** (source, host, pid, sequence number per topic, time,
+body type, trace context), **body** and an optional **blob** (raw bytes such as
+IQ samples, described by the body). Receivers count gaps in the sequence
+numbers; the trace context continues across daemons, so a request can be
+followed from the panel through every application it touches (audit records
+carry it too).
 
-**forgectl** talks to any forgecpp application:
+```cpp
+auto& samples = stream<pump_sample>("samples");                  // on [forge].data
+auto& iq = stream<radio_iq_block>("iq", {"latest", 20});         // newest only, at most 20/s
+if (samples.wanted()) samples.publish(msg);                      // any thread; wanted(): someone listens
+iq.publish(block, buffer, buffer->data(), bytes);                // zero copy while `buffer` (shared_ptr) lives
+
+forge::zmq::Receiver sub(forge::zmq::Receiver::Kind::sub, "tcp://board:5555",
+    [this](forge::zmq::Message&& m) {
+        auto s = m.as<pump_sample>();            // checks the header's type
+        post([this, s] { use(s); });             // to the main loop
+    }, {.topics = {"samples"}});
+sub.lost();                                       // messages missed (sequence gaps)
+```
+
+```python
+from forge import framing                         # PYTHONPATH=<build>/python from a build directory
+topic, header, sample, blob = framing.parse(sock.recv_multipart(), pump_pb2.sample)
+```
+
+**forgectl** talks to any forgecpp application, over the link or HTTP:
 
 ```sh
 forgectl -e tcp://board:5557 info                 # name, version, endpoints, uptime
@@ -569,58 +640,20 @@ forgectl -e tcp://board:5557 controls             # every control and command wi
 forgectl -e tcp://board:5557 set rx_lo_mhz 2412
 forgectl -e tcp://board:5557 call scan from=2400 to=2480
 forgectl -e tcp://board:5557 alarms / ack all / logs -n 50 / audit / health / streams / metrics
-forgectl -e tcp://board:5557 trace -o trace.json  # flight recorder for ui.perfetto.dev
+forgectl -e http://board:8080 trace -o trace.json # flight recorder for ui.perfetto.dev (HTTP)
 forgectl -e tcp://board:5557 watch                # live events (state, alarms, logs, audit)
-forgectl -e http://board:8080 state               # the same over HTTP
-FORGE_ENDPOINT=tcp://board:5557 FORGE_TOKEN=... forgectl --json state
-```
-
-**Streams.** An application publishes its data with `stream()`; the stream is
-listed by `forgectl streams` and on the panel (subscribers, sent, dropped):
-
-```cpp
-// proto/pump/v1/pump.proto: message Sample { double pressure = 1; ... }
-forge_add_proto(pump ROOT proto PROTOS pump/v1/pump.proto PYTHON ${CMAKE_BINARY_DIR}/python)   // CMake
-
-auto& samples = stream("samples", "pump.v1.Sample");            // on [forge].data
-auto& iq = stream("iq", "radio.v1.IqBlock", {"latest", 20});    // newest only, at most 20/s
-if (samples.wanted()) samples.publish(msg);                      // any thread; wanted(): someone listens
-iq.publish(block, buffer, buffer->data(), bytes);                // zero copy while `buffer` (shared_ptr) lives
-```
-
-Receiving, in C++ or Python:
-
-```cpp
-forge::zmq::Receiver sub(forge::zmq::Receiver::Kind::sub, "tcp://board:5555",
-    [this](forge::zmq::Message&& m) {
-        auto s = m.as<pump::v1::Sample>();        // checks Header.type
-        post([this, s] { use(s); });             // to the main loop
-    }, {.topics = {"samples"}});
-sub.lost();                                       // messages missed (sequence gaps)
-
-forge::zmq::Client c("tcp://board:5557");         // forge.v1 control client (timeout + reconnect)
-c.set("speed", 1500); c.press("flush"); c.call_command("scan", {{"to", 600}});
-```
-
-```python
-topic, header, body, *blob = sock.recv_multipart()
-h = common_pb2.Header(); h.ParseFromString(header)    # from forge.v1 import common_pb2
-s = pump_pb2.Sample(); s.ParseFromString(body)
+FORGE_ENDPOINT=tcp://board:5557 forgectl --json controls
 ```
 
 Lower-level pieces: `Publisher`/`Stream` (thread-safe PUB with per-topic
 subscriber counts), `Sender` (PUB/PUSH from one thread), `Receiver` (SUB/PULL
-thread), `Server` (ROUTER + worker threads), `serve_control(service, endpoint, workers)` for extra control
-endpoints. The control endpoint still accepts the older JSON commands
-(`{"cmd":"set","id":"speed","value":1500}`), deprecated: each one is counted
-in `forge.control.legacy_json`, every client that sends them is named in a
-warning once, and `[forge].legacy_json = false` refuses them (status 410).
-They will be off by default in 0.4 and removed in 0.5; move scripts to
-forge.v1 (`forgectl`, `forge::zmq::Client`, Python `forge.v1`).
+thread), `Server` (ROUTER + worker threads; `zmq::answer(registry, request)`
+serves a `tmtc::Registry`), `c2` (the frame codec), `tmtc::Dispatcher` (for
+other transports).
 
 ### Access control, leases and the audit trail
 
-Every way in (web, forge.v1 over ZeroMQ or HTTP, console, telnet) goes through
+Every way in (web, commands over ZeroMQ or HTTP, console, telnet) goes through
 `forge::ControlService`, which applies, in order: the caller's role, leases,
 validation, the change, the audit record and the state event.
 
@@ -632,14 +665,16 @@ default_role = "viewer"          # without credentials: read only
 password = "..."                 # web (Basic auth), telnet login
 role = "admin"
 [auth.users.ci]
-token = "..."                    # forgectl --token, Authorization: Bearer
+token = "..."                    # forgectl --token over HTTP, Authorization: Bearer
 role = "operator"
 ```
 
 - **Roles:** `viewer` (read), `operator` (set, press, call, ack, lease),
   `admin` (log levels, controls/commands marked `.role(forge::Role::admin)`).
   Without `[auth]` everyone is admin (lab default); the legacy `[http.auth]`
-  user becomes an admin.
+  user becomes an admin. c2 frames carry no credentials, so commands on a
+  link get `default_role`: with `[auth]` on, change things over HTTP, or keep
+  the link endpoint on a trusted network.
 - **Leases:** `forgectl lease rx_lo_mhz 60` (or `group:Radio`, or the panel's
   Leases page) keeps others from changing a control while you work with it;
   others get `409 leased by ...`.
@@ -832,7 +867,7 @@ browser ──▶ http://<device>/ ──links──▶ http://<device>:<port>/ 
   `forgectl -e tcp://<device>:5551 call restart name=radio-controller` or the
   hub's own `/forge/` panel (`systemctl reset-failed` + `restart`), with roles
   and the audit trail of every forgecpp application. Remote panels get
-  `forge.v1.AppList` on the hub's `apps` stream.
+  `forge.hub.app_status` messages on the hub's `apps` stream.
 - **Applications without a unit** (started by hand, in development) are listed
   and checked too; the hub reports when they end ("ended without
   unregistering", "exited with code 3") but cannot restart them. A stop request
@@ -886,8 +921,8 @@ without extra files.
 | `examples/hello` | The smallest daemon (lambda style), a console command |
 | `examples/sensor-service` (`sensor-service`) | Every building block: channel, thread pool, events, control panel, own page, alarm with hysteresis |
 | `examples/pipeline` | **Multi-threaded application:** N producer threads → lock-free `Channel` → dispatcher thread → `ThreadPool` workers → result channel → main loop. Bounded in-flight work (backpressure), atomic counters, alarms raised from worker threads, clean shutdown |
-| [`examples/radio-controller`](examples/radio-controller/README.md) | **AD936x radio daemon (libiio + forge.v1):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.v1.IqBlock` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.v1.TxBlock`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe |
-| [`examples/spectrum-analyzer`](examples/spectrum-analyzer/README.md) | **AD936x spectrum analyzer with a web UI** (on its own RX path, or on RX2 next to the radio controller): realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, `sa.v1.Spectrum` stream. Shares the AD936x backend with the radio controller |
+| [`examples/radio-controller`](examples/radio-controller/README.md) | **AD936x radio daemon (libiio + ZeroMQ):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.iq_block` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.tx_block`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe |
+| [`examples/spectrum-analyzer`](examples/spectrum-analyzer/README.md) | **AD936x spectrum analyzer with a web UI** (on its own RX path, or on RX2 next to the radio controller): realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, `sa.spectrum` stream. Shares the AD936x backend with the radio controller |
 | [`examples/qam-modem`](examples/qam-modem/README.md) | **16QAM packet modem over an AD936x:** UDP packets from Ethernet go on the air through radio-controller and come back out over UDP: 750 ksym/s, about 1 MHz wide at 2.1 GHz, 2.9 Mbit/s net. Schmidl & Cox detection and frequency offset, fractional timing, phase loop, CRC-checked packets; TX paced by the RX sample clock; constellation page, test mode, `echo.py` traffic checker. DSP tested through an impaired channel; end-to-end test at 2.3 Mbit/s with the simulator |
 | [`examples/channel-emulator`](examples/channel-emulator/README.md) | **Radio channel emulator in the TX path:** between a sender (qam-modem) and radio-controller; noise at an SNR, frequency offset and Doppler, phase noise, sample clock error, multipath, Rayleigh/Rician fading, IQ imbalance, DC, pulsed interference, each a control, plus presets. Every receiver behind the splitter sees the result (the modem's EVM, the analyzer's spectrum). Each impairment measured in tests; the modem's packet error rate per preset |
 | `forgecpp-new` | Scaffolds an application with all of the above: its own proto + stream, commands, schema, `[forge]` endpoints, telnet, an `AppRunner` test and a Python client |
@@ -924,7 +959,7 @@ qam-modem and channel-emulator on-failure (3 in 10 minutes) with a 30 s watchdog
 ## Build times
 
 A source file including `<forge/forge.hpp>` takes about 8 s to compile (-O2;
-cpp-httplib and protobuf are compiled libraries). For quicker
+cpp-httplib is a compiled library). For quicker
 edit-compile cycles while developing, `-DFORGE_PCH=ON` precompiles the header
 for every `forge_add_app` / `forge_add_test` target (one file edited in the
 pump example: 17.8 -> 11.9 s); it makes clean builds of small projects slower,
@@ -936,10 +971,11 @@ everything.
 
 Semantic versions, changes in [CHANGELOG.md](CHANGELOG.md). Until 1.0 a minor
 version may change the C++ API: `libforgecpp.so.<major>.<minor>` and
-`find_package(forgecpp 0.4)` accepts 0.4.x only. The forge.v1 protocol only
-changes compatibly (new fields and messages; removed numbers reserved): CI
-checks it against the last release's API (`proto/forge/v1/API.json`) with
-`tools/proto-compat.py`, which also records it at a release (`--update`). Within a minor
+`find_package(forgecpp 0.4)` accepts 0.4.x only. The messages only change
+compatibly (new fields, messages and commands; removed numbers reserved;
+bounds only grow): CI checks them against the last release's API
+(`proto/forge/API.json`) with `tools/proto-compat.py`, which also records it
+at a release (`--update`). Within a minor
 series the C++ API and the configuration keys stay compatible too
 (`tools/api-check.py`, `api/forgecpp-<x.y>.json`); what counts as public and
 how it may change: [docs/API.md](docs/API.md).
@@ -955,12 +991,12 @@ git add third_party/quill && git commit -m "quill: v13.x.y"
 
 ```
 include/forge/     public headers (forge.hpp includes everything)
-proto/forge/v1/    forge.v1 message standard (common, observability, control)
+proto/forge/       forgecpp's commands and messages (messages.proto, hub.proto)
 src/               libforgecpp sources
 src/web/           built-in control panel, forge.js, forge.css (embedded in the library)
 third_party/       submodules
 cmake/             package config, pkg-config, forge_add_app/forge_add_web/forge_add_test
-tools/             forgecpp-new (project scaffolder), forgectl (forge.v1 client)
+tools/             forgecpp-new (project scaffolder), forgectl, forge-proto.py (message generator)
 hub/               forge-hub: device dashboard and registry (a product, not an example)
 examples/          hello, sensor-service, pipeline (multi-threaded), thermostat (web site),
                    radio-controller (AD9364 over libiio + ZeroMQ),
@@ -975,7 +1011,7 @@ install.sh, get.sh installation
 ## License
 
 MIT (see [LICENSE](LICENSE)). The bundled libraries come with their own
-licenses (MIT, BSD-2/3-Clause, BSL-1.0; protobuf BSD-3-Clause; GridStack.js MIT in
+licenses (MIT, BSD-2/3-Clause, BSL-1.0; nanopb Zlib; GridStack.js MIT in
 `src/web/vendor/gridstack`; libzmq MPL-2.0; libiio LGPL-2.1-or-later
 with GPL-2.0-or-later command line tools); see `third_party/*/LICENSE*` and
 `third_party/libiio/COPYING*.txt`. Link libzmq and libiio dynamically (the

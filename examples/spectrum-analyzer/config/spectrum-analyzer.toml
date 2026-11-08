@@ -41,11 +41,11 @@ ref_level = 0
 scale_db = 10
 update_hz = 15
 
-# forge.v1 endpoints (the same in every forgecpp application; forgectl, panels)
+# Standard endpoints (the same in every forgecpp application; forgectl, panels)
 [forge]
 control = "tcp://*:5567"      # requests: controls, commands, alarms, logs, metrics, trace
 events = "tcp://*:5569"       # PUB: state, alarms, log, audit, health, metrics
-data = "tcp://*:5566"         # PUB: stream "spectrum" (sa.v1.Spectrum, newest sweep only)
+data = "tcp://*:5566"         # PUB: stream "spectrum" (sa.spectrum + float32 levels, newest sweep only)
 
 [console]
 telnet = "0.0.0.0:2324"       # remote console: telnet board 2324 (radio-controller has 2323)

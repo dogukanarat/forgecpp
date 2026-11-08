@@ -34,7 +34,7 @@ forge_add_app(pump SOURCES pump/main.cpp pump/pump.cpp
     DESCRIPTION "forgecpp tutorial pump"
     RESTART on-failure MAX_RESTARTS 3 WATCHDOG 30
     NO_INSTALL)
-forge_add_proto(pump ROOT pump PROTOS pump.proto)
+forge_add_proto(pump ROOT pump PROTOS pump.proto PYTHON ${CMAKE_CURRENT_BINARY_DIR}/python)  # pump_pb2.py
 if(BUILD_TESTING OR FORGECPP_BUILD_TESTS)
     forge_add_test(pump_tests SOURCES pump/test_pump.cpp pump/pump.cpp)
     target_include_directories(pump_tests PRIVATE pump)

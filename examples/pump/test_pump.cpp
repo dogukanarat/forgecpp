@@ -19,6 +19,12 @@ TEST_CASE("pump: controls through the command link, like forgectl") {
     } catch (const forge::Error& e) {
         CHECK(e.status() == 400);  // outside 0..3000
     }
+
+    // Its own command: the last readings.
+    REQUIRE(forge::testing::wait_until([&] { return r->invoke([&] { return r->history.size() >= 3; }); }));
+    pump_history_reply h{};
+    REQUIRE(pump.client().call(pump_msg_id_history, pump_history_request{3}, h).ok());
+    CHECK(h.pressure_bar_count == 3);
 }
 
 TEST_CASE("pump: overpressure alarm after 3 s, with hysteresis (manual time: no sleeping)") {

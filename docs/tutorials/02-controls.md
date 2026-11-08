@@ -1,7 +1,7 @@
 # 2. Controls and commands
 
 Controls are declared once in `setup_web()` and appear everywhere: the web
-panel (`/forge/`), forgectl and forge.v1 clients, the console and telnet,
+panel (`/forge/`), forgectl and programs on the command link, the console and telnet,
 with roles, leases and the audit trail on every channel.
 
 ```cpp

@@ -2,9 +2,9 @@
 
 forgecpp follows [semantic versioning](https://semver.org). Until 1.0 a minor
 version may break the C++ API: the library's SOVERSION is `<major>.<minor>`
-and `find_package(forgecpp 0.4)` only accepts 0.4.x. The forge.v1 protocol
-(`proto/forge/v1`) only changes compatibly; CI compares it with the API of
-the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
+and `find_package(forgecpp 0.4)` only accepts 0.4.x. The messages
+(`proto/forge`) only change compatibly; CI compares them with the API of
+the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 
 ## Unreleased (0.4.0)
 
@@ -26,6 +26,33 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
 - `tools/check-layers.py` (test `forgecpp_layers`): each module uses only
   modules of its own level or lower (core, services, link, front ends,
   application).
+- **Commands (tmtc)** (`forge/tmtc.hpp`): every command is a request and a
+  reply with a number, in a `tmtc::Registry`. `tmtc::Dispatcher` answers c2
+  frames (reply, ACK, NACK with the status, replies in parts with the "more"
+  flag); the same handler answers JSON (`POST /forge/api/tmtc/<name or
+  number>`, list: `GET /forge/api/tmtc`). `Application::command<Req, Rsp>()`
+  adds one that runs on the main loop. forgecpp's own commands use numbers
+  0x0001..0x00FF (`proto/forge/messages.proto`); applications start at 0x0100.
+- **nanopb messages** (`forge/pb.hpp`, `third_party/nanopb`): protobuf
+  messages as C structs with a bound on every string, bytes and repeated
+  field, so no message allocates. `forge_add_proto()` generates them (and
+  `<stem>.forge.hpp` with the names for JSON); a field without a bound, a
+  map or a `google.protobuf` type is refused at build time. JSON: every field
+  written, 64-bit numbers as strings, enums by name, bytes as base64.
+- `forge::Subscription`, `forge::Listeners<Args...>` (`forge/subscription.hpp`):
+  a listener is removed when its Subscription goes (also while it runs on
+  another thread: the destructor waits). `log::add_listener()`,
+  `Alarms::on_change()`, `Audit::on_record()` and `Health::on_change()`
+  return one.
+- `forge::Remote` (`forge/remote.hpp`): get / set / press / call on another
+  program's command link (what spectrum-analyzer, qam-modem and
+  channel-emulator use to drive radio-controller).
+- `zmq::answer(registry, request)` serves a registry on a `zmq::Server`;
+  `zmq::make_message()` builds a stream message with the standard header.
+- Python: `forge.c2` (commands over the link, with parts and NACKs) and
+  `forge.framing` (streams), with `forge.messages_pb2` and `forge.hub_pb2`.
+- `forge::base64` (`forge/base64.hpp`), shared by auth, HTTP and the JSON of
+  bytes fields.
 
 ### Changed
 
@@ -65,7 +92,7 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
     changed.
   - Levels are shown with three letters so the lines line up: `TRC DBG INF
     WRN ERR CRT` (terminal, file, telnet, forgectl, web panel;
-    `log::short_name()`). JSON lines and forge.v1 `LogRecord.level` keep the
+    `log::short_name()`). JSON lines and the `level` of log messages keep the
     full names (`info`, `warning`, ...).
   - Colours: level colours on the console, in telnet (`color on|off`), in
     `forgectl logs` / `watch` and in the web panel's log view. New key
@@ -79,25 +106,59 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
     longer compiled out by a compile-time level.
   - `log::set_terminal_writer(fn)` replaces `set_console_sink()`;
     `add_sink()` / `remove_sink()` are gone, use `add_listener()` (records as
-    `forge.v1.LogRecord`). Listeners run on the logging thread: call
+    `log::Record`). Listeners run on the logging thread: call
     `log::flush()` before relying on a record having arrived.
   - The logging thread blocks asynchronous signals (SIGTERM, SIGINT, ...), so
     they reach the application's signal handling even when logging starts
     first.
 - Version 0.4.0: `libforgecpp.so.0.4`, `find_package(forgecpp 0.4)`; the C++ API
   record is `api/forgecpp-0.4.json`.
-- `forge::proto::source()` returns a copy (`std::string`) instead of a
-  reference: several applications in one process (tests) set it.
+- **forge.v1 is gone.** The command endpoint (`[forge].control`), the events,
+  the streams' header, forge-hub's registry and forgectl use c2 frames and
+  the nanopb messages of `proto/forge` instead of Google protobuf.
+  libforgecpp no longer links libprotobuf; protoc only runs on the build
+  machine (install.sh builds it for the host and installs it as
+  `share/forgecpp/protoc`), with Python's protobuf module for the generator.
+  - Streams: `stream<T>(name[, options])` instead of `stream(name,
+    "pkg.v1.Type")`; `Message::header` is a `forge_stream_header`;
+    `Message::as<T>()` takes a nanopb struct. The examples' messages are now
+    `radio.iq_block`, `radio.tx_block`, `sa.spectrum` (its levels are the
+    blob, float32) and `pump.reading`.
+  - `zmq::Client` sends c2 commands (`call()`, `call_parts()`, `request()`)
+    and returns a `Status`; `get()` / `set()` / `press()` / `call_command()` /
+    `request_json()` moved to `forge::Remote`. `zmq::Server` handlers return
+    the frames of the answer (`std::vector<std::string>`); `ServerOptions::busy`
+    answers requests that waited too long.
+  - The older JSON commands on the control endpoint (`{"cmd": ...}`),
+    `[forge].legacy_json`, `/forge/api/rpc`, `forge/proto.hpp`,
+    `zmq::serve_control()` and `ControlService::handle()` / `schema()` are
+    removed (the "commands" and "controls" commands list the same).
+  - Logs, audit records, health, alarms and metrics are plain C++ structs
+    (`log::Record`, `Audit::Record`, `Health::Report`, `metrics::Snapshot`)
+    with `to_json()`. `log::remove_listener()` is gone (reset the
+    Subscription).
+  - A refusal on the link is a NACK with the status (module and errno, in
+    Zephyr's numbering); only HTTP carries the text of the reason. c2 frames
+    carry no token: commands on a link get `[auth].default_role`.
+  - Python: the `forge` package replaces `forge-v1` (`from forge import
+    framing`); Yocto: `python3-forge` replaces `python3-forge-v1` (it
+    RPROVIDES the old name) and there is no `forgecpp-protoc` package any
+    more.
+  - `Application::command()` throws when it is called after the links
+    started: add commands in the constructor or `setup_web()`.
+- CI: a push builds and tests once (g++); the other compilers, sanitizers,
+  the armhf build, the systemd job and the API reference run on pull
+  requests, weekly and by hand.
 
 ### Fixed
 
-- `log::remove_listener()` returns only once the listener is no longer
-  running: the web panel's log view and the forge.v1 log events could be
-  destroyed while the logging thread was still calling them.
+- A log listener is removed only once it is no longer running: the web
+  panel's log view and the log events could be destroyed while the logging
+  thread was still calling them.
 - A telnet client that stops reading is disconnected after 5 s instead of
   blocking whoever writes to it (the logging thread with `logs on`).
-- `proto::set_source()` / the forge.v1 headers raced when two applications
-  ran in one process.
+- `zmq::set_source()` and the stream headers raced when two applications ran
+  in one process.
 
 ## 0.3.0
 

@@ -20,7 +20,7 @@ FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml -c testimage   # boot in QEM
 
 The runtime tests (`lib/oeqa/runtime/cases/forgecpp.py`) check that the units
 are active, forge-hub lists both applications, `forgectl` reaches
-radio-controller and the `forge.v1` Python package imports. The `yocto`
+radio-controller and the `forge` Python package imports. The `yocto`
 workflow runs this nightly (and on demand).
 
 1. Copy `recipes-support/forgecpp` (both recipes: `forgecpp` and
@@ -33,21 +33,23 @@ workflow runs this nightly (and on demand).
    TOOLCHAIN_TARGET_TASK:append = " forgecpp-dev forgecpp-staticdev"
    ```
 
-Packages: `forgecpp` (libraries), `forgecpp-forgectl` (forge.v1 command line
-client on the target), `python3-forge-v1` (the forge-v1 Python package in site-packages; needs
-python3-protobuf and python3-pyzmq from meta-python), `forgecpp-tools`
-(`forgecpp-new`), `forgecpp-iio-tools`, `forgecpp-protoc` (protoc for the
-target, rarely needed), `forgecpp-dev` (headers, CMake packages, `.proto` files).
+Packages: `forgecpp` (libraries), `forgecpp-forgectl` (command line client
+on the target), `python3-forge` (the `forge` Python package in site-packages:
+messages, stream framing, c2 client; needs python3-protobuf and python3-pyzmq
+from meta-python), `forgecpp-tools` (`forgecpp-new`), `forgecpp-iio-tools`,
+`forgecpp-dev` (headers, CMake packages, `.proto` files, the message
+generator).
 
 Extra `install.sh` options can be passed with `FORGECPP_INSTALL_ARGS`,
 e.g. `FORGECPP_INSTALL_ARGS = "--without-ssl"` or `"--static"`.
 
-The recipe builds ZeroMQ, protobuf and libiio as well; it needs `libxml2`
-for libiio's network/XML backends. `protoc` has to run on the build machine
-and match the target's libprotobuf exactly, so `forgecpp-protoc-native`
-builds it from the same bundled sources (installed as
-`${STAGING_BINDIR_NATIVE}/forgecpp-protoc`); forgecpp and every application
-with its own `.proto` files use it (`-DFORGE_PROTOC=...`, see below). The libiio command line tools
+The recipe builds ZeroMQ and libiio as well; it needs `libxml2` for libiio's
+network/XML backends. Messages are generated on the build machine: `protoc`
+from `forgecpp-protoc-native` (the bundled protobuf sources, installed as
+`${STAGING_BINDIR_NATIVE}/forgecpp-protoc`) and nanopb's generator, which
+needs `python3-protobuf-native`. The target only gets C code; nothing links
+libprotobuf. forgecpp and every application with its own `.proto` files use
+them (`-DFORGE_PROTOC=...`, see below). The libiio command line tools
 (`iio_info`, `iio_attr`, ...) are packaged separately in `forgecpp-iio-tools`
 because they are GPL-2.0-or-later.
 
@@ -154,10 +156,10 @@ SRC_URI = "git://git.example.com/pump-ctl.git;protocol=https;branch=main"
 SRCREV = "<commit>"
 S = "${WORKDIR}/git"
 
-DEPENDS = "forgecpp forgecpp-protoc-native"
-inherit cmake systemd
+DEPENDS = "forgecpp forgecpp-protoc-native python3-protobuf-native"
+inherit cmake systemd python3native
 
-# the application's .proto files (forge_add_proto) are compiled with this protoc
+# the application's .proto files (forge_add_proto): this protoc and nanopb's generator
 EXTRA_OECMAKE += "-DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/forgecpp-protoc \
                   -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir}"
 
@@ -216,11 +218,12 @@ has not yet been run in a full bitbake build.
   the init script.
 - **HTTPS:** the HTTP server is plain HTTP. Configure `[auth]` users on
   network-facing devices and terminate TLS in a reverse proxy if needed.
-- **Telnet and forge.v1 endpoints are not encrypted.** The example
+- **Telnet and the `[forge]` endpoints are not encrypted.** The example
   configurations open telnet (`[console].telnet`) and the `[forge]` endpoints
   on all interfaces for the lab. On a fielded device configure `[auth]`
   (telnet then asks for a login and every change needs a role), or bind them
   to `127.0.0.1` / a management interface.
-- **protobuf from meta-oe:** do not mix it with forgecpp's bundled protobuf in
-  one image (same files); applications must use `forgecpp-protoc`, not
-  `protobuf-native` (generated code is tied to the libprotobuf version).
+- **protobuf from meta-oe** can be in the same image: forgecpp does not
+  install libprotobuf. Any protoc works for the messages (`protobuf-native`
+  too, with `-DFORGE_PROTOC`); `forgecpp-protoc-native` is just the one that is
+  known to work.

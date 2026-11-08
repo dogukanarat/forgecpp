@@ -17,7 +17,7 @@ pre-production security work: forgecpp is used in the lab for now.
 | The control service threw an HTTP type (`http::HttpError`) on every channel | `forge::Error{status, message, details}` in `forge/error.hpp`, thrown by `ControlService`, `web::Dashboard`, forge-hub and `invoke_for`; HTTP, forge.v1 and the console map it. `http::HttpError` derives from it (throwing it still works; `catch (const http::HttpError&)` around control calls becomes `catch (const forge::Error&)`). |
 | Defaults written twice (schema and every `get_or`) | `Schema::apply_defaults()` fills in every declared key after loading and reloading; declared keys are read with `cfg.value<T>(key)` (framework, forge-hub, all examples migrated; the small examples declare their keys now). Environment-dependent defaults are `.computed()`. A test walks `src/`, `hub/src/`, `examples/` and fails on `get_or` of a declared key. |
 | `application.cpp` was 1600 lines doing everything | Internal services in `src/app/` own their state: `HttpFrontend` (server, framework routes, web events and logs), `LayoutStore`, `Messaging` (events, streams, control endpoint), `RemoteConsole` (commands, REPL, telnet), `StateStore`, `Watchdog`, `HubRegistration`. `Application` keeps the lifecycle and the public API (900 lines). `StateStore`, `LayoutStore` and `Watchdog` have their own tests. |
-| Two control protocols (forge.v1 and `{"cmd": ...}` JSON) | 0.3: the JSON one is counted (`forge.control.legacy_json`), each client is named in a warning once, `[forge].legacy_json = false` refuses it (410). 0.4: off by default. 0.5: removed. |
+| Two control protocols (forge.v1 and `{"cmd": ...}` JSON) | 0.3: the JSON one is counted (`forge.control.legacy_json`), each client is named in a warning once, `[forge].legacy_json = false` refuses it (410). 0.4: both removed; c2 commands on links, the same commands as JSON on `/forge/api/tmtc`. |
 | Python clients found the generated modules with `sys.path` searches | `forge-v1` package (`forge.v1.*_pb2`, `forge.v1.framing`) installed into site-packages (`FORGE_PYTHON_SITEDIR`: the interpreter's directory for the prefix; Yocto `python3-forge-v1`); applications use `forge_install_python()` for theirs (radio.v1, sa.v1, the scaffolder's). Clients import normally; `forge_msg.py` and every path search are gone. |
 | No versions or compatibility rules | 0.3.0 with a CHANGELOG; SOVERSION and `find_package` compatibility follow the minor version until 1.0. `proto/forge/v1/API.json` records the released forge.v1 API; `tools/proto-compat.py` fails CI on renumbered, retyped, renamed or unreserved removed fields and enum values. |
 | Restarts, start limits and the hub's view only tested against a fake systemd | CI job `systemd`: forge-hub and radio-controller installed as real units; crash -> restart -> the hub counts it, the start limit -> failed -> the hub says it gave up, the hub's restart and stop buttons. It found two bugs (the Result after an automatic restart is refused, NOTIFY_SOCKET leaking into the hub's children). |
@@ -55,14 +55,14 @@ Agreed direction for the framework itself (the examples follow it):
    interactive console and telnet (ANSI), plain with level prefixes under
    journald, level colours (CSS) on the web panel and forge-hub. fmt is
    replaced by `std::format`.
-4. **Messages stay .proto** (language independent), the C++ runtime becomes
-   **nanopb** with C++ types (`callback_datatype`: `std::string`,
-   `std::vector`, `std::map`, `google.protobuf.Value` as `nlohmann::json`),
-   type names and JSON mapping generated from descriptor sets. First a spike
-   (byte-identical with the current encoding on every forge.v1 message, Python
-   clients unchanged, size and build time measured), then the migration.
-   **Buf** for lint and breaking-change checks (replaces `tools/proto-compat.py`).
-   Fallback: protobuf-lite.
+4. Done, differently from the first plan: **messages stay .proto**, the
+   runtime is **nanopb with static structs** (every string, bytes and
+   repeated field bounded: no allocation, the same file builds for
+   zephyrus), names and JSON from descriptor sets (`tools/forge-proto.py`).
+   forge.v1 is replaced by **c2 + tmtc**: commands are request/reply pairs
+   with numbers, sent as zephyrus' c2 frames on links and as JSON on the web,
+   one handler for both. `tools/proto-compat.py` stays (it also checks
+   bounds) instead of Buf.
 5. Afterwards: anti-pattern fixes found while writing the examples (`forge::Worker`
    on `std::jthread`, `Sender::send_wait()`, counters bound to metrics and the
    panel, typed configuration, `background()` with an error path, I/O helpers),
@@ -117,7 +117,8 @@ leakage at the centre of the constellation (fix: a digital TX offset), CPU
 
 ## Pre-production security work (later)
 
-Secure defaults (no `[auth]`: control, telnet and the forge.v1 endpoints only on
+Secure defaults (no `[auth]`: control, telnet and the `[forge]` endpoints only on
 localhost), hub registration over a Unix socket with `SO_PEERCRED`, TLS (or a
 terminating proxy) for HTTP, telnet replaced or tunnelled through ssh, a review
-of the roles of every command.
+of the roles of every command, and a role for commands on a link (c2 frames
+carry no credentials; today they get `[auth].default_role`).

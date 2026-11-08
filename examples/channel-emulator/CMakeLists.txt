@@ -15,7 +15,7 @@ if(NOT TARGET forgecpp::forgecpp)
     find_package(forgecpp 0.4 REQUIRED)
 endif()
 
-# radio.v1 messages (TxBlock) and the impairments (plain C++)
+# radio messages (tx_block) and the impairments (plain C++)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/ad936x ${CMAKE_CURRENT_BINARY_DIR}/ad936x)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../common/channel ${CMAKE_CURRENT_BINARY_DIR}/channel)
 

@@ -32,7 +32,7 @@ reads `now()`, the application's clock, so a test can control it
 ([testing](05-testing.md)).
 
 **Alarms** are what an operator must see: raised, acknowledged, cleared, with
-a bell and a banner on every page, the forge-hub dashboard and forge.v1
+a bell and a banner on every page, the forge-hub dashboard and the command link
 events. Raising an active alarm only updates it. With hysteresis:
 
 ```cpp
