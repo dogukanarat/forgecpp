@@ -17,6 +17,28 @@ forge_add_test(forgecpp_tests
 # The source tree, for the check that defaults are written only in the schema.
 target_compile_definitions(forgecpp_tests PRIVATE FORGE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
+forge_add_test(forgecpp_pb_tests SOURCES test_pb.cpp)
+forge_add_proto(forgecpp_pb_tests ROOT proto PROTOS forge_test/all_types.proto PYTHON "${CMAKE_CURRENT_BINARY_DIR}/pb_python")
+# Golden data from Google's protobuf for Python (the generator needs it anyway).
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/pb_golden.jsonl"
+    COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/pb_golden.py" "${CMAKE_CURRENT_BINARY_DIR}/pb_python"
+            "${CMAKE_CURRENT_BINARY_DIR}/pb_golden.jsonl"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/pb_golden.py" "${CMAKE_CURRENT_BINARY_DIR}/pb_python/forge_test/all_types_pb2.py"
+    COMMENT "pb golden data"
+    VERBATIM)
+target_sources(forgecpp_pb_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/pb_golden.jsonl")
+target_compile_definitions(forgecpp_pb_tests PRIVATE FORGE_PB_GOLDEN="${CMAKE_CURRENT_BINARY_DIR}/pb_golden.jsonl")
+
+# A field without a bound is an error at build time, not a callback.
+_forge_protoc(_test_protoc)
+add_test(NAME forge_proto_refuses_unbounded
+    COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tools/forge-proto.py" --protoc ${_test_protoc}
+            --nanopb "${FORGECPP_NANOPB_DIR}" --out "${CMAKE_CURRENT_BINARY_DIR}/bad_proto"
+            -I "${CMAKE_CURRENT_SOURCE_DIR}/proto/bad" unbounded.proto)
+set_tests_properties(forge_proto_refuses_unbounded PROPERTIES
+    PASS_REGULAR_EXPRESSION "unbounded.text: give it a bound")
+
 forge_add_test(forgecpp_zmq_tests SOURCES test_zmq.cpp)
 forge_add_test(forgecpp_framework_tests SOURCES test_framework.cpp test_services.cpp)
 # The services are internal (src/app/services.hpp).

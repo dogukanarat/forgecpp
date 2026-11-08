@@ -24,7 +24,7 @@ target_include_directories(sa_core PUBLIC src)
 target_link_libraries(sa_core PUBLIC ad936x forgecpp::forgecpp)
 # sa.v1 messages (spectrum stream); Python modules for clients
 set(SA_PYTHON_DIR "${CMAKE_CURRENT_BINARY_DIR}/python")
-forge_add_proto(sa_core ROOT ${CMAKE_CURRENT_SOURCE_DIR}/proto PROTOS sa/v1/spectrum.proto PYTHON ${SA_PYTHON_DIR})
+_forge_add_protobuf_legacy(sa_core ROOT ${CMAKE_CURRENT_SOURCE_DIR}/proto PROTOS sa/v1/spectrum.proto PYTHON ${SA_PYTHON_DIR})
 target_compile_definitions(sa_core PUBLIC SA_VERSION="${PROJECT_VERSION}")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(sa_core PRIVATE -Wall -Wextra -Wpedantic)

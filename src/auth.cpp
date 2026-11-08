@@ -1,5 +1,7 @@
 #include "forge/auth.hpp"
 
+#include "forge/base64.hpp"
+
 #include "forge/config.hpp"
 
 #include <format>
@@ -16,22 +18,6 @@ bool equal_consttime(std::string_view a, std::string_view b) {
     return diff == 0;
 }
 
-std::string base64_decode(std::string_view in) {
-    static const std::string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    int val = 0, bits = -8;
-    for (char c : in) {
-        const auto pos = chars.find(c);
-        if (pos == std::string::npos) break;
-        val = (val << 6) + static_cast<int>(pos);
-        bits += 6;
-        if (bits >= 0) {
-            out.push_back(static_cast<char>((val >> bits) & 0xFF));
-            bits -= 8;
-        }
-    }
-    return out;
-}
 
 }  // namespace
 
@@ -105,7 +91,7 @@ std::optional<Auth::User> Auth::by_password(std::string_view name, std::string_v
 std::optional<Auth::User> Auth::by_http_header(std::string_view h) const {
     if (h.rfind("Bearer ", 0) == 0) return by_token(h.substr(7));
     if (h.rfind("Basic ", 0) == 0) {
-        const auto decoded = base64_decode(h.substr(6));
+        const auto decoded = base64_decode(h.substr(6)).value_or(std::string());
         const auto colon = decoded.find(':');
         if (colon == std::string::npos) return std::nullopt;
         return by_password(decoded.substr(0, colon), decoded.substr(colon + 1));

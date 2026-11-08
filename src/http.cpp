@@ -1,7 +1,8 @@
 #include "forge/http.hpp"
-#include "forge/metrics.hpp"
 
+#include "forge/base64.hpp"
 #include "forge/log.hpp"
+#include "forge/metrics.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -10,29 +11,6 @@
 #include <stdexcept>
 
 namespace forge::http {
-namespace {
-// Basic auth credentials ("user:password" -> base64), without httplib's internals.
-std::string base64(const std::string& in) {
-    static constexpr char kChars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve((in.size() + 2) / 3 * 4);
-    std::size_t i = 0;
-    for (; i + 2 < in.size(); i += 3) {
-        const unsigned v = (static_cast<unsigned char>(in[i]) << 16) | (static_cast<unsigned char>(in[i + 1]) << 8) |
-                           static_cast<unsigned char>(in[i + 2]);
-        out += {kChars[v >> 18], kChars[(v >> 12) & 63], kChars[(v >> 6) & 63], kChars[v & 63]};
-    }
-    if (i + 1 == in.size()) {
-        const unsigned v = static_cast<unsigned char>(in[i]) << 16;
-        out += {kChars[v >> 18], kChars[(v >> 12) & 63], '=', '='};
-    } else if (i + 2 == in.size()) {
-        const unsigned v = (static_cast<unsigned char>(in[i]) << 16) | (static_cast<unsigned char>(in[i + 1]) << 8);
-        out += {kChars[v >> 18], kChars[(v >> 12) & 63], kChars[(v >> 6) & 63], '='};
-    }
-    return out;
-}
-}  // namespace
-
 namespace {
 thread_local std::chrono::steady_clock::time_point tls_request_start{};
 }  // namespace
@@ -317,7 +295,7 @@ bool Server::authorized(const Request& req) const {
     if (auth_.check) return auth_.check(header);
     if (!auth_.token.empty() && constant_time_equal(header, "Bearer " + auth_.token)) return true;
     if (!auth_.user.empty() &&
-        constant_time_equal(header, "Basic " + base64(auth_.user + ":" + auth_.password))) {
+        constant_time_equal(header, "Basic " + base64_encode(auth_.user + ":" + auth_.password))) {
         return true;
     }
     return false;

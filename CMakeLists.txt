@@ -115,6 +115,7 @@ add_library(forgecpp
     src/alarms.cpp
     src/audit.cpp
     src/auth.cpp
+    src/base64.cpp
     src/c2.cpp
     src/config.cpp
     src/config_schema.cpp
@@ -128,6 +129,7 @@ add_library(forgecpp
     src/json.cpp
     src/log.cpp
     src/metrics.cpp
+    src/pb.cpp
     src/proto.cpp
     src/rt.cpp
     src/scheduler.cpp
@@ -140,7 +142,7 @@ add_library(forgecpp
 add_library(forgecpp::forgecpp ALIAS forgecpp)
 
 # forge.v1 messages, generated into the library (forge/v1/*.pb.h).
-forge_add_proto(forgecpp ROOT proto PROTOS
+_forge_add_protobuf_legacy(forgecpp ROOT proto PROTOS
     forge/v1/common.proto forge/v1/observability.proto forge/v1/control.proto forge/v1/hub.proto
     PYTHON "${PROJECT_BINARY_DIR}/python")
 
@@ -173,6 +175,14 @@ set(FORGECPP_LINENOISE_DIR "${PROJECT_SOURCE_DIR}/third_party/linenoise")
 target_sources(forgecpp PRIVATE "${FORGECPP_LINENOISE_DIR}/linenoise.c")
 set_source_files_properties("${FORGECPP_LINENOISE_DIR}/linenoise.c" PROPERTIES COMPILE_OPTIONS "-w;-fvisibility=hidden")
 target_include_directories(forgecpp PRIVATE "${FORGECPP_LINENOISE_DIR}")
+# nanopb (zlib license, third_party/nanopb): the runtime of forge::pb messages.
+set(FORGECPP_NANOPB_DIR "${PROJECT_SOURCE_DIR}/third_party/nanopb")
+target_sources(forgecpp PRIVATE
+    "${FORGECPP_NANOPB_DIR}/pb_common.c" "${FORGECPP_NANOPB_DIR}/pb_encode.c" "${FORGECPP_NANOPB_DIR}/pb_decode.c")
+target_include_directories(forgecpp PUBLIC
+    $<BUILD_INTERFACE:${FORGECPP_NANOPB_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/forgecpp/nanopb>)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # backtrace() lives in libc on glibc; musl needs libexecinfo (optional).
     find_library(FORGE_EXECINFO execinfo)
@@ -270,6 +280,13 @@ install(FILES "${PROJECT_BINARY_DIR}/include/forge/version.hpp"
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/forge)
 install(FILES "${FORGECPP_THREAD_POOL_DIR}/BS_thread_pool.hpp"
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES "${FORGECPP_NANOPB_DIR}/pb.h" "${FORGECPP_NANOPB_DIR}/pb_common.h"
+              "${FORGECPP_NANOPB_DIR}/pb_encode.h" "${FORGECPP_NANOPB_DIR}/pb_decode.h"
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/forgecpp/nanopb)
+# forge_add_proto() in applications: the nanopb generator and forge-proto.py.
+install(DIRECTORY "${FORGECPP_NANOPB_DIR}/generator" DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp/nanopb
+        PATTERN "__pycache__" EXCLUDE PATTERN "*_pb2.py" EXCLUDE)
+install(PROGRAMS tools/forge-proto.py DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp)
 
 install(EXPORT forgecppTargets
     NAMESPACE forgecpp::

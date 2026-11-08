@@ -155,7 +155,7 @@ test `forgecpp_layers`.
 
 | Level | Name | Modules |
 |---|---|---|
-| 0 | core | status, error, json, trace, crash, proto, config, config_schema, channel, thread_pool, buffer_pool, rt, systemd, version |
+| 0 | core | status, error, base64, json, pb, trace, crash, proto, config, config_schema, channel, thread_pool, buffer_pool, rt, systemd, version |
 | 1 | services | log, log_rt, metrics, events, scheduler, health, alarms, audit, auth, assets |
 | 2 | link | c2, zmq, http, hub |
 | 3 | front ends | console, telnet, web |

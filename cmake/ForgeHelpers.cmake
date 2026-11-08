@@ -34,10 +34,16 @@
 #       [LIBS <targets...>])         doctest-based test registered with CTest
 #
 #   forge_add_proto(<target>
-#       PROTOS <files...>            .proto files, relative to ROOT
+#       PROTOS <files...>            .proto or .proto.in files, relative to ROOT
 #       [ROOT <dir>]                 import root of the files, default: current source dir
-#       [IMPORT_DIRS <dirs...>]      extra import roots (forge/v1 and google/protobuf are always found)
+#       [IMPORT_DIRS <dirs...>]      extra import roots (forgecpp's own protos are always found)
+#       [VARS <NAME=VALUE...>]       values for @NAME@ in .proto.in files (bounds, base numbers)
 #       [PYTHON <dir>])              also generate Python modules (*_pb2.py) into <dir>
+#     nanopb C structs with fixed bounds, compiled into <target>, plus
+#     <stem>.forge.hpp (names for JSON, forge::pb::type_of<T>). Include
+#     "<stem>.forge.hpp". The configured .proto files (the wire contract to give
+#     to the other end) are in <build>/forge_proto/<target>/proto/.
+#     Needs on the build machine: protoc and Python 3 with the protobuf module.
 #
 #   forge_install_python(DIRECTORY <dir>)
 #     Install the Python modules under <dir> (e.g. the PYTHON dir of
@@ -46,10 +52,6 @@
 #     The directory is FORGE_PYTHON_SITEDIR (relative to the install prefix);
 #     by default the interpreter's own for this prefix, else lib/python3.X/site-packages.
 #     Yocto: -DFORGE_PYTHON_SITEDIR=${PYTHON_SITEPACKAGES_DIR}.
-#     Generates C++ with protoc and compiles it into <target>; the generated
-#     headers are found as "<path>.pb.h" (e.g. #include "radio/v1/radio.pb.h").
-#     Cross builds: set FORGE_PROTOC to a protoc that runs on the build machine
-#     (same version as the target's libprotobuf).
 
 include_guard(GLOBAL)
 include(GNUInstallDirs)
@@ -71,6 +73,25 @@ if(NOT DEFINED FORGECPP_PROTO_DIR)
     endif()
 endif()
 
+# nanopb (runtime sources and generator) and forge-proto.py: in the source
+# tree, or under share/forgecpp when installed.
+if(NOT DEFINED FORGECPP_NANOPB_DIR)
+    foreach(dir "${CMAKE_CURRENT_LIST_DIR}/../third_party/nanopb" "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/nanopb")
+        if(EXISTS "${dir}/generator/nanopb_generator.py")
+            get_filename_component(FORGECPP_NANOPB_DIR "${dir}" ABSOLUTE)
+            break()
+        endif()
+    endforeach()
+endif()
+if(NOT DEFINED FORGECPP_PROTO_GEN)
+    foreach(file "${CMAKE_CURRENT_LIST_DIR}/../tools/forge-proto.py" "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/forge-proto.py")
+        if(EXISTS "${file}")
+            get_filename_component(FORGECPP_PROTO_GEN "${file}" ABSOLUTE)
+            break()
+        endif()
+    endforeach()
+endif()
+
 # protoc that runs on the build machine.
 function(_forge_protoc out)
     if(FORGE_PROTOC)
@@ -88,10 +109,11 @@ function(_forge_protoc out)
     endif()
 endfunction()
 
-function(forge_add_proto target)
+# Google protobuf (forge.v1), until it is gone.
+function(_forge_add_protobuf_legacy target)
     cmake_parse_arguments(ARG "" "ROOT;PYTHON" "PROTOS;IMPORT_DIRS" ${ARGN})
     if(NOT ARG_PROTOS)
-        message(FATAL_ERROR "forge_add_proto(${target}): PROTOS is required")
+        message(FATAL_ERROR "_forge_add_protobuf_legacy(${target}): PROTOS is required")
     endif()
     if(NOT ARG_ROOT)
         set(ARG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -142,6 +164,85 @@ function(forge_add_proto target)
     target_sources(${target} PRIVATE ${sources})
     target_include_directories(${target} PUBLIC $<BUILD_INTERFACE:${out}>)
     target_link_libraries(${target} PUBLIC protobuf::libprotobuf)
+    # Generated code triggers warnings we cannot fix.
+    set_source_files_properties(${sources} PROPERTIES COMPILE_OPTIONS "-w")
+endfunction()
+
+function(forge_add_proto target)
+    cmake_parse_arguments(ARG "" "ROOT;PYTHON" "PROTOS;IMPORT_DIRS;VARS" ${ARGN})
+    if(NOT ARG_PROTOS)
+        message(FATAL_ERROR "forge_add_proto(${target}): PROTOS is required")
+    endif()
+    if(NOT FORGECPP_NANOPB_DIR OR NOT FORGECPP_PROTO_GEN)
+        message(FATAL_ERROR "forge_add_proto: nanopb or forge-proto.py not found")
+    endif()
+    if(NOT ARG_ROOT)
+        set(ARG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+    endif()
+    get_filename_component(root "${ARG_ROOT}" ABSOLUTE)
+    _forge_protoc(protoc)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+    # @NAME@ in .proto.in files.
+    foreach(var ${ARG_VARS})
+        if(NOT var MATCHES "^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+            message(FATAL_ERROR "forge_add_proto(${target}): VARS entry '${var}' is not NAME=VALUE")
+        endif()
+        set(${CMAKE_MATCH_1} "${CMAKE_MATCH_2}")
+    endforeach()
+
+    # Every file goes to <out>/proto (configured or copied): one import root.
+    set(out "${CMAKE_CURRENT_BINARY_DIR}/forge_proto/${target}")
+    set(protos)
+    set(configured)
+    set(outputs)
+    set(sources)
+    foreach(proto ${ARG_PROTOS})
+        string(REGEX REPLACE "\\.in$" "" rel "${proto}")
+        if(proto MATCHES "\\.in$")
+            configure_file("${root}/${proto}" "${out}/proto/${rel}" @ONLY)
+        else()
+            configure_file("${root}/${proto}" "${out}/proto/${rel}" COPYONLY)
+        endif()
+        string(REGEX REPLACE "\\.proto$" "" stem "${rel}")
+        list(APPEND protos "${rel}")
+        list(APPEND configured "${out}/proto/${rel}")
+        list(APPEND outputs "${out}/${stem}.pb.c" "${out}/${stem}.pb.h" "${out}/${stem}.forge.hpp")
+        list(APPEND sources "${out}/${stem}.pb.c")
+    endforeach()
+
+    set(includes -I "${out}/proto")
+    foreach(dir ${ARG_IMPORT_DIRS} ${FORGECPP_PROTO_DIR})
+        list(APPEND includes -I "${dir}")
+    endforeach()
+    add_custom_command(
+        OUTPUT ${outputs}
+        COMMAND Python3::Interpreter "${FORGECPP_PROTO_GEN}" --protoc ${protoc} --nanopb "${FORGECPP_NANOPB_DIR}"
+                --out "${out}" ${includes} ${protos}
+        DEPENDS ${configured} "${FORGECPP_PROTO_GEN}"
+        COMMENT "forge-proto ${target}"
+        VERBATIM)
+
+    if(ARG_PYTHON)
+        file(MAKE_DIRECTORY "${ARG_PYTHON}")
+        set(py_outputs "${ARG_PYTHON}/nanopb_pb2.py")
+        foreach(rel ${protos})
+            string(REGEX REPLACE "\\.proto$" "_pb2.py" py "${rel}")
+            list(APPEND py_outputs "${ARG_PYTHON}/${py}")
+        endforeach()
+        add_custom_command(
+            OUTPUT ${py_outputs}
+            COMMAND ${protoc} --python_out=${ARG_PYTHON} -I "${FORGECPP_NANOPB_DIR}/generator/proto" nanopb.proto
+            COMMAND ${protoc} --python_out=${ARG_PYTHON} -I "${FORGECPP_NANOPB_DIR}/generator/proto" ${includes} ${protos}
+            DEPENDS ${configured}
+            COMMENT "protoc --python_out ${target}"
+            VERBATIM)
+        list(APPEND sources ${py_outputs})
+    endif()
+
+    target_sources(${target} PRIVATE ${sources})
+    target_include_directories(${target} PUBLIC $<BUILD_INTERFACE:${out}>)
+    set_target_properties(${target} PROPERTIES FORGE_PROTO_DIR "${out}/proto")
     # Generated code triggers warnings we cannot fix.
     set_source_files_properties(${sources} PROPERTIES COMPILE_OPTIONS "-w")
 endfunction()

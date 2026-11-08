@@ -64,6 +64,7 @@ std::map<std::uint16_t, std::string>& names() {
     static std::map<std::uint16_t, std::string> n{{module_id::app, "app"},
                                                   {module_id::c2, "c2"},
                                                   {module_id::tmtc, "tmtc"},
+                                                  {module_id::pb, "pb"},
                                                   {module_id::nrf, "nrf"},
                                                   {module_id::zephyr, "zephyr"}};
     return n;

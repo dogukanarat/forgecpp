@@ -63,5 +63,5 @@ endif()
 
 # radio.v1 messages (IqBlock, TxBlock): C++ for the applications, Python for the clients.
 set(AD936X_PYTHON_DIR "${CMAKE_CURRENT_BINARY_DIR}/python" CACHE INTERNAL "radio.v1 Python modules")
-forge_add_proto(ad936x ROOT ${CMAKE_CURRENT_SOURCE_DIR}/proto PROTOS radio/v1/radio.proto
+_forge_add_protobuf_legacy(ad936x ROOT ${CMAKE_CURRENT_SOURCE_DIR}/proto PROTOS radio/v1/radio.proto
                 PYTHON ${AD936X_PYTHON_DIR})

@@ -40,6 +40,7 @@ inline constexpr std::uint16_t external_base = 128;  ///< first id for modules o
 inline constexpr std::uint16_t forge_base = 0x0100;  ///< forgecpp's own modules
 inline constexpr std::uint16_t c2 = forge_base + 0;
 inline constexpr std::uint16_t tmtc = forge_base + 1;
+inline constexpr std::uint16_t pb = forge_base + 2;
 inline constexpr std::uint16_t nrf = 0x7FFD;         ///< Nordic modem library: codes are not errnos
 inline constexpr std::uint16_t zephyr = 0x7FFE;      ///< Zephyr kernel, drivers, libc
 inline constexpr std::uint16_t raw = 0x7FFF;         ///< reserved: a sign-extended plain errno
