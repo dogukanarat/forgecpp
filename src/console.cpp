@@ -2,22 +2,27 @@
 
 #include "forge/log.hpp"
 
-#include <replxx.hxx>
+#include <linenoise.h>
 #include <spdlog/sinks/base_sink.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
+#include <fcntl.h>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <optional>
+#include <poll.h>
+#include <sys/ioctl.h>
 #include <thread>
 #include <unistd.h>
 
 namespace forge {
 namespace {
-
-using replxx::Replxx;
 
 constexpr const char* kReset = "\033[0m";
 
@@ -33,41 +38,82 @@ const char* level_color(spdlog::level::level_enum lvl) {
     }
 }
 
-// spdlog sink writing through replxx, which keeps the prompt intact.
-class ReplxxSink final : public spdlog::sinks::base_sink<std::mutex> {
+// spdlog sink writing through the console, which keeps the line being edited intact.
+class ConsoleSink final : public spdlog::sinks::base_sink<std::mutex> {
 public:
-    ReplxxSink(Replxx& rx, bool color) : rx_(rx), color_(color) {}
+    ConsoleSink(std::function<void(std::string_view)> out, bool color) : out_(std::move(out)), color_(color) {}
 
 protected:
     void sink_it_(const spdlog::details::log_msg& msg) override {
         spdlog::memory_buf_t buf;
         formatter_->format(msg, buf);
-        std::string out(buf.data(), buf.size());
+        std::string text(buf.data(), buf.size());
         if (color_ && msg.color_range_end > msg.color_range_start) {
-            out.insert(msg.color_range_end, kReset);
-            out.insert(msg.color_range_start, level_color(msg.level));
+            text.insert(msg.color_range_end, kReset);
+            text.insert(msg.color_range_start, level_color(msg.level));
         }
-        rx_.write(out.data(), static_cast<int>(out.size()));
+        out_(text);
     }
     void flush_() override {}
 
 private:
-    Replxx& rx_;
+    std::function<void(std::string_view)> out_;
     bool color_;
 };
-
-std::size_t codepoints(std::string_view s) {
-    return static_cast<std::size_t>(
-        std::count_if(s.begin(), s.end(), [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
-}
 
 bool starts_with(std::string_view s, std::string_view prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
 
-}  // namespace
+void write_all(int fd, std::string_view text) {
+    while (!text.empty()) {
+        const auto n = ::write(fd, text.data(), text.size());
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return;
+        }
+        text.remove_prefix(static_cast<std::size_t>(n));
+    }
+}
 
-namespace {
+/// In raw mode the terminal does not turn '\n' into "\r\n": do it here.
+std::string crlf(std::string_view text) {
+    std::string out;
+    out.reserve(text.size() + 8);
+    for (char c : text) {
+        if (c == '\n') out += '\r';
+        out += c;
+    }
+    return out;
+}
+
+// linenoise's callbacks are plain C functions without user data: they reach the
+// console that is reading input through this (one interactive console at a time).
+struct LineHooks {
+    std::function<std::vector<std::string>(const std::string&)> complete;
+    std::function<std::string(const std::string&)> hint;
+    bool color = true;
+};
+std::atomic<LineHooks*> g_hooks{nullptr};
+
+extern "C" void forge_console_complete(const char* buf, linenoiseCompletions* lc) {
+    if (auto* h = g_hooks.load()) {
+        for (const auto& c : h->complete(buf)) linenoiseAddCompletion(lc, c.c_str());
+    }
+}
+
+extern "C" char* forge_console_hint(const char* buf, int* color, int* bold) {
+    auto* h = g_hooks.load();
+    if (!h) return nullptr;
+    const std::string hint = h->hint(buf);
+    if (hint.empty()) return nullptr;
+    *color = h->color ? 90 : -1;  // grey
+    *bold = 0;
+    return ::strdup(hint.c_str());
+}
+
+extern "C" void forge_console_free_hint(void* hint) { std::free(hint); }
+
 thread_local const Console::Session* tls_session = nullptr;
 
 struct SessionScope {
@@ -80,6 +126,7 @@ Console::Session& local_session() {
     static Console::Session s;
     return s;
 }
+
 }  // namespace
 
 const Console::Session* Console::current_session() { return tls_session; }
@@ -95,8 +142,7 @@ struct Console::Impl {
     explicit Impl(Options o) : options(std::move(o)) {}
 
     Options options;
-    Replxx rx;
-    mutable std::mutex mutex;
+    mutable std::mutex mutex;  // commands, executor, exit callback
     std::map<std::string, Command> commands;
     Executor executor;
     std::function<void()> exit_callback;
@@ -106,6 +152,21 @@ struct Console::Impl {
     std::atomic<bool> exit_requested{false};
     std::mutex thread_mutex;
     std::thread thread;
+
+    // Output: while a line is being edited, text from any thread is queued and
+    // printed by the console thread (line hidden, text, line shown again).
+    std::mutex out_mutex;
+    bool editing = false;
+    std::deque<std::string> pending;
+    int wake[2] = {-1, -1};  // pipe: output queued or stop requested
+
+    linenoiseState line{};
+    char line_buf[4096]{};
+    std::deque<std::string> history;  // for the `history` command (linenoise keeps its own copy)
+    LineHooks hooks;
+    std::string plain_input;  // input that is not a terminal: bytes not yet split into lines
+
+    Console* self = nullptr;
 
     std::optional<Command> find(const std::string& name) const {
         std::lock_guard lock(mutex);
@@ -123,88 +184,232 @@ struct Console::Impl {
         return out;
     }
 
-    void write(std::string_view text) { rx.write(text.data(), static_cast<int>(text.size())); }
+    // --- output -------------------------------------------------------------------
+    void write(std::string_view text) {
+        std::lock_guard lock(out_mutex);
+        if (editing) {
+            pending.emplace_back(text);
+            notify();
+            return;
+        }
+        write_all(options.output_fd, text);
+    }
 
-    void setup_replxx() {
-        rx.set_max_history_size(options.max_history);
-        rx.set_unique_history(true);
-        rx.set_word_break_characters(" \t");
-        rx.set_no_color(!options.color);
-        rx.set_completion_count_cutoff(128);
-        rx.set_hint_delay(100);
-        rx.set_max_hint_rows(3);
+    void notify() {
+        if (wake[1] >= 0) {
+            const char c = 1;
+            [[maybe_unused]] auto n = ::write(wake[1], &c, 1);  // non-blocking: a full pipe is already a wake-up
+        }
+    }
 
-        rx.set_completion_callback([this](const std::string& input, int& context_len) {
-            Replxx::completions_t out;
-            auto args = Console::split(input);
-            const bool new_word = input.empty() || input.back() == ' ' || input.back() == '\t';
-            const std::string current = (!new_word && !args.empty()) ? args.back() : std::string();
-            if (!new_word && !args.empty()) args.pop_back();
-            context_len = static_cast<int>(codepoints(current));
+    /// Console thread, while editing: print what other threads queued.
+    void print_pending() {
+        std::lock_guard lock(out_mutex);
+        if (pending.empty()) return;
+        linenoiseHide(&line);
+        for (const auto& text : pending) write_all(options.output_fd, crlf(text));
+        pending.clear();
+        linenoiseShow(&line);
+    }
 
-            std::vector<std::string> candidates;
-            if (args.empty()) {
-                candidates = names_with_prefix(current);
-            } else if (auto cmd = find(args.front()); cmd && cmd->completer) {
-                Args so_far(args.begin() + 1, args.end());
-                for (auto& c : cmd->completer(so_far)) {
-                    if (starts_with(c, current)) candidates.push_back(std::move(c));
-                }
+    // --- completion and hints -------------------------------------------------------
+    std::vector<std::string> complete(const std::string& input) const {
+        // linenoise replaces the whole line: candidates are full lines.
+        const auto cut = input.find_last_of(" \t");
+        const std::string base = cut == std::string::npos ? std::string() : input.substr(0, cut + 1);
+        const std::string current = input.substr(base.size());
+        auto args = Console::split(base);
+        std::vector<std::string> out;
+        if (args.empty()) {
+            for (auto& name : names_with_prefix(current)) out.push_back(name + " ");
+        } else if (auto cmd = find(args.front()); cmd && cmd->completer) {
+            Args so_far(args.begin() + 1, args.end());
+            for (auto& c : cmd->completer(so_far)) {
+                if (starts_with(c, current)) out.push_back(base + c);
             }
-            for (auto& c : candidates) out.emplace_back(c);
-            return out;
-        });
+        }
+        return out;
+    }
 
-        rx.set_hint_callback([this](const std::string& input, int& context_len, Replxx::Color& color) {
-            Replxx::hints_t hints;
-            if (input.empty() || input.find_first_of(" \t") != std::string::npos) return hints;
-            context_len = static_cast<int>(codepoints(input));
-            color = Replxx::Color::GRAY;
+    std::string hint(const std::string& input) const {
+        if (input.empty()) return {};
+        const auto space = input.find_first_of(" \t");
+        if (space == std::string::npos) {  // a command name being typed: the rest of the first match
             for (auto& name : names_with_prefix(input)) {
-                if (name != input) hints.emplace_back(name);
+                if (name != input) return name.substr(input.size());
             }
-            return hints;
-        });
+            return {};
+        }
+        // "name " with nothing after it yet: its arguments from the help text ("name <args>  description")
+        if (input.find_first_not_of(" \t", space) != std::string::npos) return {};
+        const auto cmd = find(input.substr(0, space));
+        if (!cmd || !starts_with(cmd->help, input.substr(0, space))) return {};
+        const auto usage_end = cmd->help.find("  ");
+        std::string usage = cmd->help.substr(space, usage_end == std::string::npos ? std::string::npos : usage_end - space);
+        usage.erase(0, usage.find_first_not_of(' '));
+        return usage;
+    }
 
-        rx.set_highlighter_callback([this](const std::string& input, Replxx::colors_t& colors) {
-            const auto start = input.find_first_not_of(" \t");
-            if (start == std::string::npos) return;
-            auto end = input.find_first_of(" \t", start);
-            if (end == std::string::npos) end = input.size();
-            const std::string word = input.substr(start, end - start);
-            const auto color = find(word) ? Replxx::Color::BRIGHTGREEN : Replxx::Color::BRIGHTRED;
-            const auto from = codepoints(std::string_view(input).substr(0, start));
-            const auto to = from + codepoints(word);
-            for (std::size_t i = from; i < to && i < colors.size(); ++i) colors[i] = color;
-        });
+    // --- input ------------------------------------------------------------------------
+    /// One line from a terminal, edited with linenoise. nullopt: stop or end of input.
+    std::optional<std::string> read_edited() {
+        {
+            std::lock_guard lock(out_mutex);
+            if (linenoiseEditStart(&line, options.input_fd, options.output_fd, line_buf, sizeof(line_buf),
+                                   options.prompt.c_str()) == -1) {
+                return read_plain();  // cannot use the terminal (e.g. it went away)
+            }
+            editing = true;
+        }
+        print_pending();
+        auto finish = [this] {
+            std::lock_guard lock(out_mutex);
+            linenoiseEditStop(&line);
+            editing = false;
+            for (const auto& text : pending) write_all(options.output_fd, text);
+            pending.clear();
+        };
+        for (;;) {
+            pollfd fds[2] = {{options.input_fd, POLLIN, 0}, {wake[0], POLLIN, 0}};
+            if (::poll(fds, 2, -1) < 0) {
+                if (errno == EINTR) continue;
+                finish();
+                return std::nullopt;
+            }
+            if (fds[1].revents & POLLIN) {
+                char drain[64];
+                while (::read(wake[0], drain, sizeof(drain)) > 0) {
+                }
+                if (stop_requested.load()) {
+                    finish();
+                    return std::nullopt;
+                }
+                print_pending();
+            }
+            if (!(fds[0].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            errno = 0;
+            char* result = linenoiseEditFeed(&line);
+            if (result == linenoiseEditMore) continue;
+            const int err = errno;
+            finish();
+            if (result) {
+                std::string text(result);
+                linenoiseFree(result);
+                return text;
+            }
+            if (err == EAGAIN) return std::string();  // Ctrl-C: drop the line, new prompt
+            if (!stop_requested.load()) exit_requested = true;  // Ctrl-D or end of input
+            return std::nullopt;
+        }
+    }
 
-        if (!options.history_file.empty()) rx.history_load(options.history_file);
+    /// One line from a pipe or a file (no editing, no prompt); stop() interrupts it too.
+    std::optional<std::string> read_plain() {
+        for (;;) {
+            if (auto nl = plain_input.find('\n'); nl != std::string::npos) {
+                std::string text = plain_input.substr(0, nl);
+                plain_input.erase(0, nl + 1);
+                if (!text.empty() && text.back() == '\r') text.pop_back();
+                return text;
+            }
+            pollfd fds[2] = {{options.input_fd, POLLIN, 0}, {wake[0], POLLIN, 0}};
+            if (::poll(fds, 2, -1) < 0) {
+                if (errno == EINTR) continue;
+                return std::nullopt;
+            }
+            if (fds[1].revents & POLLIN) {
+                char drain[64];
+                while (::read(wake[0], drain, sizeof(drain)) > 0) {
+                }
+                if (stop_requested.load()) return std::nullopt;
+            }
+            if (!(fds[0].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            char chunk[1024];
+            const auto n = ::read(options.input_fd, chunk, sizeof(chunk));
+            if (n > 0) {
+                plain_input.append(chunk, static_cast<std::size_t>(n));
+                continue;
+            }
+            if (n < 0 && (errno == EINTR || errno == EAGAIN)) continue;
+            // End of input: a last line without '\n' still counts.
+            if (!stop_requested.load()) exit_requested = true;
+            if (plain_input.empty()) return std::nullopt;
+            std::string text = std::move(plain_input);
+            plain_input.clear();
+            return text;
+        }
+    }
+
+    void add_history(const std::string& text) {
+        linenoiseHistoryAdd(text.c_str());
+        add_history_local(text);
+    }
+
+    void load_history() {
+        linenoiseHistorySetMaxLen(options.max_history);
+        if (options.history_file.empty()) return;
+        linenoiseHistoryLoad(options.history_file.c_str());
+        std::ifstream in(options.history_file);
+        for (std::string text; std::getline(in, text);) {
+            if (!text.empty()) add_history_local(text);
+        }
+    }
+    void add_history_local(const std::string& text) {
+        if (history.empty() || history.back() != text) history.push_back(text);
+        while (static_cast<int>(history.size()) > options.max_history) history.pop_front();
     }
 
     void loop() {
+        {
+            std::lock_guard lock(out_mutex);  // stop() may notify from another thread
+            if (::pipe2(wake, O_NONBLOCK | O_CLOEXEC) != 0) wake[0] = wake[1] = -1;
+        }
+        hooks.complete = [this](const std::string& in) { return complete(in); };
+        hooks.hint = [this](const std::string& in) { return hint(in); };
+        hooks.color = options.color;
+        g_hooks = &hooks;
+        linenoiseSetCompletionCallback(forge_console_complete);
+        linenoiseSetHintsCallback(forge_console_hint);
+        linenoiseSetFreeHintsCallback(forge_console_free_hint);
+        linenoiseSetMultiLine(1);
+        load_history();
+        // A terminal without a window size (serial consoles often have 0 columns)
+        // makes linenoise ask the terminal for the cursor position and wait for an
+        // answer that may never come: give it a width instead ($COLUMNS or 80).
+        if (!std::getenv("LINENOISE_COLS")) {
+            winsize ws{};
+            if (::ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+                const char* columns = std::getenv("COLUMNS");
+                ::setenv("LINENOISE_COLS", columns && std::atoi(columns) > 0 ? columns : "80", 0);
+            }
+        }
+
         spdlog::sink_ptr previous;
         if (options.redirect_logs) {
-            previous = log::set_console_sink(std::make_shared<ReplxxSink>(rx, options.color));
+            previous = log::set_console_sink(
+                std::make_shared<ConsoleSink>([this](std::string_view text) { write(text); }, options.color));
         }
         if (!options.banner.empty()) write(options.banner + "\n");
 
-        while (!stop_requested.load() && !exit_requested.load()) {
-            errno = 0;
-            const char* raw = rx.input(options.prompt);
-            if (raw == nullptr) {
-                if (errno == EAGAIN && !stop_requested.load()) continue;  // Ctrl-C clears the line
-                if (!stop_requested.load()) exit_requested = true;        // Ctrl-D / EOF
-                break;
-            }
-            if (stop_requested.load()) break;
-            std::string line(raw);
-            if (line.find_first_not_of(" \t") == std::string::npos) continue;
-            rx.history_add(line);
-            self->execute(line);
+        const bool terminal = ::isatty(options.input_fd) || std::getenv("LINENOISE_ASSUME_TTY");
+        while (!stop_requested.load() && !exit_requested.load() && wake[0] >= 0) {
+            auto text = terminal ? read_edited() : read_plain();
+            if (!text) break;
+            if (text->find_first_not_of(" \t") == std::string::npos) continue;
+            add_history(*text);
+            self->execute(*text);
         }
 
-        if (!options.history_file.empty()) rx.history_save(options.history_file);
+        if (!options.history_file.empty()) linenoiseHistorySave(options.history_file.c_str());
         if (options.redirect_logs) log::set_console_sink(previous);
+        g_hooks = nullptr;
+        {
+            std::lock_guard lock(out_mutex);
+            for (int& fd : wake) {
+                if (fd >= 0) ::close(fd);
+                fd = -1;
+            }
+        }
         running = false;
 
         if (exit_requested.load() && !stop_requested.load()) {
@@ -216,15 +421,12 @@ struct Console::Impl {
             if (cb) cb();
         }
     }
-
-    Console* self = nullptr;
 };
 
 Console::Console() : Console(Options{}) {}
 
 Console::Console(Options options) : impl_(std::make_shared<Impl>(std::move(options))) {
     impl_->self = this;
-    impl_->setup_replxx();
 
     add("help", "help [command]  list commands or show help for one", [this](const Args& args) {
         std::lock_guard lock(impl_->mutex);
@@ -252,11 +454,11 @@ Console::Console(Options options) : impl_(std::make_shared<Impl>(std::move(optio
     });
     add("exit", "exit  leave the console", [this](const Args&) { impl_->exit_requested = true; });
     add("quit", "quit  leave the console", [this](const Args&) { impl_->exit_requested = true; });
-    add("clear", "clear  clear the screen", [this](const Args&) { impl_->rx.clear_screen(); });
+    add("clear", "clear  clear the screen", [this](const Args&) { write("\033[H\033[2J"); });
     add("history", "history  show command history", [this](const Args&) {
-        auto scan = impl_->rx.history_scan();
         std::string out;
-        for (int i = 1; scan.next(); ++i) out += fmt::format("{:>4}  {}\n", i, scan.get().text());
+        int i = 1;
+        for (const auto& text : impl_->history) out += fmt::format("{:>4}  {}\n", i++, text);
         write(out);
     });
     std::lock_guard lock(impl_->mutex);
@@ -362,19 +564,12 @@ void Console::start() {
 
 void Console::stop() {
     impl_->stop_requested = true;
-    if (impl_->running.load()) {
-        // Wake replxx up: Ctrl-C makes input() return with EAGAIN.
-        impl_->rx.emulate_key_press(Replxx::KEY::control('C'));
+    {
+        std::lock_guard lock(impl_->out_mutex);
+        impl_->notify();  // wakes the loop, whether it waits for a terminal or a pipe
     }
     std::lock_guard lock(impl_->thread_mutex);
-    if (impl_->thread.joinable() && impl_->thread.get_id() != std::this_thread::get_id()) {
-        if (::isatty(STDIN_FILENO)) {
-            impl_->thread.join();
-        } else {
-            // Piped stdin: a blocking read cannot be interrupted portably.
-            impl_->thread.detach();
-        }
-    }
+    if (impl_->thread.joinable() && impl_->thread.get_id() != std::this_thread::get_id()) impl_->thread.join();
 }
 
 bool Console::running() const { return impl_->running.load(); }

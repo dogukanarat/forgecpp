@@ -15,6 +15,15 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
   examples. Supported toolchains: GCC ≥ 13 or Clang ≥ 17 with libstdc++ 13
   (Yocto scarthgap, Ubuntu 24.04, the armhf cross compiler). Applications
   built against forgecpp must compile as C++20.
+- **Console: linenoise instead of replxx** (unmaintained since 2021).
+  linenoise is compiled into libforgecpp (no separate library). History, tab
+  completion and hints stay (the hint now also shows a command's arguments
+  from its help text); colouring of the typed command is gone. Output from
+  other threads and log lines are printed above the line being typed. Piped
+  input is read line by line and `stop()` interrupts it (it used to detach the
+  thread). A terminal without a window size no longer makes the console wait
+  for a cursor-position answer. `Console::Options` gained `input_fd` /
+  `output_fd`.
 
 ## 0.3.0
 

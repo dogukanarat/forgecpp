@@ -72,7 +72,7 @@ kill -HUP $(pidof pump)            # reload the configuration
 |---|---|---|---|
 | [spdlog](https://github.com/gabime/spdlog) | v1.17.0 | Fast, thread-safe logging | `forge::log`, `FORGE_INFO(...)` |
 | [CLI11](https://github.com/CLIUtils/CLI11) | v2.7.2 | Command line parsing | `Application::cli()`, `setup_cli()` |
-| [replxx](https://github.com/AmokHuginnsson/replxx) | master (1f149bf) | Console input, colors, tab completion | `forge::Console` |
+| [linenoise](https://github.com/antirez/linenoise) | a473823 (2026-05) | Console line editing: history, tab completion, hints, output while typing (compiled into libforgecpp) | `forge::Console` |
 | [BS::thread_pool](https://github.com/bshoshany/thread-pool) | v5.1.0 | Lightweight, fast thread pool | `forge::ThreadPool`, `Application::pool()` |
 | [moodycamel::ConcurrentQueue](https://github.com/cameron314/concurrentqueue) | v1.0.5 | Lock-free inter-thread data transfer | `forge::Channel<T>` |
 | [nlohmann/json](https://github.com/nlohmann/json) | v3.12.0 | JSON reading/writing | `forge::json`, `save_json()` |
@@ -712,12 +712,16 @@ alarms().set("sensor.fault", fault, forge::Severity::error, "Sensor not respondi
 - Every raise, acknowledgement and clear is logged; `/health` returns an alarm summary.
 - Alarms are also published on the `alarms` event topic and listed by `forgectl alarms`.
 
-### `forge::Console` (replxx)
+### `forge::Console` (linenoise)
 
 Enabled with `-i`; it is the backup control channel when the web UI is not
-reachable. History, tab completion, hints and highlighting are included; while
-the console is open, log lines are printed above the prompt without corrupting
-it. Built-in commands: `help`, `status`, `log-level`, `config`, `reload`,
+reachable. History, tab completion (commands and their arguments) and hints
+(the rest of a command name, then its arguments from the help text) are
+included; while the console is open, log lines and output from other threads
+are printed above the line being typed without corrupting it. Piped input is
+read line by line without a prompt (scripts: `printf 'status\nexit\n' | app -i`).
+A terminal without a window size (serial consoles) is taken as `$COLUMNS` or
+80 columns wide. Built-in commands: `help`, `status`, `log-level`, `config`, `reload`,
 `controls`, `set`, `press`, `call`, `alarms`, `ack`, `lease`, `release`,
 `metrics`, `health`, `streams`, `audit`, `trace`, `history`, `clear`, `exit`.
 The same commands are available remotely over telnet (see above).
@@ -850,7 +854,7 @@ The hub needs root for port 80 and `systemctl`; it starts no processes itself.
 forgecpp is meant to run on embedded Linux. The whole stack cross-compiles with
 a Yocto-style toolchain; on aarch64 the full test suite passes and the example
 daemons run with their web UI. Stripped sizes on aarch64: `libforgecpp.so`
-≈ 2.1 MB, `libspdlog.so` ≈ 650 KB, `libreplxx.so` ≈ 330 KB; a scaffolded
+≈ 2.1 MB, `libspdlog.so` ≈ 650 KB (line editing is compiled into libforgecpp); a scaffolded
 application with its embedded web page ≈ 580 KB. Runtime dependencies are only
 libstdc++/libc (plus OpenSSL/zlib when enabled).
 

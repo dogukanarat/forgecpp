@@ -11,8 +11,6 @@ find_dependency(nlohmann_json   CONFIG)
 find_dependency(tomlplusplus    CONFIG)
 find_dependency(httplib         CONFIG)
 
-# Private dependency, but required by the export set for static builds.
-find_dependency(replxx          CONFIG)
 find_dependency(cppzmq          CONFIG)
 find_package(protobuf CONFIG QUIET)
 if(NOT protobuf_FOUND)

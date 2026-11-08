@@ -4,9 +4,6 @@
 [submodule "third_party/CLI11"]
 	path = third_party/CLI11
 	url = https://github.com/CLIUtils/CLI11.git
-[submodule "third_party/replxx"]
-	path = third_party/replxx
-	url = https://github.com/AmokHuginnsson/replxx.git
 [submodule "third_party/thread-pool"]
 	path = third_party/thread-pool
 	url = https://github.com/bshoshany/thread-pool.git
@@ -37,3 +34,6 @@
 [submodule "third_party/protobuf"]
 	path = third_party/protobuf
 	url = https://github.com/protocolbuffers/protobuf.git
+[submodule "third_party/linenoise"]
+	path = third_party/linenoise
+	url = https://github.com/antirez/linenoise.git

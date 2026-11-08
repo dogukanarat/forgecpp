@@ -1,12 +1,12 @@
 SUMMARY = "forgecpp - batteries-included C++20 framework for Linux daemons"
-DESCRIPTION = "spdlog, CLI11, replxx, BS::thread_pool, moodycamel::ConcurrentQueue, \
+DESCRIPTION = "spdlog, CLI11, linenoise, BS::thread_pool, moodycamel::ConcurrentQueue, \
 nlohmann/json, toml++, cpp-httplib, doctest, ZeroMQ and protobuf, bundled and glued \
 together into an application framework: web control panel, forge.v1 messages, \
 forgectl, telnet console, metrics, tracing, audit trail."
 HOMEPAGE = "https://github.com/dogukanarat/forgecpp"
 SECTION = "libs"
 # forgecpp (MIT) + bundled: spdlog, nlohmann/json, toml++, cpp-httplib, doctest,
-# BS::thread_pool (MIT), CLI11 (BSD-3-Clause), replxx (BSD-3-Clause),
+# BS::thread_pool (MIT), CLI11 (BSD-3-Clause), linenoise (BSD-2-Clause, compiled in),
 # moodycamel::ConcurrentQueue (BSD-2-Clause or BSL-1.0), protobuf (BSD-3-Clause),
 # GridStack.js (MIT, embedded in the web pages).
 # libzmq: MPL-2.0. libiio: LGPL-2.1-or-later, its command line tools GPL-2.0-or-later
@@ -79,8 +79,8 @@ do_install() {
 }
 
 # Headers, CMake packages, pkg-config files, .proto files and the static test
-# helper are development files; libforgecpp, libprotobuf, libzmq, libspdlog and
-# libreplxx are runtime.
+# helper are development files; libforgecpp, libprotobuf, libzmq and libspdlog are
+# runtime.
 #   forgecpp-forgectl  forge.v1 command line client (forgectl) for the target
 #   python3-forge-v1   forge-v1 Python package: forge.v1 messages and framing (site-packages)
 #   forgecpp-tools     forgecpp-new (scaffolder)

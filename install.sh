@@ -51,7 +51,7 @@ USE_SUDO="auto"
 QUIET="OFF"
 
 # name | source dir | extra cmake args
-DEPS=(spdlog CLI11 replxx concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq protobuf libiio)
+DEPS=(spdlog CLI11 concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq protobuf libiio)
 
 usage() {
     cat <<EOF
@@ -370,8 +370,6 @@ dep_args() {
             echo "-DSPDLOG_BUILD_EXAMPLE=OFF -DSPDLOG_BUILD_TESTS=OFF -DSPDLOG_BUILD_BENCH=OFF" ;;
         CLI11)
             echo "-DCLI11_BUILD_TESTS=OFF -DCLI11_BUILD_EXAMPLES=OFF -DCLI11_BUILD_DOCS=OFF -DCLI11_PRECOMPILED=OFF" ;;
-        replxx)
-            echo "-DBUILD_SHARED_LIBS=${SHARED} -DREPLXX_BUILD_EXAMPLES=OFF -DREPLXX_BUILD_PACKAGE=OFF" ;;
         json)
             echo "-DJSON_BuildTests=OFF -DJSON_Install=ON" ;;
         tomlplusplus)

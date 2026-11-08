@@ -4,7 +4,7 @@ project(forgecpp
     VERSION 0.3.0
     DESCRIPTION "Batteries-included C++20 framework for Linux daemons and services"
     HOMEPAGE_URL "https://github.com/dogukanarat/forgecpp"
-    LANGUAGES CXX)
+    LANGUAGES C CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -65,7 +65,6 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 find_package(spdlog          CONFIG REQUIRED)
 find_package(CLI11           CONFIG REQUIRED)
-find_package(replxx          CONFIG REQUIRED)
 find_package(concurrentqueue CONFIG REQUIRED)
 find_package(nlohmann_json   CONFIG REQUIRED)
 find_package(tomlplusplus    CONFIG REQUIRED)
@@ -164,9 +163,14 @@ target_link_libraries(forgecpp
         tomlplusplus::tomlplusplus
         httplib::httplib
         ${FORGECPP_CPPZMQ_TARGET}
-        protobuf::libprotobuf
-    PRIVATE
-        replxx::replxx)
+        protobuf::libprotobuf)
+
+# linenoise (BSD-2-Clause, third_party/linenoise): line editing for forge::Console,
+# compiled into the library with hidden symbols (no clash with an application's own copy).
+set(FORGECPP_LINENOISE_DIR "${PROJECT_SOURCE_DIR}/third_party/linenoise")
+target_sources(forgecpp PRIVATE "${FORGECPP_LINENOISE_DIR}/linenoise.c")
+set_source_files_properties("${FORGECPP_LINENOISE_DIR}/linenoise.c" PROPERTIES COMPILE_OPTIONS "-w;-fvisibility=hidden")
+target_include_directories(forgecpp PRIVATE "${FORGECPP_LINENOISE_DIR}")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # backtrace() lives in libc on glibc; musl needs libexecinfo (optional).
     find_library(FORGE_EXECINFO execinfo)
