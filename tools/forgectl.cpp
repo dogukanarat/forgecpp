@@ -93,12 +93,14 @@ private:
     std::unique_ptr<httplib::Client> http_;
 };
 
-/// A log level for the terminal: in its colour when stdout is one (and NO_COLOR is not set).
+/// A log level for the terminal: three letters (TRC .. CRT), in its colour when stdout
+/// is a terminal (and NO_COLOR is not set).
 std::string level_text(const std::string& level) {
     static const bool color = ::isatty(STDOUT_FILENO) && !std::getenv("NO_COLOR");
-    if (!color) return level;
     try {
-        return std::string(forge::log::level_color(forge::log::parse_level(level))) + level + "\033[0m";
+        const auto l = forge::log::parse_level(level);
+        const std::string name(forge::log::short_name(l));
+        return color ? std::string(forge::log::level_color(l)) + name + "\033[0m" : name;
     } catch (const std::exception&) {
         return level;
     }

@@ -40,8 +40,10 @@ enum class Level : int { trace = 0, debug, info, warn, error, critical, off };
 /// Parse a level name (trace|debug|info|warn|warning|error|err|critical|fatal|off|none).
 /// Throws std::invalid_argument for unknown names.
 Level parse_level(std::string_view level);
-/// "trace", "debug", "info", "warning", "error", "critical", "off".
+/// "trace", "debug", "info", "warning", "error", "critical", "off" (JSON, forge.v1).
 std::string_view to_string(Level level);
+/// Three letters, so log lines line up: "TRC", "DBG", "INF", "WRN", "ERR", "CRT", "OFF".
+std::string_view short_name(Level level);
 
 /// A format string checked at compile time (std::format_string), with the place it is written.
 template <class... Args>
@@ -120,7 +122,8 @@ private:
 struct Options {
     std::string name = "app";    ///< name of the default logger
     std::string level = "info";  ///< trace|debug|info|warn|error|critical|off
-    /// Text lines: {time} {level} {logger} {message} {thread} {file} {line}.
+    /// Text lines: {time} {level} {logger} {message} {thread} {file} {line}
+    /// ({level}: TRC DBG INF WRN ERR CRT).
     std::string pattern = "[{time}] [{level}] [{logger}] {message}";
     bool console = true;         ///< log to stderr
     /// Level colours on stderr: auto (a terminal, no NO_COLOR, not journald) | always | never.

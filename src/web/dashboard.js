@@ -194,12 +194,15 @@
     }
   }
 
+  // Three letters, as on the terminal, so the columns line up.
+  const LEVEL_NAMES = { trace: 'TRC', debug: 'DBG', info: 'INF', warning: 'WRN', error: 'ERR', critical: 'CRT' };
+
   function appendLog(entry) {
     const pre = $('forge-log-lines');
     const line = el('div', { class: 'forge-log forge-log-' + entry.level });
     line.append(
       el('span', { class: 'forge-log-time', text: entry.time }), ' ',
-      el('span', { class: 'forge-log-level', text: entry.level }), ' ',
+      el('span', { class: 'forge-log-level', text: LEVEL_NAMES[entry.level] || entry.level }), ' ',
       el('span', { class: 'forge-log-logger', text: entry.logger }), ' ',
       el('span', { class: 'forge-log-message', text: entry.message }));
     pre.appendChild(line);

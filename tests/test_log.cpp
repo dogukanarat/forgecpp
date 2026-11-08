@@ -53,14 +53,14 @@ TEST_CASE("log: levels, named loggers, pattern, colours") {
     forge::log::trace("hidden");
     FORGE_ERROR("macro {}", "too");
     const auto text = out.text();
-    CHECK(text.find("test|info|hello 1\n") != std::string::npos);
-    CHECK(text.find("worker|debug|from worker\n") != std::string::npos);
-    CHECK(text.find("worker|warning|99.2 %\n") != std::string::npos);
-    CHECK(text.find("test|error|macro too\n") != std::string::npos);
+    CHECK(text.find("test|INF|hello 1\n") != std::string::npos);
+    CHECK(text.find("worker|DBG|from worker\n") != std::string::npos);
+    CHECK(text.find("worker|WRN|99.2 %\n") != std::string::npos);
+    CHECK(text.find("test|ERR|macro too\n") != std::string::npos);
     CHECK(text.find("hidden") == std::string::npos);
     {
         std::lock_guard lock(out.m);
-        CHECK(out.coloured.find("\033[33m\033[1mwarning\033[0m") != std::string::npos);  // the level in its colour
+        CHECK(out.coloured.find("\033[33m\033[1mWRN\033[0m") != std::string::npos);  // the level in its colour
     }
 
     forge::log::set_level("warn");
@@ -71,6 +71,11 @@ TEST_CASE("log: levels, named loggers, pattern, colours") {
     CHECK_THROWS_AS(forge::log::set_logger_level("nobody", "info"), std::invalid_argument);
     CHECK_THROWS_AS(forge::log::parse_level("loud"), std::invalid_argument);
     CHECK(forge::log::to_string(forge::log::parse_level("WARN")) == "warning");
+    for (auto l : {forge::log::Level::trace, forge::log::Level::debug, forge::log::Level::info, forge::log::Level::warn,
+                   forge::log::Level::error, forge::log::Level::critical}) {
+        CHECK(forge::log::short_name(l).size() == 3);
+    }
+    CHECK(forge::log::short_name(forge::log::Level::critical) == "CRT");
     const auto levels = forge::log::logger_levels();
     CHECK(std::find(levels.begin(), levels.end(), std::pair<std::string, std::string>{"worker", "trace"}) !=
           levels.end());

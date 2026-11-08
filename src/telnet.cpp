@@ -348,7 +348,7 @@ void Telnet::serve(std::shared_ptr<Session> s) {
                         ::localtime_r(&t, &tm);
                         const bool c = p->color;
                         p->print(std::format("{:02}:{:02}:{:02} [{}{}{}] [{}] {}\n", tm.tm_hour, tm.tm_min, tm.tm_sec,
-                                             c ? log::level_color(level) : "", r.level(), c ? "\033[0m" : "",
+                                             c ? log::level_color(level) : "", log::short_name(level), c ? "\033[0m" : "",
                                              r.logger(), r.message()));
                     });
                     s->print("following the log (logs off to stop)\n");

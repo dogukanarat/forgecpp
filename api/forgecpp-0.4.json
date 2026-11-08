@@ -287,6 +287,7 @@
   "forge::log::set_level(std::basic_string_view<char, std::char_traits<char> >)",
   "forge::log::set_logger_level(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::basic_string_view<char, std::char_traits<char> >)",
   "forge::log::set_terminal_writer(std::function<void (std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)>)",
+  "forge::log::short_name(forge::log::Level)",
   "forge::log::shutdown()",
   "forge::log::to_string(forge::log::Level)",
   "forge::metrics::Gauge::add(double)",

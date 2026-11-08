@@ -148,7 +148,7 @@ std::string render(const std::vector<Segment>& pattern, const Entry& e, bool col
             case Field::time: out += local_time(e.time_ns); break;
             case Field::level:
                 if (color) out += level_color(e.level);
-                out += to_string(e.level);
+                out += short_name(e.level);
                 if (color) out += kReset;
                 break;
             case Field::logger: out += e.logger; break;
@@ -303,7 +303,7 @@ public:
                 } else if (config_.journal) {
                     // journald: the priority as a prefix, no time (it adds its own)
                     write_fd(STDERR_FILENO, std::format("<{}>[{}] [{}] {}\n", syslog_priority(e.level),
-                                                        to_string(e.level), logger_name, message));
+                                                        short_name(e.level), logger_name, message));
                 } else {
                     write_fd(STDERR_FILENO, config_.color && !config_.json ? render(config_.pattern, e, true) : plain);
                 }
@@ -482,6 +482,19 @@ std::string_view to_string(Level level) {
         case Level::off: return "off";
     }
     return "info";
+}
+
+std::string_view short_name(Level level) {
+    switch (level) {
+        case Level::trace: return "TRC";
+        case Level::debug: return "DBG";
+        case Level::info: return "INF";
+        case Level::warn: return "WRN";
+        case Level::error: return "ERR";
+        case Level::critical: return "CRT";
+        case Level::off: return "OFF";
+    }
+    return "INF";
 }
 
 std::string_view level_color(Level level) {

@@ -237,7 +237,7 @@ a.forge-btn { display: inline-block; text-decoration: none; font-size: 14px; }
 .forge-log-logger { color: var(--forge-accent); }
 .forge-log-level {
   display: inline-block;
-  min-width: calc(8ch + 8px);  /* "critical" and its padding: the columns line up */
+  width: calc(3ch + 8px);  /* TRC .. CRT and the padding: the columns line up */
   padding: 0 4px;
   border-radius: 3px;
   text-align: center;

@@ -257,7 +257,7 @@ max_size_mb = 10
 max_files = 3
 syslog = false
 console = true
-pattern = "[{time}] [{level}] [{logger}] {message}"   # also {thread} {file} {line}
+pattern = "[{time}] [{level}] [{logger}] {message}"   # also {thread} {file} {line}; {level}: TRC DBG INF WRN ERR CRT
 color = "auto"           # level colours: auto (a terminal, no NO_COLOR) | always | never
 format = "text"          # text | json (one object per line)
 

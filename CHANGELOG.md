@@ -41,6 +41,10 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
     `"[{time}] [{level}] [{logger}] {message}"`, plus `{thread}`, `{file}`,
     `{line}`. Configuration files with a spdlog pattern (`%v`, ...) must be
     changed.
+  - Levels are shown with three letters so the lines line up: `TRC DBG INF
+    WRN ERR CRT` (terminal, file, telnet, forgectl, web panel;
+    `log::short_name()`). JSON lines and forge.v1 `LogRecord.level` keep the
+    full names (`info`, `warning`, ...).
   - Colours: level colours on the console, in telnet (`color on|off`), in
     `forgectl logs` / `watch` and in the web panel's log view. New key
     `log.color` = `auto` (a terminal, `NO_COLOR` unset, not journald) |
