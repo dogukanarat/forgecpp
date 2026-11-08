@@ -12,7 +12,7 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(EMU_STANDALONE ON)
 endif()
 if(NOT TARGET forgecpp::forgecpp)
-    find_package(forgecpp 0.3 REQUIRED)
+    find_package(forgecpp 0.4 REQUIRED)
 endif()
 
 # radio.v1 messages (TxBlock) and the impairments (plain C++)

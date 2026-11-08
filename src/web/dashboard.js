@@ -196,8 +196,12 @@
 
   function appendLog(entry) {
     const pre = $('forge-log-lines');
-    const line = el('div', { class: 'forge-log-' + entry.level,
-      text: entry.time + ' [' + entry.level + '] [' + entry.logger + '] ' + entry.message });
+    const line = el('div', { class: 'forge-log forge-log-' + entry.level });
+    line.append(
+      el('span', { class: 'forge-log-time', text: entry.time }), ' ',
+      el('span', { class: 'forge-log-level', text: entry.level }), ' ',
+      el('span', { class: 'forge-log-logger', text: entry.logger }), ' ',
+      el('span', { class: 'forge-log-message', text: entry.message }));
     pre.appendChild(line);
     while (pre.childNodes.length > MAX_LOG_LINES) pre.removeChild(pre.firstChild);
     if ($('forge-follow').checked) pre.scrollTop = pre.scrollHeight;

@@ -70,7 +70,7 @@ kill -HUP $(pidof pump)            # reload the configuration
 
 | Library | Version | Purpose | In forgecpp |
 |---|---|---|---|
-| [spdlog](https://github.com/gabime/spdlog) | v1.17.0 | Fast, thread-safe logging | `forge::log`, `FORGE_INFO(...)` |
+| [Quill](https://github.com/odygrd/quill) | v13.1.0 | Asynchronous logging (header-only): a background thread writes the terminal, file, syslog and history | `forge::log`, `FORGE_INFO(...)`, `FORGE_RT_*` |
 | [CLI11](https://github.com/CLIUtils/CLI11) | v2.7.2 | Command line parsing | `Application::cli()`, `setup_cli()` |
 | [linenoise](https://github.com/antirez/linenoise) | a473823 (2026-05) | Console line editing: history, tab completion, hints, output while typing (compiled into libforgecpp) | `forge::Console` |
 | [BS::thread_pool](https://github.com/bshoshany/thread-pool) | v5.1.0 | Lightweight, fast thread pool | `forge::ThreadPool`, `Application::pool()` |
@@ -257,7 +257,9 @@ max_size_mb = 10
 max_files = 3
 syslog = false
 console = true
-pattern = "[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%n] %v"
+pattern = "[{time}] [{level}] [{logger}] {message}"   # also {thread} {file} {line}
+color = "auto"           # level colours: auto (a terminal, no NO_COLOR) | always | never
+format = "text"          # text | json (one object per line)
 
 [threads]
 workers = 0              # 0 = number of CPUs
@@ -365,15 +367,23 @@ forge::json j = cfg.to_json();
 
 Type mismatches throw `ConfigError` with file:line:column information.
 
-### `forge::log` (spdlog)
+### `forge::log` (Quill)
 
 ```cpp
-forge::log::info("connected to {}:{}", host, port);
-auto net = forge::log::get("net");       // named logger sharing the same sinks
+forge::log::info("connected to {}:{}", host, port);   // std::format, checked at compile time
+auto net = forge::log::get("net");       // named logger sharing the same outputs
 net->debug("packet {}", id);
-FORGE_WARN("with file/line info");        // compiled out below SPDLOG_ACTIVE_LEVEL
+FORGE_WARN("disk {:.0f} % full", used);   // the caller's file and line ({file}:{line} in the pattern)
 forge::log::set_level("debug");           // at runtime
 ```
+
+The message is formatted on the calling thread and handed to a queue; Quill's
+background thread writes it to the terminal (in colour), the file, syslog, the
+history (web panel, RPC, telnet) and the listeners, so a log call never waits
+for a terminal or a disk. Real-time threads use `FORGE_RT_*` from
+`<forge/log_rt.hpp>`: the arguments are copied and formatted on the background
+thread, the queue drops instead of blocking when it is full. Under systemd
+(journald) each line carries its syslog priority instead of colours.
 
 ### `forge::Channel<T>` (moodycamel::ConcurrentQueue)
 
@@ -660,7 +670,7 @@ g.command("scan", "Scan", {forge::web::number_param("from", 2400).range(70, 6000
 `[console] telnet = "0.0.0.0:2323"` serves the same console commands to
 `telnet board 2323` (several sessions, each with its own output). With
 `[auth]` the session asks for a user and password (not echoed) and commands
-run with that user's role. `logs on|off` follows the log, `whoami`, `exit`.
+run with that user's role. `logs on|off [level]` follows the log (levels in colour; `color off` for plain text), `whoami`, `exit`.
 Telnet is not encrypted: keep it on a trusted network, or bind it to
 `127.0.0.1` and reach it through `ssh -L`.
 
@@ -854,7 +864,7 @@ The hub needs root for port 80 and `systemctl`; it starts no processes itself.
 forgecpp is meant to run on embedded Linux. The whole stack cross-compiles with
 a Yocto-style toolchain; on aarch64 the full test suite passes and the example
 daemons run with their web UI. Stripped sizes on aarch64: `libforgecpp.so`
-≈ 2.1 MB, `libspdlog.so` ≈ 650 KB (line editing is compiled into libforgecpp); a scaffolded
+≈ 2.1 MB (logging and line editing are compiled into libforgecpp); a scaffolded
 application with its embedded web page ≈ 580 KB. Runtime dependencies are only
 libstdc++/libc (plus OpenSSL/zlib when enabled).
 
@@ -914,7 +924,7 @@ qam-modem and channel-emulator on-failure (3 in 10 minutes) with a 30 s watchdog
 ## Build times
 
 A source file including `<forge/forge.hpp>` takes about 8 s to compile (-O2;
-cpp-httplib is a compiled library, spdlog and protobuf too). For quicker
+cpp-httplib and protobuf are compiled libraries). For quicker
 edit-compile cycles while developing, `-DFORGE_PCH=ON` precompiles the header
 for every `forge_add_app` / `forge_add_test` target (one file edited in the
 pump example: 17.8 -> 11.9 s); it makes clean builds of small projects slower,
@@ -926,7 +936,7 @@ everything.
 
 Semantic versions, changes in [CHANGELOG.md](CHANGELOG.md). Until 1.0 a minor
 version may change the C++ API: `libforgecpp.so.<major>.<minor>` and
-`find_package(forgecpp 0.3)` accepts 0.3.x only. The forge.v1 protocol only
+`find_package(forgecpp 0.4)` accepts 0.4.x only. The forge.v1 protocol only
 changes compatibly (new fields and messages; removed numbers reserved): CI
 checks it against the last release's API (`proto/forge/v1/API.json`) with
 `tools/proto-compat.py`, which also records it at a release (`--update`). Within a minor
@@ -937,8 +947,8 @@ how it may change: [docs/API.md](docs/API.md).
 ## Updating dependencies
 
 ```sh
-git -C third_party/spdlog fetch --tags && git -C third_party/spdlog checkout v1.x.y
-git add third_party/spdlog && git commit -m "spdlog: v1.x.y"
+git -C third_party/quill fetch --tags && git -C third_party/quill checkout v13.x.y
+git add third_party/quill && git commit -m "quill: v13.x.y"
 ```
 
 ## Directory layout

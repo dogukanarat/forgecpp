@@ -30,7 +30,7 @@ dashboard. `FORGE_MAIN` defines `main()`; `run()` parses the command line, loads
 the configuration, starts everything and runs until SIGTERM / Ctrl-C.
 
 ```cmake
-find_package(forgecpp 0.3 REQUIRED)
+find_package(forgecpp 0.4 REQUIRED)
 forge_add_app(pump SOURCES src/main.cpp CONFIG config/pump.toml)
 ```
 

@@ -187,7 +187,7 @@ Build a tarball with an SDK toolchain and unpack it on the target:
 ```sh
 source /opt/poky/environment-setup-cortexa53-poky-linux
 ./install.sh --package --prefix /usr --toolchain $OECORE_NATIVE_SYSROOT/usr/share/cmake/OEToolchainConfig.cmake --arch aarch64
-scp build/forgecpp-0.3.0-aarch64.tar.gz target:/tmp && ssh target tar -xzf /tmp/forgecpp-0.3.0-aarch64.tar.gz -C /
+scp build/forgecpp-0.4.0-aarch64.tar.gz target:/tmp && ssh target tar -xzf /tmp/forgecpp-0.4.0-aarch64.tar.gz -C /
 ```
 
 ## What has been verified
@@ -205,7 +205,7 @@ has not yet been run in a full bitbake build.
   `S = "${WORKDIR}/git"`, which is correct up to scarthgap (5.0 LTS). Newer
   releases unpack sources elsewhere; adjust `S` there.
 - **Overlap with meta-oe:** forgecpp installs its own copies of the bundled
-  libraries (spdlog, nlohmann-json, CLI11, libzmq, cppzmq, libiio, ...) into
+  libraries (Quill, nlohmann-json, CLI11, libzmq, cppzmq, libiio, ...) into
   `/usr`. If an image also pulls in the meta-oe recipes for the same libraries,
   bitbake reports files installed by multiple recipes. Use one source for those
   libraries per image (e.g. `FORGECPP_INSTALL_ARGS = "--without-iio"` and

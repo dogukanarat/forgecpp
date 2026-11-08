@@ -3,7 +3,6 @@
 #include "forge/log.hpp"
 
 #include <linenoise.h>
-#include <spdlog/sinks/base_sink.h>
 
 #include <algorithm>
 #include <atomic>
@@ -23,43 +22,6 @@
 
 namespace forge {
 namespace {
-
-constexpr const char* kReset = "\033[0m";
-
-const char* level_color(spdlog::level::level_enum lvl) {
-    switch (lvl) {
-        case spdlog::level::trace: return "\033[37m";
-        case spdlog::level::debug: return "\033[36m";
-        case spdlog::level::info: return "\033[32m";
-        case spdlog::level::warn: return "\033[33m\033[1m";
-        case spdlog::level::err: return "\033[31m\033[1m";
-        case spdlog::level::critical: return "\033[1m\033[41m";
-        default: return "";
-    }
-}
-
-// spdlog sink writing through the console, which keeps the line being edited intact.
-class ConsoleSink final : public spdlog::sinks::base_sink<std::mutex> {
-public:
-    ConsoleSink(std::function<void(std::string_view)> out, bool color) : out_(std::move(out)), color_(color) {}
-
-protected:
-    void sink_it_(const spdlog::details::log_msg& msg) override {
-        spdlog::memory_buf_t buf;
-        formatter_->format(msg, buf);
-        std::string text(buf.data(), buf.size());
-        if (color_ && msg.color_range_end > msg.color_range_start) {
-            text.insert(msg.color_range_end, kReset);
-            text.insert(msg.color_range_start, level_color(msg.level));
-        }
-        out_(text);
-    }
-    void flush_() override {}
-
-private:
-    std::function<void(std::string_view)> out_;
-    bool color_;
-};
 
 bool starts_with(std::string_view s, std::string_view prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
@@ -384,10 +346,12 @@ struct Console::Impl {
             }
         }
 
-        spdlog::sink_ptr previous;
+        log::TerminalWriter previous;
         if (options.redirect_logs) {
-            previous = log::set_console_sink(
-                std::make_shared<ConsoleSink>([this](std::string_view text) { write(text); }, options.color));
+            // log lines are printed above the line being typed, coloured if the console is
+            previous = log::set_terminal_writer([this](std::string_view plain, std::string_view coloured) {
+                write(options.color ? coloured : plain);
+            });
         }
         if (!options.banner.empty()) write(options.banner + "\n");
 
@@ -401,7 +365,7 @@ struct Console::Impl {
         }
 
         if (!options.history_file.empty()) linenoiseHistorySave(options.history_file.c_str());
-        if (options.redirect_logs) log::set_console_sink(previous);
+        if (options.redirect_logs) log::set_terminal_writer(std::move(previous));
         g_hooks = nullptr;
         {
             std::lock_guard lock(out_mutex);

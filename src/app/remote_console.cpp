@@ -94,7 +94,7 @@ void RemoteConsole::register_builtins(Console& c) {
         c.print("{} {} (forgecpp {})", info.name, info.version, version_string);
         c.print("  pid          {}", ::getpid());
         c.print("  uptime       {}", format_duration(app_.uptime()));
-        c.print("  log level    {}", std::string_view(spdlog::level::to_string_view(log::level()).data(), spdlog::level::to_string_view(log::level()).size()));
+        c.print("  log level    {}", log::to_string(log::level()));
         c.print("  workers      {} ({} tasks queued)", app_.pool().get_thread_count(), app_.pool().get_tasks_queued());
         c.print("  timers       {}", app_.scheduler().pending());
         if (auto* http = app_.http()) c.print("  http         port {}", http->port());
@@ -105,7 +105,7 @@ void RemoteConsole::register_builtins(Console& c) {
             // log-level <level> | log-level <logger> <level>
             if (args.size() == 1) app_.control().set_log_level({}, args[0], console_caller());
             if (args.size() >= 2) app_.control().set_log_level(args[0], args[1], console_caller());
-            c.print("log level: {}", std::string_view(spdlog::level::to_string_view(log::level()).data(), spdlog::level::to_string_view(log::level()).size()));
+            c.print("log level: {}", log::to_string(log::level()));
             for (const auto& [name, lvl] : log::logger_levels()) c.print("  {:<24} {}", name, lvl);
         },
         [](const Console::Args& so_far) -> std::vector<std::string> {

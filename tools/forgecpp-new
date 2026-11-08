@@ -76,7 +76,7 @@ cmake_minimum_required(VERSION 3.16)
 project(${IDENT} VERSION 0.1.0 DESCRIPTION "${DESCRIPTION}" LANGUAGES CXX)
 
 include(GNUInstallDirs)
-find_package(forgecpp 0.3 REQUIRED)
+find_package(forgecpp 0.4 REQUIRED)
 
 # The application's messages (forge.v1 framing, see proto/): C++ for the app
 # and its tests, Python modules for clients.
@@ -289,6 +289,8 @@ message = "tick"
 [log]
 level = "info"            # trace|debug|info|warn|error|critical|off
 # format = "json"         # one JSON object per line (log collectors)
+# color = "auto"          # level colours: auto | always | never
+# pattern = "[{time}] [{level}] [{logger}] {message}"   # also {thread} {file} {line}
 # file = "/var/log/${NAME}/${NAME}.log"
 
 [threads]

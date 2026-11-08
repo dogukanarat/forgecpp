@@ -12,7 +12,7 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(RADIO_STANDALONE ON)
 endif()
 if(NOT TARGET forgecpp::forgecpp)
-    find_package(forgecpp 0.3 REQUIRED)
+    find_package(forgecpp 0.4 REQUIRED)
 endif()
 
 # AD936x access (libiio backend + simulator) and DSP, shared with spectrum-analyzer.

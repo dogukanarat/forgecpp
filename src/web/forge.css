@@ -13,6 +13,7 @@
   --forge-danger: #d1372f;
   --forge-ok: #1f9d55;
   --forge-warn: #c98a00;
+  --forge-log-debug: #0f7c8c;
   --forge-radius: 10px;
   --forge-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
   --forge-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
@@ -31,6 +32,7 @@
     --forge-danger: #f0544c;
     --forge-ok: #3ccf7b;
     --forge-warn: #e8b23a;
+    --forge-log-debug: #4cc3d4;
     --forge-shadow: none;
     color-scheme: dark;
   }
@@ -47,6 +49,7 @@
   --forge-danger: #f0544c;
   --forge-ok: #3ccf7b;
   --forge-warn: #e8b23a;
+  --forge-log-debug: #4cc3d4;
   --forge-shadow: none;
   color-scheme: dark;
 }
@@ -229,9 +232,26 @@ a.forge-btn { display: inline-block; text-decoration: none; font-size: 14px; }
   white-space: pre-wrap;
   word-break: break-word;
 }
-.forge-log-trace, .forge-log-debug { color: var(--forge-muted); }
-.forge-log-warning { color: var(--forge-warn); }
-.forge-log-error, .forge-log-critical { color: var(--forge-danger); font-weight: 600; }
+/* one line: time, level (coloured badge), logger, message; colours as on the terminal */
+.forge-log-time { color: var(--forge-muted); }
+.forge-log-logger { color: var(--forge-accent); }
+.forge-log-level {
+  display: inline-block;
+  min-width: calc(8ch + 8px);  /* "critical" and its padding: the columns line up */
+  padding: 0 4px;
+  border-radius: 3px;
+  text-align: center;
+  font-weight: 600;
+}
+.forge-log-trace .forge-log-level { color: var(--forge-muted); }
+.forge-log-debug .forge-log-level { color: var(--forge-log-debug); }
+.forge-log-info .forge-log-level { color: var(--forge-ok); }
+.forge-log-warning .forge-log-level { color: var(--forge-warn); }
+.forge-log-error .forge-log-level { color: var(--forge-danger); }
+.forge-log-critical .forge-log-level { color: #fff; background: var(--forge-danger); }
+.forge-log-trace .forge-log-message, .forge-log-debug .forge-log-message { color: var(--forge-muted); }
+.forge-log-warning .forge-log-message { color: var(--forge-warn); }
+.forge-log-error .forge-log-message, .forge-log-critical .forge-log-message { color: var(--forge-danger); font-weight: 600; }
 
 /* toast (short-lived messages) -------------------------------------------- */
 .forge-toasts {

@@ -12,14 +12,14 @@ std::int64_t epoch_ms(Alarm::Clock::time_point t) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(t.time_since_epoch()).count();
 }
 
-spdlog::level::level_enum log_level(Severity s) {
+log::Level log_level(Severity s) {
     switch (s) {
-        case Severity::info: return spdlog::level::info;
-        case Severity::warning: return spdlog::level::warn;
-        case Severity::error: return spdlog::level::err;
-        case Severity::critical: return spdlog::level::critical;
+        case Severity::info: return log::Level::info;
+        case Severity::warning: return log::Level::warn;
+        case Severity::error: return log::Level::error;
+        case Severity::critical: return log::Level::critical;
     }
-    return spdlog::level::warn;
+    return log::Level::warn;
 }
 
 // Display order: pending, then acknowledged-but-active, then history.
@@ -101,7 +101,7 @@ bool Alarms::raise(const std::string& id, Severity severity, const std::string& 
             fresh = true;
         }
     }
-    if (fresh) log::get()->log(log_level(severity), "ALARM [{}] {}: {}", to_string(severity), id, message);
+    if (fresh) log::get().log(log_level(severity), "ALARM [{}] {}: {}", to_string(severity), id, message);
     notify();
     return fresh;
 }

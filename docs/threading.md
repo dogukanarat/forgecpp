@@ -38,6 +38,7 @@ touches your members there, so you need no locks for them.
 | on the loop | to do it later | `after(d, fn)` / `every(d, fn)` |
 | anywhere | to publish samples | `stream(...).publish(...)` (thread-safe) |
 | anywhere | to raise an alarm or log | `alarms()`, `logger()` (thread-safe) |
+| a real-time thread | to log without formatting or allocating there | `FORGE_RT_WARN(logger(), "late by {} us", us)` (`<forge/log_rt.hpp>`; drops when full, never blocks) |
 
 `invoke()` runs `fn` inline when called on the loop, so it is safe everywhere.
 

@@ -1,11 +1,11 @@
 SUMMARY = "forgecpp - batteries-included C++20 framework for Linux daemons"
-DESCRIPTION = "spdlog, CLI11, linenoise, BS::thread_pool, moodycamel::ConcurrentQueue, \
+DESCRIPTION = "Quill, CLI11, linenoise, BS::thread_pool, moodycamel::ConcurrentQueue, \
 nlohmann/json, toml++, cpp-httplib, doctest, ZeroMQ and protobuf, bundled and glued \
 together into an application framework: web control panel, forge.v1 messages, \
 forgectl, telnet console, metrics, tracing, audit trail."
 HOMEPAGE = "https://github.com/dogukanarat/forgecpp"
 SECTION = "libs"
-# forgecpp (MIT) + bundled: spdlog, nlohmann/json, toml++, cpp-httplib, doctest,
+# forgecpp (MIT) + bundled: Quill, nlohmann/json, toml++, cpp-httplib, doctest,
 # BS::thread_pool (MIT), CLI11 (BSD-3-Clause), linenoise (BSD-2-Clause, compiled in),
 # moodycamel::ConcurrentQueue (BSD-2-Clause or BSL-1.0), protobuf (BSD-3-Clause),
 # GridStack.js (MIT, embedded in the web pages).
@@ -27,7 +27,7 @@ LIC_FILES_CHKSUM = " \
 SRC_URI = "gitsm://github.com/dogukanarat/forgecpp.git;protocol=https;branch=master"
 # Pin a release commit for reproducible builds.
 SRCREV ?= "${AUTOREV}"
-PV = "0.3.0+git${SRCPV}"
+PV = "0.4.0+git${SRCPV}"
 
 S = "${WORKDIR}/git"
 
@@ -79,7 +79,7 @@ do_install() {
 }
 
 # Headers, CMake packages, pkg-config files, .proto files and the static test
-# helper are development files; libforgecpp, libprotobuf, libzmq and libspdlog are
+# helper are development files; libforgecpp, libprotobuf and libzmq are
 # runtime.
 #   forgecpp-forgectl  forge.v1 command line client (forgectl) for the target
 #   python3-forge-v1   forge-v1 Python package: forge.v1 messages and framing (site-packages)

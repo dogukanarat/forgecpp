@@ -21,10 +21,10 @@ in CI on every change.
 
 forgecpp uses semantic versions (`CHANGELOG.md`).
 
-- **Before 1.0 (now: 0.3).** Within a minor series (0.3.x) nothing public is
+- **Before 1.0 (now: 0.4).** Within a minor series (0.4.x) nothing public is
   removed or changed incompatibly: binaries linked against
-  `libforgecpp.so.0.3` keep working with every 0.3.x, and sources keep
-  compiling. A new minor version (0.4) may break the C++ API; each break is
+  `libforgecpp.so.0.4` keep working with every 0.4.x, and sources keep
+  compiling. A new minor version (0.5) may break the C++ API; each break is
   listed in the CHANGELOG with what to do instead.
 - **From 1.0.** Breaks only in a new major version; deprecated APIs stay at
   least one minor version (`[[deprecated("use X")]]`) before they go.

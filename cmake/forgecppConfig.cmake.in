@@ -4,7 +4,7 @@ include(CMakeFindDependencyMacro)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_dependency(Threads)
-find_dependency(spdlog          CONFIG)
+find_dependency(quill           CONFIG)
 find_dependency(CLI11           CONFIG)
 find_dependency(concurrentqueue CONFIG)
 find_dependency(nlohmann_json   CONFIG)

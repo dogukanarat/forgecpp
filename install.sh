@@ -51,7 +51,7 @@ USE_SUDO="auto"
 QUIET="OFF"
 
 # name | source dir | extra cmake args
-DEPS=(spdlog CLI11 concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq protobuf libiio)
+DEPS=(quill CLI11 concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq protobuf libiio)
 
 usage() {
     cat <<EOF
@@ -253,7 +253,7 @@ if [[ "${ACTION}" == "uninstall" ]]; then
     if [[ -f "${SAVED_MANIFEST}" ]]; then ${SUDO} rm -f "${SAVED_MANIFEST}"; fi
     # Remove now-empty directories we created.
     for d in "${PREFIX}/include/forge" "${PREFIX}/include/nlohmann" "${PREFIX}/include/CLI" \
-             "${PREFIX}/include/spdlog" "${PREFIX}/include/toml++" "${PREFIX}/include/doctest" \
+             "${PREFIX}/include/quill" "${PREFIX}/include/toml++" "${PREFIX}/include/doctest" \
              "${PREFIX}/include/concurrentqueue" "${PREFIX}"/lib*/cmake/forgecpp \
              "${PREFIX}/share/doc/forgecpp" "${PREFIX}/share/forgecpp"; do
         [[ -d "$d" ]] && ${SUDO} find "$d" -depth -type d -empty -delete 2>/dev/null || true
@@ -365,9 +365,9 @@ COMMON_ARGS+=("${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}")
 
 dep_args() {
     case "$1" in
-        spdlog)
-            echo "-DSPDLOG_BUILD_SHARED=${SHARED} -DSPDLOG_BUILD_PIC=ON -DSPDLOG_INSTALL=ON"
-            echo "-DSPDLOG_BUILD_EXAMPLE=OFF -DSPDLOG_BUILD_TESTS=OFF -DSPDLOG_BUILD_BENCH=OFF" ;;
+        quill)
+            # header-only: installs the headers and quillConfig.cmake
+            echo "-DQUILL_BUILD_TESTS=OFF -DQUILL_BUILD_EXAMPLES=OFF -DQUILL_BUILD_BENCHMARKS=OFF" ;;
         CLI11)
             echo "-DCLI11_BUILD_TESTS=OFF -DCLI11_BUILD_EXAMPLES=OFF -DCLI11_BUILD_DOCS=OFF -DCLI11_PRECOMPILED=OFF" ;;
         json)

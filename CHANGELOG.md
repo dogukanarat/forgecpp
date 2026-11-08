@@ -2,7 +2,7 @@
 
 forgecpp follows [semantic versioning](https://semver.org). Until 1.0 a minor
 version may break the C++ API: the library's SOVERSION is `<major>.<minor>`
-and `find_package(forgecpp 0.3)` only accepts 0.3.x. The forge.v1 protocol
+and `find_package(forgecpp 0.4)` only accepts 0.4.x. The forge.v1 protocol
 (`proto/forge/v1`) only changes compatibly; CI compares it with the API of
 the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
 
@@ -27,6 +27,39 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
   thread). A terminal without a window size no longer makes the console wait
   for a cursor-position answer. `Console::Options` gained `input_fd` /
   `output_fd`.
+- **Logging: Quill instead of spdlog**, behind forgecpp's own facade
+  (`forge/log.hpp`; Quill is header-only, `libspdlog.so` is gone). A log call
+  formats with `std::format` on the calling thread (the format string is
+  checked at compile time) and queues the text; a background thread
+  (`forge-log`) writes the terminal, the file, syslog, the history and the
+  listeners, so a log call never waits for a terminal or a disk.
+  - `forge::Logger` (`forge::log::Logger`) replaces
+    `std::shared_ptr<spdlog::logger>`: `logger()->info(...)` keeps working,
+    `logger().info(...)` too. Levels are `forge::log::Level` (`warn` is shown
+    as `warning`).
+  - `log.pattern` uses named fields instead of spdlog's flags:
+    `"[{time}] [{level}] [{logger}] {message}"`, plus `{thread}`, `{file}`,
+    `{line}`. Configuration files with a spdlog pattern (`%v`, ...) must be
+    changed.
+  - Colours: level colours on the console, in telnet (`color on|off`), in
+    `forgectl logs` / `watch` and in the web panel's log view. New key
+    `log.color` = `auto` (a terminal, `NO_COLOR` unset, not journald) |
+    `always` | `never`. Under journald each line carries its syslog priority
+    (`<4>`) instead.
+  - `FORGE_RT_TRACE..CRITICAL(logger, fmt, ...)` (`forge/log_rt.hpp`) for
+    real-time threads: the arguments are copied and formatted on the
+    background thread, the queue drops instead of blocking when full.
+  - `FORGE_INFO(...)` etc. log with the caller's file and line; they are no
+    longer compiled out by a compile-time level.
+  - `log::set_terminal_writer(fn)` replaces `set_console_sink()`;
+    `add_sink()` / `remove_sink()` are gone, use `add_listener()` (records as
+    `forge.v1.LogRecord`). Listeners run on the logging thread: call
+    `log::flush()` before relying on a record having arrived.
+  - The logging thread blocks asynchronous signals (SIGTERM, SIGINT, ...), so
+    they reach the application's signal handling even when logging starts
+    first.
+- Version 0.4.0: `libforgecpp.so.0.4`, `find_package(forgecpp 0.4)`; the C++ API
+  record is `api/forgecpp-0.4.json`.
 
 ## 0.3.0
 

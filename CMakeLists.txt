@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(forgecpp
-    VERSION 0.3.0
+    VERSION 0.4.0
     DESCRIPTION "Batteries-included C++20 framework for Linux daemons and services"
     HOMEPAGE_URL "https://github.com/dogukanarat/forgecpp"
     LANGUAGES C CXX)
@@ -63,7 +63,7 @@ endif()
 # ---------------------------------------------------------------------------
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
-find_package(spdlog          CONFIG REQUIRED)
+find_package(quill           CONFIG REQUIRED)
 find_package(CLI11           CONFIG REQUIRED)
 find_package(concurrentqueue CONFIG REQUIRED)
 find_package(nlohmann_json   CONFIG REQUIRED)
@@ -156,7 +156,7 @@ target_include_directories(forgecpp
 target_link_libraries(forgecpp
     PUBLIC
         Threads::Threads
-        spdlog::spdlog
+        quill::quill
         CLI11::CLI11
         concurrentqueue::concurrentqueue
         nlohmann_json::nlohmann_json
@@ -288,7 +288,7 @@ install(FILES
     DESTINATION ${FORGECPP_CMAKE_DIR})
 
 # pkg-config for non-CMake consumers (plain Makefiles, autotools, meson).
-set(FORGECPP_PC_REQUIRES "spdlog protobuf libzmq")
+set(FORGECPP_PC_REQUIRES "protobuf libzmq")
 if(TARGET OpenSSL::SSL)
     string(APPEND FORGECPP_PC_REQUIRES " openssl")
 endif()

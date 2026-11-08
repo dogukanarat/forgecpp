@@ -49,7 +49,7 @@ local_conf_header:
     EXTERNALSRC:pn-spectrum-analyzer = "${FORGECPP_SRC}/examples/spectrum-analyzer"
     EXTERNALSRC:pn-qam-modem = "${FORGECPP_SRC}/examples/qam-modem"
     EXTERNALSRC:pn-channel-emulator = "${FORGECPP_SRC}/examples/channel-emulator"
-    PV:pn-forgecpp = "0.3.0+ci"
+    PV:pn-forgecpp = "0.4.0+ci"
     PV:pn-forgecpp-protoc-native = "21.12+ci"
     PV:pn-radio-controller = "1.0.0+ci"
     PV:pn-spectrum-analyzer = "1.0.0+ci"

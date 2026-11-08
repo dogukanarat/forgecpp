@@ -9,7 +9,6 @@
 #include "forge/version.hpp"
 #include "forge/web.hpp"
 
-#include <spdlog/sinks/base_sink.h>
 
 #include <algorithm>
 #include <cctype>
@@ -21,46 +20,50 @@
 
 namespace forge::detail {
 
-namespace {
-
-// Keeps the latest log lines for the dashboard and streams new ones to it.
-class WebLogSink final : public spdlog::sinks::base_sink<std::mutex> {
+// Keeps the latest log lines for the dashboard and streams new ones to it
+// (a log listener: called on the logging background thread).
+class WebLog {
 public:
-    WebLogSink(std::shared_ptr<http::EventStream> stream, std::size_t history)
-        : stream_(std::move(stream)), max_(std::max<std::size_t>(history, 1)) {}
+    WebLog(std::shared_ptr<http::EventStream> stream, std::size_t history, log::Level min)
+        : stream_(std::move(stream)), max_(std::max<std::size_t>(history, 1)), min_(min) {}
+    ~WebLog() { log::remove_listener(id_); }
+
+    void start() {
+        id_ = log::add_listener([this](const v1::LogRecord& r) { on_record(r); });
+    }
 
     json history() {
         std::lock_guard lock(mutex_);
         return json(std::vector<json>(history_.begin(), history_.end()));
     }
 
-protected:
-    void sink_it_(const spdlog::details::log_msg& msg) override {
-        const auto t = std::chrono::system_clock::to_time_t(msg.time);
-        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(msg.time.time_since_epoch()).count() % 1000;
+private:
+    void on_record(const v1::LogRecord& r) {
+        const auto level = log::parse_level(r.level());
+        if (level < min_) return;
+        const auto t = static_cast<std::time_t>(r.time_unix_ns() / 1000000000);
+        const auto ms = (r.time_unix_ns() / 1000000) % 1000;
         std::tm tm{};
         ::localtime_r(&t, &tm);
-        char stamp[32];
-        std::snprintf(stamp, sizeof(stamp), "%02d:%02d:%02d.%03d", tm.tm_hour, tm.tm_min, tm.tm_sec,
-                      static_cast<int>(ms));
-        json entry{{"time", stamp},
-                   {"level", std::string(spdlog::level::to_string_view(msg.level).data(),
-                                         spdlog::level::to_string_view(msg.level).size())},
-                   {"logger", std::string(msg.logger_name.data(), msg.logger_name.size())},
-                   {"message", std::string(msg.payload.data(), msg.payload.size())}};
-        history_.push_back(entry);
-        while (history_.size() > max_) history_.pop_front();
+        json entry{{"time", std::format("{:02}:{:02}:{:02}.{:03}", tm.tm_hour, tm.tm_min, tm.tm_sec, ms)},
+                   {"level", r.level()},
+                   {"logger", r.logger()},
+                   {"message", r.message()}};
+        {
+            std::lock_guard lock(mutex_);
+            history_.push_back(entry);
+            while (history_.size() > max_) history_.pop_front();
+        }
         stream_->publish("log", entry);
     }
-    void flush_() override {}
 
-private:
     std::shared_ptr<http::EventStream> stream_;
     std::size_t max_;
+    log::Level min_;
+    std::mutex mutex_;
     std::deque<json> history_;
+    int id_ = -1;
 };
-
-}  // namespace
 
 void HttpFrontend::create(const Config& cfg) {
     if (!cfg.value<bool>("http.enabled")) return;
@@ -151,10 +154,9 @@ void HttpFrontend::create_web(const Config& cfg) {
     }
 
     if (cfg.value<bool>("web.logs")) {
-        auto sink = std::make_shared<WebLogSink>(events_, cfg.value<std::size_t>("web.log_history"));
-        sink->set_level(log::parse_level(cfg.value<std::string>("web.log_level")));
-        log_sink_ = sink;
-        log::add_sink(log_sink_);
+        weblog_ = std::make_shared<WebLog>(events_, cfg.value<std::size_t>("web.log_history"),
+                                           log::parse_level(cfg.value<std::string>("web.log_level")));
+        weblog_->start();
     }
 
     const std::string api = "/forge/api";
@@ -168,7 +170,7 @@ void HttpFrontend::create_web(const Config& cfg) {
                     {"hostname", host_name()},
                     {"pid", ::getpid()},
                     {"uptime_s", std::chrono::duration_cast<std::chrono::seconds>(app_.uptime()).count()},
-                    {"logs", log_sink_ != nullptr},
+                    {"logs", weblog_ != nullptr},
                     {"protocol", "forge.v1"},
                     {"endpoints", app_.endpoints()}};
     });
@@ -300,8 +302,7 @@ void HttpFrontend::create_web(const Config& cfg) {
         }
     });
     http_->get_json(api + "/logs", [this](const http::Request&) {
-        auto* sink = static_cast<WebLogSink*>(log_sink_.get());
-        return sink ? sink->history() : json::array();
+        return weblog_ ? weblog_->history() : json::array();
     });
     http_->get_json(api + "/alarms", [&alarms](const http::Request&) { return alarms.to_json(); });
     http_->post_json(api + "/alarms/ack", [&alarms](const http::Request& req, const json&) {
@@ -336,10 +337,7 @@ void HttpFrontend::start(const Config& cfg) {
 
 void HttpFrontend::stop() {
     if (http_) http_->stop();
-    if (log_sink_) {
-        log::remove_sink(log_sink_);
-        log_sink_.reset();
-    }
+    weblog_.reset();
 }
 
 void HttpFrontend::reset() {

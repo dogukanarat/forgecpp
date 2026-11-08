@@ -526,6 +526,7 @@ void Application::setup_logging(const Config& cfg) {
     o.level = cfg.value<std::string>("log.level");
     o.pattern = cfg.value<std::string>("log.pattern");
     o.console = cfg.value<bool>("log.console");
+    o.color = cfg.value<std::string>("log.color");
     o.file = cfg.value<std::string>("log.file");
     o.max_size_mb = cfg.value<std::size_t>("log.max_size_mb");
     o.max_files = cfg.value<std::size_t>("log.max_files");
@@ -743,8 +744,11 @@ void Application::declare_framework_config(config::Schema& s) {
     s.section("log", "Logging");
     s.string("log.level", "info", "Default level").choices({"trace", "debug", "info", "warn", "error", "critical", "off"});
     s.string("log.format", "text", "text: [log].pattern; json: one JSON object per line").choices({"text", "json"});
-    s.string("log.pattern", log::Options{}.pattern, "spdlog pattern for text output");
+    s.string("log.pattern", log::Options{}.pattern,
+             "Text lines: {time} {level} {logger} {message} {thread} {file} {line}");
     s.boolean("log.console", true, "Log to stderr");
+    s.string("log.color", "auto", "Level colours on stderr: auto = on a terminal, not with NO_COLOR or journald")
+        .choices({"auto", "always", "never"});
     s.string("log.file", "", "Rotating log file (empty = none)");
     s.integer("log.max_size_mb", 10, "Size of one log file").range(1, 100000).unit("MB");
     s.integer("log.max_files", 3, "Rotated log files kept").range(1, 1000);

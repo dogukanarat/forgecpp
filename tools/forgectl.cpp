@@ -11,6 +11,7 @@
 // Endpoint: tcp://host:port ([forge].control) or http://host:port (/forge/api/rpc).
 // FORGE_ENDPOINT and FORGE_TOKEN may be set instead of -e / --token.
 
+#include <forge/log.hpp>
 #include <forge/proto.hpp>
 #include <forge/zmq.hpp>
 
@@ -91,6 +92,17 @@ private:
     std::unique_ptr<forge::zmq::Client> zmq_;
     std::unique_ptr<httplib::Client> http_;
 };
+
+/// A log level for the terminal: in its colour when stdout is one (and NO_COLOR is not set).
+std::string level_text(const std::string& level) {
+    static const bool color = ::isatty(STDOUT_FILENO) && !std::getenv("NO_COLOR");
+    if (!color) return level;
+    try {
+        return std::string(forge::log::level_color(forge::log::parse_level(level))) + level + "\033[0m";
+    } catch (const std::exception&) {
+        return level;
+    }
+}
 
 std::string clock_time(std::int64_t unix_ns) {
     const auto t = static_cast<std::time_t>(unix_ns / 1000000000);
@@ -248,7 +260,7 @@ int main(int argc, char** argv) {
             const auto l = tr.call(r).logs();
             if (t.as_json) return print(l), 0;
             for (const auto& x : l.records()) {
-                std::cout << clock_time(x.time_unix_ns()) << " [" << x.level() << "] [" << x.logger() << "] "
+                std::cout << clock_time(x.time_unix_ns()) << " [" << level_text(x.level()) << "] [" << x.logger() << "] "
                           << x.message() << "\n";
             }
         } else if (metrics->parsed()) {
@@ -325,7 +337,7 @@ int main(int argc, char** argv) {
                     const auto when = clock_time(m.header.time_unix_ns());
                     if (m.topic == "log") {
                         const auto x = m.as<v1::LogRecord>();
-                        std::cout << when << " log   [" << x.level() << "] [" << x.logger() << "] " << x.message() << "\n";
+                        std::cout << when << " log   [" << level_text(x.level()) << "] [" << x.logger() << "] " << x.message() << "\n";
                     } else if (m.topic == "state") {
                         const auto values = m.as<v1::Values>();
                         for (const auto& [k, v] : values.values()) {

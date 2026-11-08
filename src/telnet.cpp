@@ -43,6 +43,7 @@ struct Telnet::Session {
     std::mutex write_mutex;
     std::atomic<bool> open{true};
     int log_listener = -1;
+    std::atomic<bool> color{true};  // ANSI level colours in followed log lines (`color on|off`)
     std::thread thread;
     std::chrono::steady_clock::time_point last_input = std::chrono::steady_clock::now();
 
@@ -315,6 +316,11 @@ void Telnet::serve(std::shared_ptr<Session> s) {
                 for (std::size_t i = 0; i < history.size(); ++i) s->print(std::format("{:>4}  {}\n", i + 1, history[i]));
                 continue;
             }
+            if (cmd == "color") {
+                if (args.size() > 1) s->color = args[1] == "on";
+                s->print(std::format("colours {}\n", s->color ? "on" : "off"));
+                continue;
+            }
             if (cmd == "whoami") {
                 s->print(std::format("{} ({}) from {}\n", cs.user.empty() ? "anonymous" : cs.user, to_string(cs.role),
                                      s->peer));
@@ -326,16 +332,19 @@ void Telnet::serve(std::shared_ptr<Session> s) {
                     s->log_listener = -1;
                 }
                 if (args.size() > 1 && args[1] == "on") {
-                    const auto min = args.size() > 2 ? log::parse_level(args[2]) : spdlog::level::info;
+                    const auto min = args.size() > 2 ? log::parse_level(args[2]) : log::Level::info;
                     s->log_listener = log::add_listener([weak, min](const v1::LogRecord& r) {
                         auto p = weak.lock();
                         if (!p) return;
-                        if (log::parse_level(r.level()) < min) return;
+                        const auto level = log::parse_level(r.level());
+                        if (level < min) return;
                         const auto t = static_cast<std::time_t>(r.time_unix_ns() / 1000000000);
                         std::tm tm{};
                         ::localtime_r(&t, &tm);
-                        p->print(std::format("{:02}:{:02}:{:02} [{}] [{}] {}\n", tm.tm_hour, tm.tm_min, tm.tm_sec,
-                                             r.level(), r.logger(), r.message()));
+                        const bool c = p->color;
+                        p->print(std::format("{:02}:{:02}:{:02} [{}{}{}] [{}] {}\n", tm.tm_hour, tm.tm_min, tm.tm_sec,
+                                             c ? log::level_color(level) : "", r.level(), c ? "\033[0m" : "",
+                                             r.logger(), r.message()));
                     });
                     s->print("following the log (logs off to stop)\n");
                 } else {

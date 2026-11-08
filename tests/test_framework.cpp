@@ -425,15 +425,19 @@ TEST_CASE("logs: JSON format with trace id, history and listeners") {
     o.file = file;
     o.format = "json";
     forge::log::init(o);
+    std::mutex seen_mutex;
     std::vector<std::string> seen;
-    const int id = forge::log::add_listener([&](const v1::LogRecord& r) { seen.push_back(r.message()); });
+    const int id = forge::log::add_listener([&](const v1::LogRecord& r) {  // on the logging thread
+        std::lock_guard lock(seen_mutex);
+        seen.push_back(r.message());
+    });
     const auto ctx = forge::trace::new_trace();
     {
         forge::trace::ContextScope scope(ctx);
         forge::log::get()->info("structured {}", 42);
     }
+    forge::log::flush();  // listeners run on the logging background thread
     forge::log::remove_listener(id);
-    forge::log::flush();
     std::ifstream in(file);
     std::string line;
     std::getline(in, line);

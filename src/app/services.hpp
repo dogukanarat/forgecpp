@@ -27,6 +27,8 @@
 
 namespace forge::detail {
 
+class WebLog;
+
 std::string host_name();
 bool is_loopback(const std::string& host);
 /// Caller of a console command: the local terminal (admin) or a telnet session.
@@ -176,7 +178,7 @@ private:
     Application& app_;
     std::unique_ptr<http::Server> http_;
     std::shared_ptr<http::EventStream> events_;
-    spdlog::sink_ptr log_sink_;
+    std::shared_ptr<WebLog> weblog_;  // log lines for the dashboard (web.logs)
     std::atomic<bool> alarms_dirty_{true};
     LayoutStore layouts_;
 };
