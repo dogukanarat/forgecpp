@@ -256,9 +256,13 @@ public:
         listeners_[++next_] = std::move(l);
         return next_;
     }
+    /// Returns when the listener is no longer running: what it uses may be destroyed then.
     void remove(int id) {
-        std::lock_guard lock(listener_mutex_);
-        listeners_.erase(id);
+        {
+            std::lock_guard lock(listener_mutex_);
+            listeners_.erase(id);
+        }
+        std::lock_guard wait(call_mutex_);  // recursive: a listener may remove itself
     }
 
     void write_log(quill::MacroMetadata const* metadata, std::uint64_t timestamp, std::string_view thread_id,
@@ -319,6 +323,7 @@ public:
             while (records_.size() > std::max<std::size_t>(config_.history, 1)) records_.pop_front();
         }
 
+        std::lock_guard calling(call_mutex_);
         std::map<int, Listener> ls;
         {
             std::lock_guard lock(listener_mutex_);
@@ -372,6 +377,7 @@ private:
 
     std::mutex listener_mutex_;
     std::map<int, Listener> listeners_;
+    std::recursive_mutex call_mutex_;  // held while the listeners run (remove() waits for it)
     int next_ = 0;
 };
 

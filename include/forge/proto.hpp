@@ -25,7 +25,7 @@ inline constexpr const char* kProtocol = "forge.v1";
 
 /// Set by Application at start-up: fills Header.source/host/pid.
 void set_source(std::string name);
-const std::string& source();
+std::string source();
 const std::string& host();
 
 std::int64_t now_unix_ns();

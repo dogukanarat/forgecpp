@@ -60,6 +60,18 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
     first.
 - Version 0.4.0: `libforgecpp.so.0.4`, `find_package(forgecpp 0.4)`; the C++ API
   record is `api/forgecpp-0.4.json`.
+- `forge::proto::source()` returns a copy (`std::string`) instead of a
+  reference: several applications in one process (tests) set it.
+
+### Fixed
+
+- `log::remove_listener()` returns only once the listener is no longer
+  running: the web panel's log view and the forge.v1 log events could be
+  destroyed while the logging thread was still calling them.
+- A telnet client that stops reading is disconnected after 5 s instead of
+  blocking whoever writes to it (the logging thread with `logs on`).
+- `proto::set_source()` / the forge.v1 headers raced when two applications
+  ran in one process.
 
 ## 0.3.0
 

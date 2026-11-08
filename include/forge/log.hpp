@@ -159,7 +159,9 @@ std::vector<std::pair<std::string, std::string>> logger_levels();
 std::vector<v1::LogRecord> history(std::size_t limit = 0);
 using Listener = std::function<void(const v1::LogRecord&)>;
 /// Called for every record that is logged (on the logging background thread).
+/// A listener must not wait for a thread that is removing a listener.
 int add_listener(Listener listener);
+/// Returns once the listener is not running and will not be called again.
 void remove_listener(int id);
 
 /// Where terminal lines go instead of stderr while it is set (forge::Console

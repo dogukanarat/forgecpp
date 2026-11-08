@@ -14,26 +14,35 @@ namespace forge::proto {
 namespace {
 
 struct Process {
+    std::mutex mutex;  // source: set by every Application in the process (tests run several)
     std::string source = "app";
     std::string host;
     std::uint32_t pid = 0;
 };
 
 Process& process() {
-    static Process p = [] {
-        Process x;
+    static Process p;
+    static std::once_flag once;
+    std::call_once(once, [] {
         char buf[256] = {};
-        if (::gethostname(buf, sizeof(buf) - 1) == 0) x.host = buf;
-        x.pid = static_cast<std::uint32_t>(::getpid());
-        return x;
-    }();
+        if (::gethostname(buf, sizeof(buf) - 1) == 0) p.host = buf;
+        p.pid = static_cast<std::uint32_t>(::getpid());
+    });
     return p;
 }
 
 }  // namespace
 
-void set_source(std::string name) { process().source = std::move(name); }
-const std::string& source() { return process().source; }
+void set_source(std::string name) {
+    auto& p = process();
+    std::lock_guard lock(p.mutex);
+    p.source = std::move(name);
+}
+std::string source() {
+    auto& p = process();
+    std::lock_guard lock(p.mutex);
+    return p.source;
+}
 const std::string& host() { return process().host; }
 
 std::int64_t now_unix_ns() {
@@ -44,7 +53,7 @@ std::int64_t now_unix_ns() {
 v1::Header make_header(std::string_view topic, std::string_view type) {
     v1::Header h;
     const auto& p = process();
-    h.set_source(p.source);
+    h.set_source(source());
     h.set_host(p.host);
     h.set_pid(p.pid);
     h.set_topic(std::string(topic));

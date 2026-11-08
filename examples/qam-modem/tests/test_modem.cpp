@@ -170,8 +170,11 @@ TEST_CASE("qam-modem: echo through radio-controller (simulated AD9361, TX1 -> sp
     const auto kbps = get(q, "test_kbps").get<double>();
     MESSAGE("test packets: " << kbps << " kbit/s, lost " << get(q, "test_lost") << ", received " << get(q, "test_ok"));
     CHECK(get(q, "test_bad") == 0);
-    CHECK(get(q, "test_ok").get<double>() > 100);
-    if (forge::testing::timeout_scale() == 1) CHECK(kbps > 2500);
+    CHECK(get(q, "test_ok").get<double>() > 0);
+    if (forge::testing::timeout_scale() == 1) {
+        CHECK(get(q, "test_ok").get<double>() > 100);
+        CHECK(kbps > 2500);
+    }
 
     // The spectrum analyzer's tap (RX2) sees the same signal through the splitter.
     CHECK(get(r, "tap_blocks").get<double>() >= 0);

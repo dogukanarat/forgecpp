@@ -17,6 +17,7 @@
 #include <poll.h>
 #include <stdexcept>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 namespace forge {
@@ -200,6 +201,10 @@ void Telnet::accept_loop() {
         if (fd < 0) continue;
         const int one = 1;
         ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+        // A client that stops reading is disconnected instead of blocking whoever
+        // writes to it (the logging thread when it follows the log).
+        const timeval send_timeout{5, 0};
+        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout));
         char ip[INET_ADDRSTRLEN] = {};
         ::inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
         auto s = std::make_shared<Session>();
