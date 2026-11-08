@@ -21,10 +21,17 @@ the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
   Linux and 88 on Zephyr). `http_status()` gives the HTTP answer for the web.
 - Wire compatibility tests: `-DFORGE_ZEPHYRUS_DIR=<zephyrus>` builds the C code
   of zephyrus on the host and compares it with forgecpp on the same input.
-- `docs/CODING_STANDARDS.md`: the rules of forgecpp, from the rules of zephyrus.
+- `docs/CODING_STANDARDS.md`: the rules of forgecpp, from the principles of
+  zephyrus, with the naming of forgecpp.
+- `tools/check-layers.py` (test `forgecpp_layers`): each module uses only
+  modules of its own level or lower (core, services, link, front ends,
+  application).
 
 ### Changed
 
+- `zmq::serve_control()` and `zmq::serve_application()` are declared in
+  `forge/control.hpp` (was `forge/zmq.hpp`): the transport no longer depends
+  on the application. Code that includes `forge/forge.hpp` needs no change.
 - **C++20** is required (was C++17): the library, its exported CMake target
   (`cxx_std_20`), `forge_add_app()`, pkg-config (`-std=c++20`) and the
   examples. Supported toolchains: GCC ≥ 13 or Clang ≥ 17 with libstdc++ 13

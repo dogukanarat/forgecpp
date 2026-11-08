@@ -22,6 +22,12 @@ forge_add_test(forgecpp_framework_tests SOURCES test_framework.cpp test_services
 # The services are internal (src/app/services.hpp).
 target_include_directories(forgecpp_framework_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 
+# The modules use only modules of their own level or lower (docs/CODING_STANDARDS.md, F-011).
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME forgecpp_layers COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tools/check-layers.py")
+endif()
+
 # Wire compatibility with zephyrus (the microcontroller side of forgecpp):
 # -DFORGE_ZEPHYRUS_DIR=<a zephyrus checkout> builds zephyrus's own C code on
 # the host and compares it with forgecpp on the same input.

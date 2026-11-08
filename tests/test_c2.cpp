@@ -16,7 +16,7 @@ using forge::Status;
 
 namespace {
 
-Status c2_err(int code) { return Status::error(forge::module_id::kC2, code); }
+Status c2_err(int code) { return Status::error(forge::module_id::c2, code); }
 
 std::size_t build(std::uint8_t flags, std::uint16_t cmd_id, std::uint16_t seq, std::span<const std::uint8_t> payload,
                   std::span<std::uint8_t> out) {
@@ -30,9 +30,9 @@ std::size_t build(std::uint8_t flags, std::uint16_t cmd_id, std::uint16_t seq, s
 
 // --- header ----------------------------------------------------------------------------
 TEST_CASE("c2: a built header carries the constants") {
-    const auto hdr = c2::make_header(c2::flag::kReq, 0x1234, 5, 2);
-    CHECK(hdr.version == c2::kVersion);
-    CHECK(hdr.flags == c2::flag::kReq);
+    const auto hdr = c2::make_header(c2::flag::req, 0x1234, 5, 2);
+    CHECK(hdr.version == c2::version);
+    CHECK(hdr.flags == c2::flag::req);
     CHECK(hdr.cmd_id == 0x1234);
     CHECK(hdr.seq == 5);
     CHECK(hdr.length == 2);
@@ -47,13 +47,13 @@ TEST_CASE("c2: the wire bytes are the ones both ends agree on") {
         0x01, 0x00,  // length
     };
     std::array<std::uint8_t, 8> out{};
-    REQUIRE(c2::encode_header(c2::make_header(c2::flag::kReq | c2::flag::kAck, 0x1234, 0xABCD, 0x0100), out).ok());
+    REQUIRE(c2::encode_header(c2::make_header(c2::flag::req | c2::flag::ack, 0x1234, 0xABCD, 0x0100), out).ok());
     CHECK(out == expected);
 }
 
 TEST_CASE("c2: a header survives a roundtrip") {
-    const auto sent = c2::make_header(c2::flag::kRsp, 0xBEEF, 0x0102, 0x0304);
-    std::array<std::uint8_t, c2::kHeaderSize> wire{};
+    const auto sent = c2::make_header(c2::flag::rsp, 0xBEEF, 0x0102, 0x0304);
+    std::array<std::uint8_t, c2::header_size> wire{};
     REQUIRE(c2::encode_header(sent, wire).ok());
     c2::Header received;
     REQUIRE(c2::decode_header(wire, received).ok());
@@ -61,25 +61,25 @@ TEST_CASE("c2: a header survives a roundtrip") {
 }
 
 TEST_CASE("c2: encode needs room for the whole header") {
-    std::array<std::uint8_t, c2::kHeaderSize> out{};
+    std::array<std::uint8_t, c2::header_size> out{};
     const auto hdr = c2::make_header(0, 0, 0, 0);
     CHECK(c2::encode_header(hdr, out).ok());
-    CHECK(c2::encode_header(hdr, std::span(out).first(c2::kHeaderSize - 1)) == c2_err(EOVERFLOW));
+    CHECK(c2::encode_header(hdr, std::span(out).first(c2::header_size - 1)) == c2_err(EOVERFLOW));
 }
 
 TEST_CASE("c2: a short header is refused") {
-    std::array<std::uint8_t, c2::kHeaderSize> wire{};
+    std::array<std::uint8_t, c2::header_size> wire{};
     c2::Header hdr;
-    CHECK(c2::decode_header(std::span(wire).first(c2::kHeaderSize - 1), hdr) == c2_err(EMSGSIZE));
+    CHECK(c2::decode_header(std::span(wire).first(c2::header_size - 1), hdr) == c2_err(EMSGSIZE));
     CHECK(c2::decode_header({}, hdr) == c2_err(EMSGSIZE));
 }
 
 TEST_CASE("c2: an unknown version is refused") {
-    std::array<std::uint8_t, c2::kHeaderSize> wire{};
+    std::array<std::uint8_t, c2::header_size> wire{};
     REQUIRE(c2::encode_header(c2::make_header(0, 0, 0, 0), wire).ok());
     // A field that moved between versions decodes to wrong data, not to an
     // error: the version is checked before any field is used.
-    wire[0] = c2::kVersion + 1;
+    wire[0] = c2::version + 1;
     c2::Header hdr;
     hdr.cmd_id = 77;
     CHECK(c2::decode_header(wire, hdr) == c2_err(EPROTONOSUPPORT));
@@ -90,8 +90,8 @@ TEST_CASE("c2: an unknown version is refused") {
 TEST_CASE("c2: a message survives a roundtrip") {
     const std::array<std::uint8_t, 3> payload{0xAA, 0xBB, 0xCC};
     std::array<std::uint8_t, 32> wire{};
-    const auto len = build(c2::flag::kReq, 0x0010, 7, payload, wire);
-    CHECK(len == c2::kHeaderSize + payload.size());
+    const auto len = build(c2::flag::req, 0x0010, 7, payload, wire);
+    CHECK(len == c2::header_size + payload.size());
 
     c2::Message m;
     REQUIRE(c2::decode_message(std::span(wire).first(len), m).ok());
@@ -100,13 +100,13 @@ TEST_CASE("c2: a message survives a roundtrip") {
     CHECK(m.header.length == payload.size());
     REQUIRE(m.payload.size() == payload.size());
     CHECK(std::memcmp(m.payload.data(), payload.data(), payload.size()) == 0);
-    CHECK(m.payload.data() == wire.data() + c2::kHeaderSize);  // a view, not a copy
+    CHECK(m.payload.data() == wire.data() + c2::header_size);  // a view, not a copy
 }
 
 TEST_CASE("c2: a message with no payload has none to point at") {
     std::array<std::uint8_t, 32> wire{};
-    const auto len = build(c2::flag::kAck, 0x0011, 8, {}, wire);
-    CHECK(len == c2::kHeaderSize);
+    const auto len = build(c2::flag::ack, 0x0011, 8, {}, wire);
+    CHECK(len == c2::header_size);
     c2::Message m;
     REQUIRE(c2::decode_message(std::span(wire).first(len), m).ok());
     CHECK(m.header.length == 0);
@@ -116,7 +116,7 @@ TEST_CASE("c2: a message with no payload has none to point at") {
 TEST_CASE("c2: a declared length that is not what arrived is refused") {
     const std::array<std::uint8_t, 3> payload{0xAA, 0xBB, 0xCC};
     std::array<std::uint8_t, 32> wire{};
-    const auto len = build(c2::flag::kReq, 0x0010, 7, payload, wire);
+    const auto len = build(c2::flag::req, 0x0010, 7, payload, wire);
     c2::Message m;
     // One byte missing: a cut payload must not pass as a whole one.
     CHECK(c2::decode_message(std::span(wire).first(len - 1), m) == c2_err(EMSGSIZE));
@@ -127,8 +127,8 @@ TEST_CASE("c2: a declared length that is not what arrived is refused") {
 
 TEST_CASE("c2: encode needs room for the payload too") {
     const std::array<std::uint8_t, 3> payload{0xAA, 0xBB, 0xCC};
-    std::array<std::uint8_t, c2::kHeaderSize + 3> wire{};
-    const auto hdr = c2::make_header(c2::flag::kReq, 0, 0, 3);
+    std::array<std::uint8_t, c2::header_size + 3> wire{};
+    const auto hdr = c2::make_header(c2::flag::req, 0, 0, 3);
     std::size_t len = 0;
     REQUIRE(c2::encode_message(hdr, payload, wire, len).ok());
     CHECK(len == wire.size());
@@ -138,9 +138,9 @@ TEST_CASE("c2: encode needs room for the payload too") {
 TEST_CASE("c2: a declared payload needs bytes to take it from") {
     std::array<std::uint8_t, 32> wire{};
     std::size_t len = 0;
-    CHECK(c2::encode_message(c2::make_header(c2::flag::kReq, 0, 0, 4), {}, wire, len) == c2_err(EINVAL));
+    CHECK(c2::encode_message(c2::make_header(c2::flag::req, 0, 0, 4), {}, wire, len) == c2_err(EINVAL));
     const std::array<std::uint8_t, 2> two{1, 2};
-    CHECK(c2::encode_message(c2::make_header(c2::flag::kReq, 0, 0, 4), two, wire, len) == c2_err(EINVAL));
+    CHECK(c2::encode_message(c2::make_header(c2::flag::req, 0, 0, 4), two, wire, len) == c2_err(EINVAL));
 }
 
 TEST_CASE("c2: a payload already in place is not disturbed") {
@@ -148,44 +148,44 @@ TEST_CASE("c2: a payload already in place is not disturbed") {
     // into the same buffer: the copy overlaps itself exactly.
     std::array<std::uint8_t, 32> wire{};
     const std::array<std::uint8_t, 4> payload{0x01, 0x02, 0x03, 0x04};
-    std::memcpy(&wire[c2::kHeaderSize], payload.data(), payload.size());
+    std::memcpy(&wire[c2::header_size], payload.data(), payload.size());
     std::size_t len = 0;
-    REQUIRE(c2::encode_message(c2::make_header(c2::flag::kRsp, 1, 2, 4), std::span(wire).subspan(c2::kHeaderSize, 4),
+    REQUIRE(c2::encode_message(c2::make_header(c2::flag::rsp, 1, 2, 4), std::span(wire).subspan(c2::header_size, 4),
                                wire, len)
                 .ok());
-    CHECK(std::memcmp(&wire[c2::kHeaderSize], payload.data(), payload.size()) == 0);
+    CHECK(std::memcmp(&wire[c2::header_size], payload.data(), payload.size()) == 0);
 }
 
 TEST_CASE("c2: the request from the design example, byte for byte") {
     // radio set_frequency (id 0x0402): channel = rx1, frequency_hz = 2100000000
     const std::vector<std::uint8_t> payload{0x08, 0x01, 0x10, 0x80, 0xEA, 0xAD, 0xE9, 0x07};
     std::array<std::uint8_t, 32> wire{};
-    const auto len = build(c2::flag::kReq, 0x0402, 42, payload, wire);
+    const auto len = build(c2::flag::req, 0x0402, 42, payload, wire);
     const std::vector<std::uint8_t> expected{0x01, 0x01, 0x04, 0x02, 0x00, 0x2A, 0x00, 0x08,
                                              0x08, 0x01, 0x10, 0x80, 0xEA, 0xAD, 0xE9, 0x07};
     CHECK(std::vector<std::uint8_t>(wire.begin(), wire.begin() + static_cast<std::ptrdiff_t>(len)) == expected);
 }
 
 TEST_CASE("c2: the kind of a message comes from its flags") {
-    CHECK(c2::kind_of(c2::flag::kReq) == c2::Kind::Request);
-    CHECK(c2::kind_of(c2::flag::kReq | c2::flag::kAck) == c2::Kind::Request);  // a request wins
-    CHECK(c2::kind_of(c2::flag::kRsp) == c2::Kind::Reply);
-    CHECK(c2::kind_of(c2::flag::kRsp | c2::flag::kMore) == c2::Kind::Reply);
-    CHECK(c2::kind_of(c2::flag::kAck) == c2::Kind::Ack);
-    CHECK(c2::kind_of(c2::flag::kNack) == c2::Kind::Nack);
-    CHECK(c2::kind_of(c2::flag::kPush) == c2::Kind::Push);
-    CHECK(c2::kind_of(0) == c2::Kind::Unknown);
-    CHECK(c2::kind_of(c2::flag::kProto) == c2::Kind::Unknown);
+    CHECK(c2::kind_of(c2::flag::req) == c2::Kind::request);
+    CHECK(c2::kind_of(c2::flag::req | c2::flag::ack) == c2::Kind::request);  // a request wins
+    CHECK(c2::kind_of(c2::flag::rsp) == c2::Kind::reply);
+    CHECK(c2::kind_of(c2::flag::rsp | c2::flag::more) == c2::Kind::reply);
+    CHECK(c2::kind_of(c2::flag::ack) == c2::Kind::ack);
+    CHECK(c2::kind_of(c2::flag::nack) == c2::Kind::nack);
+    CHECK(c2::kind_of(c2::flag::push) == c2::Kind::push);
+    CHECK(c2::kind_of(0) == c2::Kind::unknown);
+    CHECK(c2::kind_of(c2::flag::proto) == c2::Kind::unknown);
 }
 
 // --- rendering -------------------------------------------------------------------------
 TEST_CASE("c2: flags render as a list") {
-    CHECK(c2::flags_to_string(c2::flag::kReq) == "req");
-    CHECK(c2::flags_to_string(c2::flag::kReq | c2::flag::kAck) == "req|ack");
+    CHECK(c2::flags_to_string(c2::flag::req) == "req");
+    CHECK(c2::flags_to_string(c2::flag::req | c2::flag::ack) == "req|ack");
     CHECK(c2::flags_to_string(0) == "none");
     // A flag this version has no name for is shown, not dropped.
     CHECK(c2::flags_to_string(0x80) == "0x80");
-    CHECK(c2::flags_to_string(c2::flag::kPush | 0x80) == "push|0x80");
+    CHECK(c2::flags_to_string(c2::flag::push | 0x80) == "push|0x80");
     CHECK(c2::flags_to_string(0xFF) == "req|rsp|push|ack|nack|proto|more|0x80");
     CHECK(c2::flags_to_string(0xFF).size() < 40);  // zephyrus's C2_FLAGS_STR_LEN
 }
@@ -197,14 +197,14 @@ TEST_CASE("status: the bit layout of zephyrus") {
     CHECK(Status().to_string() == "ok");
 
     // module 0x0100 (forge c2), EINVAL (22): 1 | 0x0100 | 0x0016
-    const auto s = Status::error(forge::module_id::kC2, EINVAL);
+    const auto s = Status::error(forge::module_id::c2, EINVAL);
     CHECK_FALSE(s.ok());
     CHECK(static_cast<std::uint32_t>(s.wire()) == 0x81000016U);
     CHECK(s.wire() < 0);  // always negative
-    CHECK(s.module() == forge::module_id::kC2);
+    CHECK(s.module() == forge::module_id::c2);
     CHECK(s.wire_code() == 22);
     CHECK(s.errno_code() == EINVAL);
-    CHECK(Status::error(forge::module_id::kC2, -EINVAL) == s);  // the sign does not matter
+    CHECK(Status::error(forge::module_id::c2, -EINVAL) == s);  // the sign does not matter
 
     // Module 0, code 0 is still an error (bit 31).
     CHECK_FALSE(Status::wire_error(0, 0).ok());
@@ -217,7 +217,7 @@ TEST_CASE("status: a plain negative errno has no origin") {
     // Zephyr and libc return -EINVAL; sign extension sets every module bit.
     const auto s = Status::from_wire(-22);
     CHECK_FALSE(s.ok());
-    CHECK(s.module() == forge::module_id::kUnknown);
+    CHECK(s.module() == forge::module_id::unknown);
     CHECK(s.wire_code() == 22);
     CHECK(s.errno_code() == EINVAL);
 }
@@ -267,16 +267,16 @@ TEST_CASE("status: a NACK carries the status, big-endian") {
 }
 
 TEST_CASE("status: text and HTTP status") {
-    const auto s = Status::error(forge::module_id::kC2, EMSGSIZE, "declared payload length is not what arrived");
+    const auto s = Status::error(forge::module_id::c2, EMSGSIZE, "declared payload length is not what arrived");
     CHECK(s.to_string() == "c2: declared payload length is not what arrived (EMSGSIZE)");
     CHECK(s.http_status() == 400);
-    CHECK(Status::error(forge::module_id::kC2, ENOENT).to_string().find("c2: ") == 0);
-    CHECK(Status::error(forge::module_id::kC2, ENOENT).to_string().find("(ENOENT)") != std::string::npos);
+    CHECK(Status::error(forge::module_id::c2, ENOENT).to_string().find("c2: ") == 0);
+    CHECK(Status::error(forge::module_id::c2, ENOENT).to_string().find("(ENOENT)") != std::string::npos);
     CHECK(Status::wire_error(0x0042, 22).to_string().find("module 0x0042: ") == 0);
     forge::name_module(0x0042, "power");
     CHECK(Status::wire_error(0x0042, 22).to_string().find("power: ") == 0);
     CHECK(Status::from_wire(-2).to_string().find("(ENOENT)") != std::string::npos);  // no origin, no prefix
-    CHECK(Status::wire_error(forge::module_id::kNrf, 515).to_string() == "nrf: modem error (code 515)");
+    CHECK(Status::wire_error(forge::module_id::nrf, 515).to_string() == "nrf: modem error (code 515)");
 
     CHECK(Status().http_status() == 200);
     CHECK(Status::error(1, EINVAL).http_status() == 400);

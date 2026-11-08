@@ -131,26 +131,26 @@ TEST_CASE("zephyrus compat: flag text") {
 }
 
 TEST_CASE("zephyrus compat: the constants") {
-    CHECK(c2::kVersion == C2_VERSION);
-    CHECK(c2::kHeaderSize == C2_HEADER_SIZE);
-    CHECK(c2::kPayloadMax == C2_PAYLOAD_MAX);
-    CHECK(c2::kNackPayloadSize == C2_NACK_PAYLOAD_SIZE);
-    CHECK(c2::flag::kReq == C2_FLAG_REQ);
-    CHECK(c2::flag::kRsp == C2_FLAG_RSP);
-    CHECK(c2::flag::kPush == C2_FLAG_PUSH);
-    CHECK(c2::flag::kAck == C2_FLAG_ACK);
-    CHECK(c2::flag::kNack == C2_FLAG_NACK);
-    CHECK(c2::flag::kProto == C2_FLAG_PROTO);
-    CHECK(c2::flag::kMore == C2_FLAG_MORE);
-    CHECK(forge::module_id::kUnknown == MODULE_ID_UNKNOWN);
-    CHECK(forge::module_id::kApp == MODULE_ID_APP);
-    CHECK(forge::module_id::kExternalBase == MODULE_ID_EXTERNAL_BASE);
-    CHECK(forge::module_id::kNrf == MODULE_ID_NRF);
-    CHECK(forge::module_id::kZephyr == MODULE_ID_ZEPHYR);
-    CHECK(forge::module_id::kRaw == MODULE_ID_RAW);
-    CHECK(forge::module_id::kMax == MODULE_ID_MAX);
+    CHECK(c2::version == C2_VERSION);
+    CHECK(c2::header_size == C2_HEADER_SIZE);
+    CHECK(c2::payload_max == C2_PAYLOAD_MAX);
+    CHECK(c2::nack_payload_size == C2_NACK_PAYLOAD_SIZE);
+    CHECK(c2::flag::req == C2_FLAG_REQ);
+    CHECK(c2::flag::rsp == C2_FLAG_RSP);
+    CHECK(c2::flag::push == C2_FLAG_PUSH);
+    CHECK(c2::flag::ack == C2_FLAG_ACK);
+    CHECK(c2::flag::nack == C2_FLAG_NACK);
+    CHECK(c2::flag::proto == C2_FLAG_PROTO);
+    CHECK(c2::flag::more == C2_FLAG_MORE);
+    CHECK(forge::module_id::unknown == MODULE_ID_UNKNOWN);
+    CHECK(forge::module_id::app == MODULE_ID_APP);
+    CHECK(forge::module_id::external_base == MODULE_ID_EXTERNAL_BASE);
+    CHECK(forge::module_id::nrf == MODULE_ID_NRF);
+    CHECK(forge::module_id::zephyr == MODULE_ID_ZEPHYR);
+    CHECK(forge::module_id::raw == MODULE_ID_RAW);
+    CHECK(forge::module_id::max == MODULE_ID_MAX);
     // forgecpp's own module ids are outside the range of zephyrus's modules.
-    CHECK(forge::module_id::kForgeBase >= MODULE_ID_EXTERNAL_BASE);
+    CHECK(forge::module_id::forge_base >= MODULE_ID_EXTERNAL_BASE);
 }
 
 TEST_CASE("zephyrus compat: status encoding") {

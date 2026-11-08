@@ -61,11 +61,11 @@ std::mutex& names_mutex() {
     return m;
 }
 std::map<std::uint16_t, std::string>& names() {
-    static std::map<std::uint16_t, std::string> n{{module_id::kApp, "app"},
-                                                  {module_id::kC2, "c2"},
-                                                  {module_id::kTmtc, "tmtc"},
-                                                  {module_id::kNrf, "nrf"},
-                                                  {module_id::kZephyr, "zephyr"}};
+    static std::map<std::uint16_t, std::string> n{{module_id::app, "app"},
+                                                  {module_id::c2, "c2"},
+                                                  {module_id::tmtc, "tmtc"},
+                                                  {module_id::nrf, "nrf"},
+                                                  {module_id::zephyr, "zephyr"}};
     return n;
 }
 
@@ -92,7 +92,7 @@ Status Status::error(std::uint16_t module, int errno_code, const char* message) 
 
 int Status::errno_code() const {
     if (ok()) return 0;
-    if (module() == module_id::kNrf) return EIO;
+    if (module() == module_id::nrf) return EIO;
     return errno_from_wire(wire_code());
 }
 
@@ -100,7 +100,7 @@ std::string Status::to_string() const {
     if (ok()) return "ok";
     std::string origin;
     const auto id = module();
-    if (id != module_id::kUnknown) {
+    if (id != module_id::unknown) {
         std::lock_guard lock(names_mutex());
         const auto it = names().find(id);
         if (it != names().end()) {
@@ -112,7 +112,7 @@ std::string Status::to_string() const {
         }
     }
     std::string reason;
-    if (id == module_id::kNrf) {
+    if (id == module_id::nrf) {
         reason = message_ ? message_ : "modem error";
         reason += " (code " + std::to_string(wire_code()) + ")";
     } else if (const auto* e = by_wire(wire_code())) {
@@ -127,7 +127,7 @@ std::string Status::to_string() const {
 
 int Status::http_status() const {
     if (ok()) return 200;
-    if (module() == module_id::kNrf) return 502;  // the modem refused: a gateway's answer
+    if (module() == module_id::nrf) return 502;  // the modem refused: a gateway's answer
     switch (wire_code()) {
         case 22:   // EINVAL
         case 34:   // ERANGE

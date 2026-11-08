@@ -18,7 +18,7 @@
 // use Zephyr's numbers (those of newlib and picolibc). Status converts: write
 // the host's names (EINVAL, ENOSYS, ...) and read them back with errno().
 //
-//   if (hz > max) return forge::Status::error(forge::module_id::kApp, ERANGE, "frequency too high");
+//   if (hz > max) return forge::Status::error(forge::module_id::app, ERANGE, "frequency too high");
 //   std::int32_t on_the_wire = status.wire();
 //   auto s = forge::Status::from_wire(on_the_wire);   // s.errno_code() == ERANGE
 //
@@ -34,16 +34,16 @@ namespace forge {
 
 /// Module ids (15 bits). The reserved ones and the application's are those of zephyrus.
 namespace module_id {
-inline constexpr std::uint16_t kUnknown = 0;          ///< no origin: a plain errno
-inline constexpr std::uint16_t kApp = 64;             ///< application code (zephyrus MODULE_ID_APP)
-inline constexpr std::uint16_t kExternalBase = 128;  ///< first id for modules outside zephyrus
-inline constexpr std::uint16_t kForgeBase = 0x0100;  ///< forgecpp's own modules
-inline constexpr std::uint16_t kC2 = kForgeBase + 0;
-inline constexpr std::uint16_t kTmtc = kForgeBase + 1;
-inline constexpr std::uint16_t kNrf = 0x7FFD;         ///< Nordic modem library: codes are not errnos
-inline constexpr std::uint16_t kZephyr = 0x7FFE;      ///< Zephyr kernel, drivers, libc
-inline constexpr std::uint16_t kRaw = 0x7FFF;         ///< reserved: a sign-extended plain errno
-inline constexpr std::uint16_t kMax = kNrf - 1;        ///< largest id that can be assigned
+inline constexpr std::uint16_t unknown = 0;          ///< no origin: a plain errno
+inline constexpr std::uint16_t app = 64;             ///< application code (zephyrus MODULE_ID_APP)
+inline constexpr std::uint16_t external_base = 128;  ///< first id for modules outside zephyrus
+inline constexpr std::uint16_t forge_base = 0x0100;  ///< forgecpp's own modules
+inline constexpr std::uint16_t c2 = forge_base + 0;
+inline constexpr std::uint16_t tmtc = forge_base + 1;
+inline constexpr std::uint16_t nrf = 0x7FFD;         ///< Nordic modem library: codes are not errnos
+inline constexpr std::uint16_t zephyr = 0x7FFE;      ///< Zephyr kernel, drivers, libc
+inline constexpr std::uint16_t raw = 0x7FFF;         ///< reserved: a sign-extended plain errno
+inline constexpr std::uint16_t max = nrf - 1;        ///< largest id that can be assigned
 }  // namespace module_id
 
 class Status {
@@ -51,11 +51,11 @@ public:
     /// Success.
     constexpr Status() = default;
 
-    /// An error of `module` (0 .. module_id::kMax) with a host errno code
+    /// An error of `module` (0 .. module_id::max) with a host errno code
     /// (EINVAL and -EINVAL are the same). `message`: see the file comment.
     static Status error(std::uint16_t module, int errno_code, const char* message = nullptr);
     /// An error whose code is already in wire (Zephyr) numbering, or is not an
-    /// errno at all (module_id::kNrf).
+    /// errno at all (module_id::nrf).
     static constexpr Status wire_error(std::uint16_t module, std::uint16_t wire_code,
                                        const char* message = nullptr) {
         Status s;
@@ -67,7 +67,7 @@ public:
     }
     /// The int32_t of zephyrus, as a function returns it or a NACK carries it.
     /// A plain negative errno (from code that does not tag its errors) is read
-    /// as module_id::kUnknown; zero and positive values are success.
+    /// as module_id::unknown; zero and positive values are success.
     static constexpr Status from_wire(std::int32_t value) {
         Status s;
         s.value_ = value;
@@ -77,9 +77,9 @@ public:
     constexpr bool ok() const { return value_ >= 0; }
     /// The value on the wire (0 for success).
     constexpr std::int32_t wire() const { return ok() ? 0 : value_; }
-    /// The origin; module_id::kUnknown for success and for plain errnos.
+    /// The origin; module_id::unknown for success and for plain errnos.
     constexpr std::uint16_t module() const {
-        if (ok() || is_raw()) return module_id::kUnknown;
+        if (ok() || is_raw()) return module_id::unknown;
         return static_cast<std::uint16_t>((static_cast<std::uint32_t>(value_) & 0x7FFF0000U) >> 16);
     }
     /// The code in wire (Zephyr) numbering; 0 for success.
@@ -92,7 +92,7 @@ public:
         return static_cast<std::uint16_t>(static_cast<std::uint32_t>(value_) & 0xFFFFU);
     }
     /// The code as a host errno (EINVAL, ENOSYS, ...); 0 for success; EIO for a
-    /// code this host has no errno for, and for module_id::kNrf (not an errno).
+    /// code this host has no errno for, and for module_id::nrf (not an errno).
     int errno_code() const;
     /// Message given when the error was made, or nullptr.
     const char* message() const { return message_; }
@@ -107,7 +107,7 @@ public:
 
 private:
     constexpr bool is_raw() const {
-        return ((static_cast<std::uint32_t>(value_) & 0x7FFF0000U) >> 16) == module_id::kRaw;
+        return ((static_cast<std::uint32_t>(value_) & 0x7FFF0000U) >> 16) == module_id::raw;
     }
 
     std::int32_t value_ = 0;

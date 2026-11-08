@@ -1,7 +1,5 @@
 #include "forge/zmq.hpp"
 
-#include "forge/application.hpp"
-#include "forge/control.hpp"
 #include "forge/log.hpp"
 #include "forge/proto.hpp"
 #include "forge/trace.hpp"
@@ -650,31 +648,6 @@ json Client::request_json(const json& req) {
     auto reply = json::parse(answer, nullptr, false);
     if (reply.is_discarded()) throw Error("invalid JSON reply from " + endpoint_);
     return reply;
-}
-
-// ---------------------------------------------------------------------------
-// serve_control
-
-std::unique_ptr<Server> serve_control(ControlService& service, const std::string& endpoint, int workers) {
-    ServerOptions options;
-    options.workers = workers;
-    options.thread_name = "forge-control";
-    return std::make_unique<Server>(endpoint, [&service](std::string_view request) -> std::string {
-        Caller transport;
-        transport.channel = "zmq";
-        // Older JSON commands: a JSON object frame.
-        if (!request.empty() && request.front() == '{') {
-            auto j = json::parse(request, nullptr, false);
-            json reply = j.is_object() ? service.handle_legacy_json(j, transport)
-                                       : json{{"ok", false}, {"error", "request must be a JSON object"}, {"status", 400}};
-            return reply.dump(-1, ' ', false, json::error_handler_t::replace);
-        }
-        return service.handle_bytes(request, transport);
-    }, options);
-}
-
-std::unique_ptr<Server> serve_application(Application& app, const std::string& endpoint) {
-    return serve_control(app.control(), endpoint);
 }
 
 }  // namespace forge::zmq

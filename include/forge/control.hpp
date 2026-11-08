@@ -15,10 +15,12 @@
 #include "forge/error.hpp"
 #include "forge/json.hpp"
 #include "forge/proto.hpp"
+#include "forge/zmq.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -84,5 +86,18 @@ private:
     std::mutex legacy_mutex_;
     std::set<std::string> legacy_clients_;  ///< already warned about
 };
+
+namespace zmq {
+
+/// Serve a ControlService (REQ clients): forge.v1 Request frames, and the
+/// older JSON commands (a frame starting with '{'). Applications do this
+/// themselves for [forge].control; call it for additional endpoints.
+/// `workers` requests are handled at the same time (ControlService is thread-safe).
+std::unique_ptr<Server> serve_control(ControlService& service, const std::string& endpoint, int workers = 2);
+
+/// Compatibility: serve_control(app.control(), endpoint).
+std::unique_ptr<Server> serve_application(Application& app, const std::string& endpoint);
+
+}  // namespace zmq
 
 }  // namespace forge
