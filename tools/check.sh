@@ -35,7 +35,9 @@ while [[ $# -gt 0 ]]; do
         --asan)         do_asan=1 ;;
         --tsan)         tsan_prefix="${2:?--tsan needs the prefix of TSan-built libraries}"; shift ;;
         --install-hook) git config core.hooksPath tools/git-hooks
+                        git config blame.ignoreRevsFile .git-blame-ignore-revs
                         echo "pre-commit hook on (tools/git-hooks/pre-commit); git commit --no-verify skips it"
+                        echo "git blame skips the formatting commits (.git-blame-ignore-revs)"
                         exit 0 ;;
         -h|--help)      sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)              echo "check: unknown option $1 (--help)" >&2; exit 2 ;;
