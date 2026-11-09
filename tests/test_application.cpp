@@ -115,7 +115,7 @@ TEST_CASE("application: full lifecycle with config, overrides, timers, events an
     CHECK(app.pool().get_thread_count() == 2);
 
     app.reload();
-    CHECK(forge::testing::wait_until([&] { return app.call([&] { return app.reloaded; }).get() == 1; }));
+    CHECK(forge::testing::wait_until([&] { return app.call([&] { return app.reloaded.load(); }).get() == 1; }));
 
     app.stop(3);
     runner.join();
