@@ -13,6 +13,7 @@ is compiled and tested with forgecpp, so what you read here works.
 6. [Streams and Python clients](06-streams.md)
 7. [Deploying: systemd, forge-hub, Yocto](07-deploy.md)
 
-Reference: [the README's framework tour](../../README.md#framework-tour),
+Reference: [the application and its services](../application.md), [the web panel](../web.md),
+[commands and streams](../messaging.md),
 [threads](../threading.md), and the API reference (`cmake --build build
 --target forgecpp_docs`, then `build/docs/html/index.html`).

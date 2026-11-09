@@ -48,5 +48,5 @@ pump> set speed_rpm 1800                          # the console, same rules
 
 The panel shows each group as a card you can move and resize; your own pages
 use the same controls with attributes (`<input data-forge-bind="speed_rpm">`,
-see the README's web UI section). Next: [configuration, timers and
+see [the web panel](../web.md)). Next: [configuration, timers and
 alarms](03-config-timers-alarms.md).

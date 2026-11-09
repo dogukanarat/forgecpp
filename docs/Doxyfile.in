@@ -5,6 +5,12 @@ PROJECT_BRIEF          = "Batteries-included C++20 framework for Linux daemons"
 OUTPUT_DIRECTORY       = @FORGE_DOCS_OUT@
 INPUT                  = @PROJECT_SOURCE_DIR@/docs/api-mainpage.md \
                          @PROJECT_SOURCE_DIR@/include/forge \
+                         @PROJECT_SOURCE_DIR@/docs/application.md \
+                         @PROJECT_SOURCE_DIR@/docs/web.md \
+                         @PROJECT_SOURCE_DIR@/docs/messaging.md \
+                         @PROJECT_SOURCE_DIR@/docs/commands.md \
+                         @PROJECT_SOURCE_DIR@/docs/protocol.md \
+                         @PROJECT_SOURCE_DIR@/docs/operations.md \
                          @PROJECT_SOURCE_DIR@/docs/threading.md \
                          @PROJECT_SOURCE_DIR@/docs/ROADMAP.md \
                          @PROJECT_SOURCE_DIR@/docs/tutorials

@@ -1,0 +1,53 @@
+# Working on forgecpp
+
+Checks, presets, versions and the layout of the repository.
+
+```sh
+export FORGECPP_DEPS=$HOME/forgecpp-deps     # once: ./install.sh --deps-only --prefix $FORGECPP_DEPS
+cmake --workflow --preset dev                # configure, build and test (Debug, build/dev)
+tools/check.sh                               # what CI checks: format, layers, build, tests, fuzz, API records
+tools/check.sh --quick                       # the same without fuzz and the compatibility records
+tools/check.sh --fix                         # apply .clang-format
+tools/check.sh --asan                        # also AddressSanitizer + UBSan
+tools/check.sh --tidy                        # clang-tidy on what changed since origin/master
+tools/check.sh --install-hook                # quick checks before every commit, blame skips formatting commits
+```
+
+Presets: `dev`, `release`, `asan`, `tsan`, `fuzz` (libFuzzer, clang),
+`armhf` (`cmake --list-presets`). The fuzz targets (`tests/fuzz`) also run
+as short tests; a failing input is saved as `fuzz-failure.bin` and can be
+replayed: `./tests/fuzz_pb fuzz-failure.bin`.
+
+## Versions
+
+Semantic versions, changes in [CHANGELOG.md](../CHANGELOG.md). Until 1.0 a minor
+version may change the C++ API: `libforgecpp.so.<major>.<minor>` and
+`find_package(forgecpp 0.4)` accepts 0.4.x only. The messages only change
+compatibly (new fields, messages and commands; removed numbers reserved;
+bounds only grow): CI checks them against the last release's API
+(`proto/forge/API.json`) with `tools/proto-compat.py`, which also records it
+at a release (`--update`). Within a minor
+series the C++ API and the configuration keys stay compatible too
+(`tools/api-check.py`, `api/forgecpp-<x.y>.json`); what counts as public and
+how it may change: [docs/API.md](API.md).
+
+## Directory layout
+
+```
+include/forge/     public headers (forge.hpp includes everything)
+proto/forge/       forgecpp's commands and messages (messages.proto, hub.proto)
+src/               libforgecpp sources
+src/web/           built-in control panel, forge.js, forge.css (embedded in the library)
+third_party/       submodules
+cmake/             package config, pkg-config, forge_add_app/forge_add_web/forge_add_test
+tools/             forgecpp-new (project scaffolder), forgectl, forge-proto.py (message generator)
+hub/               forge-hub: device dashboard and registry (a product, not an example)
+examples/          hello, sensor-service, pipeline (multi-threaded), thermostat (web site),
+                   radio-controller (AD9364 over libiio + ZeroMQ),
+                   spectrum-analyzer (AD936x spectrum analyzer), qam-modem (16QAM over
+                   radio-controller), channel-emulator, common/ad936x, common/channel
+tests/             doctest unit tests
+yocto/             bitbake recipes (forgecpp, radio-controller, spectrum-analyzer, qam-modem,
+                   channel-emulator)
+install.sh, get.sh installation
+```
