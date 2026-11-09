@@ -148,7 +148,13 @@ body.forge {
   letter-spacing: 0.04em;
   color: var(--forge-muted);
 }
-.forge-card > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.forge-card > header { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 10px; }
+/* In a header the space below is the header's, not the title's: it holds when a button makes it taller. */
+.forge-card > header h2 { margin: 0; }
+.forge-logs > header > span { display: inline-flex; align-items: center; gap: 12px; }
+.forge-logs > header label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.forge-logs > header .forge-btn { padding: 5px 12px; font-size: 13px; }
 .forge-wide { grid-column: 1 / -1; }
 
 .forge-row {
