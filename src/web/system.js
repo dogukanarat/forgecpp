@@ -154,6 +154,8 @@
     });
     document.querySelectorAll('[data-pane]').forEach(function (p) { p.hidden = p.dataset.pane !== tab; });
     document.querySelector('.forge-main').dataset.tab = tab;  // the log card belongs to "controls"
+    const reset = document.querySelector('#forge-tabs [data-forge-layout-reset]');
+    if (reset) reset.hidden = tab !== 'controls';  // only the controls' cards have a layout
     if (tab === 'controls' && forge.getLayout && forge.getLayout('panel')) {
       // Heights measured while the tab was hidden are wrong: fit them again.
       requestAnimationFrame(function () { forge.getLayout('panel').refit(); });

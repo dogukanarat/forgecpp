@@ -748,6 +748,37 @@
     return handle;
   }
 
+  // A reset button: an icon, and a second click within 3 s instead of a dialog.
+  const RESET_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.6 8.6A5.5 5.5 0 1 0 4.2 4.1"/>' +
+                     '<path d="M2.4 2.4v3.2h3.2"/></svg>';
+  function armResetButton(el) {
+    if (!el.querySelector('svg')) {
+      const text = el.textContent.trim() || 'Reset layout';
+      el.innerHTML = RESET_ICON + '<span class="forge-reset-label"></span>';
+      el.lastChild.textContent = text;
+    }
+    const label = el.querySelector('.forge-reset-label') || el;
+    const idle = label.textContent;
+    let timer = null;
+    const disarm = function () {
+      clearTimeout(timer);
+      delete el.dataset.armed;
+      label.textContent = idle;
+    };
+    el.addEventListener('click', function () {
+      if (el.dataset.armed) {
+        disarm();
+        resetLayouts();
+        return;
+      }
+      el.dataset.armed = '1';
+      label.textContent = 'Click again to reset';
+      timer = setTimeout(disarm, 3000);
+    });
+    el.addEventListener('blur', disarm);
+    el.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') disarm(); });
+  }
+
   function resetLayouts() {
     return Promise.all(Object.keys(layouts).map(function (p) { return writeLayout(p, null); }))
       .then(function () { location.reload(); });
@@ -760,11 +791,7 @@
     document.querySelectorAll('[data-forge-layout]').forEach(function (el) {
       layout(el, el.getAttribute('data-forge-layout') || 'main').catch(reportError);
     });
-    document.querySelectorAll('[data-forge-layout-reset]').forEach(function (el) {
-      el.addEventListener('click', function () {
-        if (window.confirm('Put every card back in its original place and size?')) resetLayouts();
-      });
-    });
+    document.querySelectorAll('[data-forge-layout-reset]').forEach(armResetButton);
     connect();
   }
 

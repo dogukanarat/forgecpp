@@ -511,7 +511,7 @@ a.forge-btn { display: inline-block; text-decoration: none; font-size: 14px; }
 .forge-tabs button { font: inherit; font-size: 14px; background: none; border: 0; color: var(--forge-muted);
   padding: 8px 12px; border-bottom: 2px solid transparent; cursor: pointer; }
 .forge-tabs button[aria-selected="true"] { color: var(--forge-text); border-bottom-color: var(--forge-accent); font-weight: 600; }
-.forge-whoami { margin-left: auto; font-size: 12px; }
+.forge-whoami { margin-left: auto; }
 .forge-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
 .forge-table th { text-align: left; color: var(--forge-muted); font-weight: 600; padding: 6px 8px;
   border-bottom: 1px solid var(--forge-border); white-space: nowrap; }
@@ -549,9 +549,23 @@ a.forge-btn { display: inline-block; text-decoration: none; font-size: 14px; }
   box-shadow: 0 8px 24px rgba(16, 24, 40, 0.18); }
 :root[data-theme="dark"] .forge-layout .ui-resizable-se { filter: invert(1); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .forge-layout .ui-resizable-se { filter: invert(1); } }
-.forge-layout-reset { font: inherit; font-size: 12px; background: none; border: 0; color: var(--forge-muted);
-  cursor: pointer; padding: 4px 8px; border-radius: 6px; }
-.forge-layout-reset:hover { color: var(--forge-text); background: var(--forge-surface-2); }
+/* "Reset layout": a small pill with an icon; red while it waits for the second click. */
+.forge-layout-reset, .forge-tabs .forge-layout-reset { display: inline-flex; align-items: center; gap: 6px;
+  font: inherit; font-size: 12.5px; font-weight: 500; line-height: 1; color: var(--forge-muted);
+  background: var(--forge-surface); border: 1px solid var(--forge-border); border-radius: 999px;
+  padding: 6px 12px 6px 9px; margin-left: 8px; cursor: pointer; white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s; }
+.forge-layout-reset svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round; transition: transform 0.35s ease; }
+.forge-layout-reset:hover { color: var(--forge-text); border-color: color-mix(in srgb, var(--forge-accent) 45%, var(--forge-border)); }
+.forge-layout-reset:hover svg { transform: rotate(-140deg); }
+.forge-layout-reset:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--forge-accent) 25%, transparent); }
+.forge-layout-reset[data-armed] { color: var(--forge-danger); background: color-mix(in srgb, var(--forge-danger) 8%, var(--forge-surface));
+  border-color: color-mix(in srgb, var(--forge-danger) 45%, transparent); }
+.forge-layout-reset[data-armed] svg { transform: rotate(-140deg); }
+/* Who is looking: a chip next to it. */
+.forge-whoami { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--forge-muted); }
+.forge-whoami svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 /* phones: the cards as a plain list (their stored desktop layout is kept) */
 .forge-layout.forge-layout-list { height: auto !important; display: flex; flex-direction: column; gap: 12px; }
 .forge-layout.forge-layout-list > .grid-stack-item { position: static !important; width: auto !important;
