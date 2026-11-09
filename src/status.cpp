@@ -140,6 +140,7 @@ int Status::http_status() const {
         case 138:  // EILSEQ
         case 139:  // EOVERFLOW
         case 7:    // E2BIG
+        case 91:   // ENAMETOOLONG: a text longer than its field
             return 400;
         case 1:   // EPERM
         case 13:  // EACCES

@@ -281,6 +281,7 @@ TEST_CASE("status: text and HTTP status") {
     CHECK(Status().http_status() == 200);
     CHECK(Status::error(1, EINVAL).http_status() == 400);
     CHECK(Status::error(1, EACCES).http_status() == 403);
+    CHECK(Status::error(1, ENAMETOOLONG).http_status() == 400);  // a text too long for its field
     CHECK(Status::error(1, ENOENT).http_status() == 404);
     CHECK(Status::error(1, EBUSY).http_status() == 409);
     CHECK(Status::error(1, ENOSYS).http_status() == 501);

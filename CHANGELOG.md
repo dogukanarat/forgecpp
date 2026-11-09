@@ -64,6 +64,9 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   the Streams page (its messages as they go out, at most 5 a second, without
   the blob). HTTP: `GET /forge/api/tmtc/<name>` (the request and reply
   schemas), `GET /forge/api/streams/<name>/watch` (server-sent events).
+- Docs: `docs/protocol.md` (the c2 frame, flags, answers, the status and
+  its errno numbers: enough to write a client or a device) and
+  `docs/commands.md` (adding a command, step by step).
 - `forgectl tmtc [name ['{json}']]` lists or runs any command;
   `forgectl stream <name> [-n N]` prints a stream's messages.
 - `pb::schema(type)`: a message's fields as JSON (kind, bits, bounds, enum
@@ -176,6 +179,8 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   requests, weekly and by hand.
 
 ### Fixed
+
+- `ENAMETOOLONG` (a text longer than its field) answers HTTP 400 instead of 500.
 
 - A log listener is removed only once it is no longer running: the web
   panel's log view and the log events could be destroyed while the logging

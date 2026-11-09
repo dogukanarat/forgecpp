@@ -550,7 +550,8 @@ structs: nothing allocates, and the same `.proto` file builds on a
 microcontroller. forgecpp's own are in [`proto/forge`](proto/forge)
 (`messages.proto`, `hub.proto`; installed in `share/forgecpp/proto`).
 
-**Commands.** Every command is a request and a reply with a number (unique in
+**Commands** ([adding one, step by step](docs/commands.md); the wire format:
+[docs/protocol.md](docs/protocol.md)). Every command is a request and a reply with a number (unique in
 the program; `0x0001..0x00FF` are forgecpp's: ping, info, controls, get, set,
 press, call, alarms, ack, logs, metrics, audit, lease, release, health,
 streams, log level). One handler answers both ways in:
