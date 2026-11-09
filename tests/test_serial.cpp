@@ -223,11 +223,12 @@ TEST_CASE("serial: no answer is a timeout; a line that goes away is EIO") {
     serial::LinkOptions o;
     o.fd = pty.fd;
     o.timeout = std::chrono::milliseconds(100);
+    // The other end is open (before the link reads: a pty without it is a
+    // line that is gone) but silent.
+    const int other = ::open(pty.device.c_str(), O_RDWR | O_NOCTTY);
+    REQUIRE(other >= 0);
     auto link = std::make_unique<serial::Link>(o);
     {
-        // The other end is open but silent.
-        const int other = ::open(pty.device.c_str(), O_RDWR | O_NOCTTY);
-        REQUIRE(other >= 0);
         forge_test_echo_reply rsp{};
         CHECK(link->call(kEcho, forge_test_echo_request{}, rsp).errno_code() == ETIMEDOUT);
         ::close(other);
