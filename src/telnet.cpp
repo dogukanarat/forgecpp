@@ -191,7 +191,7 @@ std::size_t Telnet::sessions() const {
 void Telnet::accept_loop() {
     while (running_) {
         pollfd p{listen_fd_, POLLIN, 0};
-        if (::poll(&p, 1, 200) <= 0) continue;
+        if (::poll(&p, 1, 1000) <= 0) continue;
         sockaddr_in peer{};
         socklen_t len = sizeof(peer);
         const int fd = ::accept4(listen_fd_, reinterpret_cast<sockaddr*>(&peer), &len, SOCK_CLOEXEC);
@@ -249,7 +249,7 @@ void Telnet::serve(std::shared_ptr<Session> s) {
                 return l;
             }
             pollfd p{s->fd, POLLIN, 0};
-            const int r = ::poll(&p, 1, 200);
+            const int r = ::poll(&p, 1, 1000);
             if (r == 0) {
                 if (options_.idle_s > 0 &&
                     std::chrono::steady_clock::now() - s->last_input > std::chrono::seconds(options_.idle_s)) {

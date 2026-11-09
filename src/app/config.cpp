@@ -131,6 +131,9 @@ void Application::declare_framework_config(config::Schema& s) {
               "Warn when one main loop task (timer, control, command) runs longer than this (0 = never)")
         .range(0, 60000)
         .unit("ms");
+    s.integer("forge.max_pending_tasks", 10000,
+              "Tasks the main loop may have waiting; beyond that post() drops them (forge.loop.dropped)")
+        .range(16, 10000000);
     s.integer("forge.control_workers", 2, "Commands on [forge].control handled at the same time").range(1, 16);
     s.integer("forge.request_timeout_ms", 2000,
               "How long a request (a command, HTTP) waits for a busy main loop before it is refused")

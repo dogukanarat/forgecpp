@@ -58,6 +58,29 @@ touches your members there, so you need no locks for them.
   and `/health` reports `"stalled"`; the systemd watchdog restarts a loop
   that stays stuck.
 
+## Limits and bounds
+
+- **One `Application` per process.** The metrics registry, the log state, the
+  trace recorder, the stream source name, the crash handler and the console
+  are process-wide; `run()` blocks the handled signals for the whole process
+  (and puts the mask back when it returns). Two applications in one process
+  share them.
+- **The main loop's queue is bounded**: `[forge].max_pending_tasks` (10000).
+  Beyond it `post()` returns false and counts `forge.loop.dropped`;
+  `invoke()`, `call()` and the request handlers answer 503 "main loop busy".
+  `forge.loop.queued` shows the depth.
+- **Streams are bounded per stream and in bytes**: `send_hwm` messages per
+  stream (1000) and `SocketOptions::send_budget_bytes` (64 MiB) for all the
+  streams of one publisher; beyond either, `publish()` drops and counts.
+- **Stacks**: a command handler runs with its request and reply on the stack
+  (`forge_controls_reply` is about 12 kB), and a thread that dispatches
+  commands keeps a 64 kB buffer; a thread of your own that calls
+  `serial::Link::call()` or `tmtc::Dispatcher::handle()` needs at least 256
+  kB of stack. Threads of the framework and `std::thread` have 8 MB.
+- **Idle threads sleep.** The I/O threads (publisher, receiver, command
+  server, signals) wait on their sockets and an eventfd and wake only for
+  work; the main loop wakes only for a task or a timer.
+
 ## Time
 
 Read time with `now()`, not `std::chrono::steady_clock::now()`: in tests

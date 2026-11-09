@@ -54,13 +54,15 @@ public:
         }
         if (b->size() != size_) b->resize(size_);
         std::weak_ptr<BufferPool> weak = this->shared_from_this();
+        // The handle's control block is recycled too (NodeAllocator): once
+        // warm, acquire() allocates nothing at all.
         return Handle(b, [weak](Buffer* p) {
             if (auto pool = weak.lock()) {
                 pool->release(p);
             } else {
                 delete p;
             }
-        });
+        }, NodeAllocator<Buffer>(nodes_));
     }
 
     std::size_t buffer_size() const { return size_; }
@@ -69,6 +71,43 @@ public:
     std::size_t free_buffers() const { return free_count_.load(); }
 
 private:
+    /// Fixed-size blocks for the handles' control blocks, kept on a lock-free list.
+    struct Nodes {
+        moodycamel::ConcurrentQueue<void*> free;
+        std::atomic<std::size_t> block_size{0};  // the one size this pool's control blocks have
+        ~Nodes() {
+            void* p = nullptr;
+            while (free.try_dequeue(p)) ::operator delete(p);
+        }
+    };
+    template <class U>
+    struct NodeAllocator {
+        using value_type = U;
+        std::shared_ptr<Nodes> nodes;
+        explicit NodeAllocator(std::shared_ptr<Nodes> n) : nodes(std::move(n)) {}
+        template <class V>
+        NodeAllocator(const NodeAllocator<V>& other) : nodes(other.nodes) {}
+        U* allocate(std::size_t n) {
+            const std::size_t bytes = n * sizeof(U);
+            std::size_t expected = 0;
+            nodes->block_size.compare_exchange_strong(expected, bytes);
+            void* p = nullptr;
+            if (bytes == nodes->block_size.load() && nodes->free.try_dequeue(p)) return static_cast<U*>(p);
+            return static_cast<U*>(::operator new(bytes));
+        }
+        void deallocate(U* p, std::size_t n) {
+            if (n * sizeof(U) == nodes->block_size.load() && nodes->free.size_approx() < 256) {
+                nodes->free.enqueue(p);
+            } else {
+                ::operator delete(p);
+            }
+        }
+        template <class V>
+        bool operator==(const NodeAllocator<V>& o) const {
+            return nodes == o.nodes;
+        }
+    };
+
     void release(Buffer* p) {
         if (free_count_.load() >= max_free_) {
             delete p;
@@ -82,6 +121,7 @@ private:
     std::size_t max_free_;
     moodycamel::ConcurrentQueue<Buffer*> free_;
     std::atomic<std::size_t> free_count_{0};
+    std::shared_ptr<Nodes> nodes_ = std::make_shared<Nodes>();
     std::atomic<std::size_t> allocations_{0};
 };
 

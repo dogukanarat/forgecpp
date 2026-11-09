@@ -56,6 +56,8 @@ void Application::start_observability(const Config& cfg) {
     auto& m = metrics::registry();
     m.gauge_fn("process.uptime_seconds", [this] { return std::chrono::duration<double>(uptime()).count(); }, "Uptime",
                "s");
+    m.gauge_fn("forge.loop.queued", [this] { return static_cast<double>(tasks_.size_approx()); },
+               "Tasks waiting for the main loop ([forge].max_pending_tasks bounds it)");
     m.gauge_fn("process.rss_bytes", [] {
         long pages = 0, rss = 0;
         if (FILE* f = std::fopen("/proc/self/statm", "r")) {

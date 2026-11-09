@@ -518,9 +518,11 @@ void Logger::write(Level level, std::string_view message, const std::source_loca
     // The caller's trace context travels in the tags (the sink runs on another thread).
     std::string tags;
     if (const auto ctx = ::forge::trace::current(); ctx.valid()) tags = ctx.trace_hex() + ":" + ctx.span_hex();
-    QUILL_LOG_RUNTIME_METADATA_DEEP(impl_->quill, to_quill(level), where.file_name(),
-                                    static_cast<std::uint32_t>(where.line()), where.function_name(), tags.c_str(), "{}",
-                                    message);
+    // Hybrid: the tags (a temporary) are copied, the file and function names
+    // (static, from source_location) are not.
+    QUILL_LOG_RUNTIME_METADATA_HYBRID(impl_->quill, to_quill(level), where.file_name(),
+                                      static_cast<std::uint32_t>(where.line()), where.function_name(), tags.c_str(),
+                                      "{}", message);
     const int flush_on = impl_->flush_on.load();
     if (static_cast<int>(level) >= (flush_on >= 0 ? flush_on : state().flush_level.load())) quill::Backend::notify();
 }

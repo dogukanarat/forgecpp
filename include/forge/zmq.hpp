@@ -39,6 +39,7 @@
 
 #include <zmq.hpp>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -122,6 +123,10 @@ struct SocketOptions {
     int send_hwm = 1000;   ///< messages queued per peer before dropping / blocking
     int recv_hwm = 1000;
     int linger_ms = 0;     ///< how long unsent messages are kept after close
+    /// Publisher: bytes its streams may have waiting for the I/O thread, all
+    /// streams together, before publish() drops (send_hwm bounds the messages
+    /// of each stream; this bounds the memory). 0 = no byte limit.
+    std::size_t send_budget_bytes = 64 * 1024 * 1024;
     /// Largest message part accepted from a peer (bytes); -1 = no limit. A
     /// peer that sends more is disconnected by ZeroMQ. Server: a c2 frame
     /// (header and 64 KiB of payload). Receiver, Sender: 64 MiB.
@@ -181,13 +186,15 @@ private:
 
     friend class Publisher;
     Stream(Publisher& owner, std::string name, const pb::Type& type, StreamOptions options);
-    bool enqueue(forge_stream_header header, std::string body, BlobOwner owner, const void* data, std::size_t size);
+    bool enqueue(forge_stream_header& header, std::string body, BlobOwner owner, const void* data, std::size_t size);
 
     Publisher& owner_;
     std::string name_;
     const pb::Type& type_;
     StreamOptions options_;
-    std::atomic<std::uint64_t> seq_{0}, sent_{0}, dropped_{0};
+    std::uint64_t seq_ = 0;  ///< under the publisher's mutex: seq follows the queue order
+    std::atomic<std::uint64_t> sent_{0}, dropped_{0};
+    std::size_t queued_ = 0;  ///< messages of this stream waiting (publisher's mutex)
     std::atomic<std::size_t> subscribers_{0};
     std::mutex rate_mutex_;
     std::chrono::steady_clock::time_point next_{};
@@ -215,30 +222,38 @@ public:
     std::string endpoint() const { return endpoint_; }
     /// Messages waiting for the I/O thread.
     std::size_t queued() const;
+    /// Bytes those messages hold (bodies and blobs).
+    std::size_t queued_bytes() const;
     void stop();
 
 private:
     friend class Stream;
     struct Outgoing {
         Stream* stream = nullptr;
-        std::string header, body;
+        /// The stream header, encoded; a fixed array: no allocation per message.
+        std::array<std::uint8_t, 256> header{};
+        std::size_t header_size = 0;
+        std::string body;
         BlobOwner owner;
         const void* data = nullptr;
         std::size_t size = 0;
+        std::size_t bytes() const { return body.size() + size; }
     };
-    bool enqueue(Stream& s, Outgoing out);
+    bool enqueue(Stream& s, Outgoing out, forge_stream_header& header);
     void run();
     void update_subscriptions(std::string_view prefix, bool subscribe);
+    void wake();
 
     std::string endpoint_;
     SocketOptions options_;
     mutable std::mutex mutex_;
-    std::condition_variable cv_;
     std::deque<Outgoing> queue_;
     std::map<std::string, Outgoing> latest_;  // per stream, policy "latest"
+    std::size_t queued_bytes_ = 0;
     std::map<std::string, std::unique_ptr<Stream>> streams_;
     std::map<std::string, std::size_t> prefixes_;  // subscription prefix -> count
     std::atomic<bool> running_{true};
+    int wake_fd_ = -1;  ///< eventfd: enqueue() and stop() wake the I/O thread, which otherwise sleeps
     std::thread thread_;
     std::promise<std::string> bound_;
 };
@@ -325,6 +340,7 @@ private:
     std::atomic<bool> running_{true};
     std::atomic<std::uint64_t> received_{0}, lost_{0};
     std::map<std::string, std::uint64_t> last_seq_;
+    int wake_fd_ = -1;  ///< eventfd: stop() wakes the thread, which otherwise sleeps in poll
     std::thread thread_;
 };
 
@@ -387,6 +403,7 @@ private:
     std::deque<Job> queue_;
     bool stopping_ = false;
     ::zmq::socket_t replies_;  ///< PULL: workers' replies to the I/O thread
+    int wake_fd_ = -1;         ///< eventfd: stop() wakes the I/O thread
     std::vector<std::thread> workers_;
     std::thread thread_;
 };

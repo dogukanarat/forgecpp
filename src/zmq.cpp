@@ -9,12 +9,15 @@
 #include <chrono>
 #include <cstdio>
 
+#include <sys/eventfd.h>
 #include <unistd.h>
 
 namespace forge::zmq {
 namespace {
 
-constexpr auto kPollInterval = std::chrono::milliseconds(100);
+// The I/O threads sleep in poll until a message or their eventfd wakes them;
+// this is only a safety net.
+constexpr auto kIdleWait = std::chrono::seconds(1);
 
 void apply(::zmq::socket_t& s, const SocketOptions& o) {
     s.set(::zmq::sockopt::sndhwm, o.send_hwm);
@@ -70,13 +73,11 @@ std::string encode_to_string(const pb::Type& type, const void* msg) {
     return out;
 }
 
-std::mutex& source_mutex() {
-    static std::mutex m;
-    return m;
-}
-std::string& source_name() {
-    static std::string name = "app";
-    return name;
+// The source name, read by every message: a shared_ptr swapped atomically,
+// so make_header() neither locks nor copies.
+std::atomic<std::shared_ptr<const std::string>>& source_holder() {
+    static std::atomic<std::shared_ptr<const std::string>> holder{std::make_shared<const std::string>("app")};
+    return holder;
 }
 
 const std::string& host_name() {
@@ -112,7 +113,7 @@ forge_stream_header make_header(std::string_view topic, const char* type) {
         std::copy_n(src.data(), n, dst);
         dst[n] = '\0';
     };
-    copy(h.source, source());
+    copy(h.source, *source_holder().load(std::memory_order_acquire));
     copy(h.host, host_name());
     h.pid = static_cast<std::uint32_t>(::getpid());
     copy(h.topic, topic);
@@ -125,14 +126,14 @@ forge_stream_header make_header(std::string_view topic, const char* type) {
 }
 
 // Send [topic][header][body][blob?]; the blob without copying when owned.
-bool send_parts(::zmq::socket_t& s, std::string_view topic, const std::string& header, const std::string& body,
-                const BlobOwner& owner, const void* data, std::size_t size, bool dontwait) {
+bool send_parts(::zmq::socket_t& s, std::string_view topic, std::span<const std::uint8_t> header,
+                const std::string& body, const BlobOwner& owner, const void* data, std::size_t size, bool dontwait) {
     const bool blob = data != nullptr && size > 0;
     const auto first =
         dontwait ? (::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait) : ::zmq::send_flags::sndmore;
     // The first frame decides: if it is accepted, the rest follow atomically.
     if (!s.send(::zmq::buffer(topic.data(), topic.size()), first)) return false;
-    s.send(::zmq::buffer(header), ::zmq::send_flags::sndmore);
+    s.send(::zmq::buffer(header.data(), header.size()), ::zmq::send_flags::sndmore);
     s.send(::zmq::buffer(body), blob ? ::zmq::send_flags::sndmore : ::zmq::send_flags::none);
     if (blob) {
         if (owner) {
@@ -165,14 +166,10 @@ Message make_message(std::string_view topic, const pb::Type& type, const void* b
 }
 
 void set_source(std::string name) {
-    std::lock_guard lock(source_mutex());
-    source_name() = std::move(name);
+    source_holder().store(std::make_shared<const std::string>(std::move(name)), std::memory_order_release);
 }
 
-std::string source() {
-    std::lock_guard lock(source_mutex());
-    return source_name();
-}
+std::string source() { return *source_holder().load(std::memory_order_acquire); }
 
 json to_json(const StreamInfo& i) {
     return {{"name", i.name},
@@ -217,7 +214,8 @@ bool Stream::publish(const pb::Type& type, const void* body, BlobOwner owner, co
     if (&type != &type_) {
         throw std::logic_error("stream '" + name_ + "' carries " + type_.name + ", not " + type.name);
     }
-    return enqueue(make_header(name_, type_.name), encode_to_string(type, body), std::move(owner), data, size);
+    auto header = make_header(name_, type_.name);
+    return enqueue(header, encode_to_string(type, body), std::move(owner), data, size);
 }
 
 bool Stream::forward(const Message& m) {
@@ -254,19 +252,15 @@ bool Stream::watch_due(bool take) {
     return next_watch_ns_.compare_exchange_strong(next, now + period.count());
 }
 
-bool Stream::enqueue(forge_stream_header header, std::string body, BlobOwner owner, const void* data,
+bool Stream::enqueue(forge_stream_header& header, std::string body, BlobOwner owner, const void* data,
                      std::size_t size) {
-    header.seq = ++seq_;
-    if (watch_due(true)) {
-        Message seen;
-        seen.topic = name_;
-        seen.header = header;
-        seen.body = body;
-        watchers_.notify(seen);
-    }
+    // A watcher (the panel's inspector) gets a copy of the body: only while
+    // someone watches, a few times a second.
+    const bool watched = watch_due(true);
+    std::string watched_body;
+    if (watched) watched_body = body;
     Publisher::Outgoing out;
     out.stream = this;
-    out.header = encode_to_string(*pb::type_of<forge_stream_header>, &header);
     out.body = std::move(body);
     out.owner = std::move(owner);
     out.data = data;
@@ -277,7 +271,18 @@ bool Stream::enqueue(forge_stream_header header, std::string body, BlobOwner own
         out.data = copy->data();
         out.owner = copy;
     }
-    return owner_.enqueue(*this, std::move(out));
+    // The sequence number is given where the message takes its place in the
+    // queue (Publisher::enqueue, under its mutex), so two threads publishing
+    // the same stream cannot swap the order of their numbers.
+    const bool queued = owner_.enqueue(*this, std::move(out), header);
+    if (watched) {
+        Message seen;
+        seen.topic = name_;
+        seen.header = header;
+        seen.body = std::move(watched_body);
+        watchers_.notify(seen);
+    }
+    return queued;
 }
 
 StreamInfo Stream::info() const {
@@ -295,6 +300,7 @@ StreamInfo Stream::info() const {
 }
 
 Publisher::Publisher(const std::string& endpoint, SocketOptions options) : options_(options) {
+    wake_fd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     auto bound = bound_.get_future();
     thread_ = std::thread([this, endpoint] {
         trace::set_thread_name("forge-pub");
@@ -309,8 +315,33 @@ Publisher::Publisher(const std::string& endpoint, SocketOptions options) : optio
             bound_.set_exception(std::current_exception());
             return;
         }
-        ::zmq::pollitem_t item{socket.handle(), 0, ZMQ_POLLIN, 0};
+        // Asleep until a subscription arrives on the socket or enqueue()/stop()
+        // write the eventfd; a long timeout only as a safety net.
+        ::zmq::pollitem_t items[] = {{socket.handle(), 0, ZMQ_POLLIN, 0}, {nullptr, wake_fd_, ZMQ_POLLIN, 0}};
+        std::vector<Outgoing> batch;
         while (running_) {
+            {
+                std::lock_guard lock(mutex_);
+                if (queue_.empty() && latest_.empty()) {
+                    // nothing to send: wait (below) without holding the lock
+                } else {
+                    for (auto& o : queue_) --o.stream->queued_;
+                    while (!queue_.empty()) {
+                        batch.push_back(std::move(queue_.front()));
+                        queue_.pop_front();
+                    }
+                    for (auto& [n, o] : latest_) batch.push_back(std::move(o));
+                    latest_.clear();
+                    for (const auto& o : batch) queued_bytes_ -= o.bytes();
+                }
+            }
+            if (batch.empty()) {
+                ::zmq::poll(items, 2, std::chrono::seconds(1));
+                if (items[1].revents & ZMQ_POLLIN) {
+                    std::uint64_t n = 0;
+                    (void)!::read(wake_fd_, &n, sizeof(n));
+                }
+            }
             // Subscriptions (XPUB): count per prefix.
             ::zmq::message_t msg;
             while (socket.recv(msg, ::zmq::recv_flags::dontwait)) {
@@ -318,23 +349,11 @@ Publisher::Publisher(const std::string& endpoint, SocketOptions options) : optio
                 const auto* p = static_cast<const char*>(msg.data());
                 update_subscriptions(std::string_view(p + 1, msg.size() - 1), p[0] == 1);
             }
-            std::vector<Outgoing> batch;
-            {
-                std::unique_lock lock(mutex_);
-                if (queue_.empty() && latest_.empty()) {
-                    cv_.wait_for(lock, std::chrono::milliseconds(20));
-                }
-                while (!queue_.empty()) {
-                    batch.push_back(std::move(queue_.front()));
-                    queue_.pop_front();
-                }
-                for (auto& [n, o] : latest_) batch.push_back(std::move(o));
-                latest_.clear();
-            }
             for (auto& o : batch) {
                 FORGE_TRACE_SCOPE("zmq.publish", "forge");
                 try {
-                    if (send_parts(socket, o.stream->name(), o.header, o.body, o.owner, o.data, o.size, true)) {
+                    if (send_parts(socket, o.stream->name(), std::span(o.header).first(o.header_size), o.body, o.owner,
+                                   o.data, o.size, true)) {
                         ++o.stream->sent_;
                     } else {
                         ++o.stream->dropped_;
@@ -344,7 +363,7 @@ Publisher::Publisher(const std::string& endpoint, SocketOptions options) : optio
                     log::warn("zmq: publish on {} failed: {}", endpoint_, e.what());
                 }
             }
-            (void)::zmq::poll(&item, 1, std::chrono::milliseconds(0));
+            batch.clear();
         }
         socket.close();
     });
@@ -360,8 +379,12 @@ Publisher::~Publisher() { stop(); }
 
 void Publisher::stop() {
     running_ = false;
-    cv_.notify_all();
+    wake();
     if (thread_.joinable()) thread_.join();
+    if (wake_fd_ >= 0) {
+        ::close(wake_fd_);
+        wake_fd_ = -1;
+    }
 }
 
 void Publisher::update_subscriptions(std::string_view prefix, bool subscribe) {
@@ -417,23 +440,57 @@ std::size_t Publisher::queued() const {
     return queue_.size() + latest_.size();
 }
 
-bool Publisher::enqueue(Stream& s, Outgoing out) {
+bool Publisher::enqueue(Stream& s, Outgoing out, forge_stream_header& header) {
     if (!running_) return false;
     {
         std::lock_guard lock(mutex_);
+        header.seq = ++s.seq_;
+        std::size_t n = 0;
+        if (!pb::encode(*pb::type_of<forge_stream_header>, &header, out.header, n).ok()) {
+            ++s.dropped_;
+            return false;  // cannot happen: the header's fields are bounded and the array fits them
+        }
+        out.header_size = n;
         if (s.options_.policy == "latest") {
-            if (latest_.count(s.name_)) ++s.dropped_;  // replaced before it was sent
-            latest_[s.name_] = std::move(out);
+            auto it = latest_.find(s.name_);
+            if (it != latest_.end()) {
+                ++s.dropped_;  // replaced before it was sent
+                queued_bytes_ -= it->second.bytes();
+                queued_bytes_ += out.bytes();
+                it->second = std::move(out);
+            } else {
+                queued_bytes_ += out.bytes();
+                latest_.emplace(s.name_, std::move(out));
+            }
         } else {
-            if (queue_.size() >= static_cast<std::size_t>(std::max(options_.send_hwm, 1))) {
+            // Bounded per stream (one busy stream does not starve the others)
+            // and in bytes for all of them (large blobs do not eat the memory).
+            const bool full =
+                s.queued_ >= static_cast<std::size_t>(std::max(options_.send_hwm, 1)) ||
+                (options_.send_budget_bytes > 0 && queued_bytes_ + out.bytes() > options_.send_budget_bytes);
+            if (full) {
                 ++s.dropped_;
                 return false;
             }
+            ++s.queued_;
+            queued_bytes_ += out.bytes();
             queue_.push_back(std::move(out));
         }
     }
-    cv_.notify_one();
+    wake();
     return true;
+}
+
+void Publisher::wake() {
+    if (wake_fd_ >= 0) {
+        const std::uint64_t one = 1;
+        (void)!::write(wake_fd_, &one, sizeof(one));
+    }
+}
+
+std::size_t Publisher::queued_bytes() const {
+    std::lock_guard lock(mutex_);
+    return queued_bytes_;
 }
 
 // ---------------------------------------------------------------------------
@@ -470,7 +527,8 @@ bool Sender::send_frames(std::string_view topic, const std::string& header, cons
                          std::size_t size) {
     poll_subscriptions();
     try {
-        if (!send_parts(socket_, topic, header, body, nullptr, blob, size, true)) {
+        const std::span<const std::uint8_t> hdr(reinterpret_cast<const std::uint8_t*>(header.data()), header.size());
+        if (!send_parts(socket_, topic, hdr, body, nullptr, blob, size, true)) {
             ++dropped_;
             return false;
         }
@@ -521,6 +579,7 @@ Receiver::Receiver(Kind kind, const std::string& endpoint, Handler handler, cons
     }
     options.bind ? socket_.bind(endpoint) : socket_.connect(endpoint);
     endpoint_ = resolved_endpoint(socket_, endpoint);
+    wake_fd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     thread_ = std::thread([this] { run(); });
 }
 
@@ -528,14 +587,23 @@ Receiver::~Receiver() { stop(); }
 
 void Receiver::stop() {
     running_ = false;
+    if (wake_fd_ >= 0) {
+        const std::uint64_t one = 1;
+        (void)!::write(wake_fd_, &one, sizeof(one));
+    }
     if (thread_.joinable()) thread_.join();
+    if (wake_fd_ >= 0) {
+        ::close(wake_fd_);
+        wake_fd_ = -1;
+    }
 }
 
 void Receiver::run() {
-    ::zmq::pollitem_t item{socket_.handle(), 0, ZMQ_POLLIN, 0};
+    ::zmq::pollitem_t items[] = {{socket_.handle(), 0, ZMQ_POLLIN, 0}, {nullptr, wake_fd_, ZMQ_POLLIN, 0}};
     while (running_) {
         try {
-            if (::zmq::poll(&item, 1, kPollInterval) <= 0) continue;
+            if (::zmq::poll(items, 2, kIdleWait) <= 0) continue;
+            if (!(items[0].revents & ZMQ_POLLIN)) continue;  // woken to stop
             Message m;
             while (running_ && receive(socket_, m)) {
                 ++received_;
@@ -580,6 +648,7 @@ Server::Server(const std::string& endpoint, Handler handler, ServerOptions serve
     replies_endpoint_ = "inproc://forge-server-" + std::to_string(++instances);
     replies_.set(::zmq::sockopt::linger, 0);
     replies_.bind(replies_endpoint_);
+    wake_fd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     const int n = std::max(server_options_.workers, 1);
     for (int i = 0; i < n; ++i) {
         workers_.emplace_back([this, i, n] {
@@ -609,7 +678,15 @@ void Server::stop() {
         if (t.joinable()) t.join();
     }
     running_ = false;
+    if (wake_fd_ >= 0) {
+        const std::uint64_t one = 1;
+        (void)!::write(wake_fd_, &one, sizeof(one));
+    }
     if (thread_.joinable()) thread_.join();
+    if (wake_fd_ >= 0) {
+        ::close(wake_fd_);
+        wake_fd_ = -1;
+    }
 }
 
 void Server::send_reply(::zmq::socket_t& out, const Job& job, const std::vector<std::string>& frames) {
@@ -666,7 +743,9 @@ void Server::work() {
 }
 
 void Server::run() {
-    ::zmq::pollitem_t items[] = {{socket_.handle(), 0, ZMQ_POLLIN, 0}, {replies_.handle(), 0, ZMQ_POLLIN, 0}};
+    ::zmq::pollitem_t items[] = {{socket_.handle(), 0, ZMQ_POLLIN, 0},
+                                 {replies_.handle(), 0, ZMQ_POLLIN, 0},
+                                 {nullptr, wake_fd_, ZMQ_POLLIN, 0}};
     std::vector<::zmq::message_t> frames;
     const auto receive_all = [&](::zmq::socket_t& from) {
         frames.clear();
@@ -680,7 +759,7 @@ void Server::run() {
     };
     while (running_) {
         try {
-            if (::zmq::poll(items, 2, kPollInterval) <= 0) continue;
+            if (::zmq::poll(items, 3, kIdleWait) <= 0) continue;
             // Replies from the workers: forward them as they are (envelope + body).
             if (items[1].revents & ZMQ_POLLIN) {
                 while (receive_all(replies_)) {

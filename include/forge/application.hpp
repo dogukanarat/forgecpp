@@ -176,8 +176,10 @@ public:
     void reload();
 
     // --- main loop --------------------------------------------------------
-    /// Run `task` on the main loop thread (thread-safe).
-    void post(Task task);
+    /// Run `task` on the main loop thread (thread-safe). False when the loop's
+    /// queue is full ([forge].max_pending_tasks: the loop is stuck or far
+    /// behind): the task is dropped and counted (forge.loop.dropped).
+    bool post(Task task);
 
     /// Run `fn` on the main loop and wait for its result. Runs inline when
     /// already on the main loop, so it is safe everywhere (HTTP handlers,
@@ -218,8 +220,8 @@ public:
         auto future = task->get_future();
         if (on_main_loop()) {
             (*task)();
-        } else {
-            post([task] { (*task)(); });
+        } else if (!post([task] { (*task)(); })) {
+            loop_busy();  // the queue is full: 503, like invoke_for() on a stuck loop
         }
         return future;
     }
@@ -455,7 +457,7 @@ private:
         auto w = std::make_shared<Waiter>();
         auto f = std::make_shared<std::decay_t<F>>(std::forward<F>(fn));
         auto guard = std::make_shared<Guard>(w);
-        post([w, f, guard] {
+        const bool posted = post([w, f, guard] {
             {
                 std::lock_guard lock(w->mutex);
                 if (w->phase == Phase::abandoned) return;  // the caller gave up: do not run
@@ -485,6 +487,7 @@ private:
             w->cv.notify_all();
         });
         guard.reset();
+        if (!posted) loop_busy();  // the queue is full: nothing was queued, nothing to wait for
         std::unique_lock lock(w->mutex);
         const auto finished = [&] { return w->phase == Phase::done; };
         if (deadline && !w->cv.wait_until(lock, *deadline, finished) && w->phase == Phase::pending) {
@@ -562,6 +565,7 @@ private:
     std::string instance_;
     bool manual_clock_ = false;
     std::atomic<int> slow_task_ms_{200};  ///< [forge].slow_task_ms
+    std::atomic<int> max_pending_tasks_{10000};  ///< [forge].max_pending_tasks
     bool print_config_ = false;
     bool help_config_ = false;
     bool check_config_ = false;
@@ -606,6 +610,7 @@ private:
     bool commands_closed_ = false;  // set before the links start
     std::atomic<int> exit_code_{0};
     std::atomic<bool> signal_thread_running_{false};
+    int signal_wake_fd_ = -1;  ///< eventfd: stop_signal_thread() wakes the thread's poll
     std::thread signal_thread_;
     std::chrono::steady_clock::time_point started_at_;
 };

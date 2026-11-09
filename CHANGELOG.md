@@ -234,6 +234,28 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 
 ### Fixed
 
+- The publish path of a stream allocates less and locks less: the source
+  name is read without a mutex or a copy, the stream header is encoded into
+  a fixed array, and a `BufferPool` handle's control block is recycled too
+  (`acquire()` allocates nothing once warm). The sequence number is given
+  where the message takes its place in the queue, so two threads publishing
+  one stream cannot swap the order of their numbers (the receiver counted
+  losses that were not there).
+- A publisher's queue is bounded per stream (`send_hwm` messages each, so a
+  busy stream does not starve the others) and in bytes for all its streams
+  (`SocketOptions::send_budget_bytes`, 64 MiB; `Publisher::queued_bytes()`).
+- The main loop's queue is bounded: `[forge].max_pending_tasks` (10000).
+  `post()` returns false and counts `forge.loop.dropped` beyond it; `invoke()`
+  and `call()` answer 503 instead of growing the queue until the OOM killer.
+  Metric `forge.loop.queued`. Tasks left when the application stops are
+  dropped, so a `call()` future gets a broken promise instead of never
+  resolving.
+- No periodic wake-ups when idle: the publisher, receiver and command server
+  threads sleep in poll on their sockets and an eventfd (they polled every
+  20 or 100 ms), the signal thread waits on a signalfd (every 200 ms), the
+  main loop on its queue (every 500 ms), telnet once a second (200 ms).
+- Log calls copy the trace tags only; the file and function names (static)
+  are passed by pointer (quill's hybrid metadata).
 - `forge::Status` is `[[nodiscard]]`, and its message can no longer dangle: a
   string literal is kept by pointer as before, any other text (a `std::string`,
   a `std::format()` result) is copied into a table the process keeps

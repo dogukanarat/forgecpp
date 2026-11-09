@@ -16,7 +16,10 @@
 
 #include <CLI/CLI.hpp>
 
+#include <poll.h>
 #include <pthread.h>
+#include <sys/eventfd.h>
+#include <sys/signalfd.h>
 #include <unistd.h>
 #include <algorithm>
 #include <cctype>
@@ -169,15 +172,33 @@ void Application::reload() {
     post([this] { do_reload(); });
 }
 
-void Application::post(Task task) {
-    if (!task) return;
+bool Application::post(Task task) {
+    if (!task) return false;
     // Main loop lag: time from post() to execution (a busy loop shows up here first).
     static auto& lag = metrics::registry().histogram("forge.loop.lag_seconds", metrics::latency_buckets(),
                                                      "Delay between post() and execution on the main loop", "s");
     static auto& busy = metrics::registry().counter("forge.loop.busy_us", "Time spent running main loop tasks", "us");
     static auto& slow = metrics::registry().counter("forge.loop.slow_tasks",
                                                     "Main loop tasks that took longer than [forge].slow_task_ms");
-    tasks_.push([this, t = std::move(task), queued = std::chrono::steady_clock::now()] {
+    static auto& dropped = metrics::registry().counter(
+        "forge.loop.dropped", "Tasks refused because the main loop's queue was full ([forge].max_pending_tasks)");
+    // Bounded: a loop that is stuck must not let the producers fill the memory.
+    const auto limit = static_cast<std::size_t>(std::max(max_pending_tasks_.load(std::memory_order_relaxed), 1));
+    if (tasks_.size_approx() >= limit) {
+        dropped.inc();
+        static std::atomic<std::int64_t> last_warning{0};
+        const auto now_s =
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        if (now_s - last_warning.exchange(now_s) >= 10 && logger_) {
+            logger_->error(
+                "main loop queue full ({} tasks waiting): dropping tasks (forge.loop.dropped); the loop "
+                "is stuck or far behind",
+                limit);
+        }
+        return false;
+    }
+    return tasks_.push([this, t = std::move(task), queued = std::chrono::steady_clock::now()] {
         const auto start = std::chrono::steady_clock::now();
         lag.observe(std::chrono::duration<double>(start - queued).count());
         FORGE_TRACE_SCOPE("loop.task", "forge");
@@ -390,6 +411,7 @@ int Application::run(int argc, char** argv) {
         auth_.load(cfg);
         request_timeout_ms_ = cfg.value<int>("forge.request_timeout_ms");
         slow_task_ms_ = cfg.value<int>("forge.slow_task_ms");
+        max_pending_tasks_ = cfg.value<int>("forge.max_pending_tasks");
         start_observability(cfg);
         control_ = std::make_unique<ControlService>(*this);
         detail::register_builtin_commands(*this);
@@ -479,12 +501,19 @@ void Application::setup_logging(const Config& cfg) {
 
 void Application::start_signal_thread() {
     signal_thread_running_ = true;
+    signal_wake_fd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     signal_thread_ = std::thread([this] {
+        // Asleep until a signal (signalfd on the blocked set) or stop_signal_thread()
+        // (the eventfd): no periodic wake-ups.
         const sigset_t set = handled_signal_set();
-        const timespec timeout{0, 200 * 1000 * 1000};
+        const int sfd = ::signalfd(-1, &set, SFD_CLOEXEC | SFD_NONBLOCK);
+        pollfd fds[] = {{sfd, POLLIN, 0}, {signal_wake_fd_, POLLIN, 0}};
         while (signal_thread_running_.load()) {
-            const int sig = ::sigtimedwait(&set, nullptr, &timeout);
-            if (sig < 0) continue;  // timeout / EINTR
+            if (::poll(fds, 2, -1) <= 0) continue;  // EINTR
+            if (!(fds[0].revents & POLLIN)) continue;
+            signalfd_siginfo info{};
+            if (::read(sfd, &info, sizeof(info)) != static_cast<ssize_t>(sizeof(info))) continue;
+            const int sig = static_cast<int>(info.ssi_signo);
             if (sig == SIGHUP) {
                 logger_->info("SIGHUP received, reloading configuration");
                 reload();
@@ -500,12 +529,21 @@ void Application::start_signal_thread() {
                 stop(0);
             }
         }
+        ::close(sfd);
     });
 }
 
 void Application::stop_signal_thread() {
     signal_thread_running_ = false;
+    if (signal_wake_fd_ >= 0) {
+        const std::uint64_t one = 1;
+        (void)!::write(signal_wake_fd_, &one, sizeof(one));
+    }
     if (signal_thread_.joinable()) signal_thread_.join();
+    if (signal_wake_fd_ >= 0) {
+        ::close(signal_wake_fd_);
+        signal_wake_fd_ = -1;
+    }
 }
 
 void Application::drain_while(const std::function<void()>& blocking) {
@@ -535,7 +573,8 @@ void Application::drain_while(const std::function<void()>& blocking) {
 
 void Application::main_loop() {
     while (!stopping()) {
-        auto task = tasks_.pop_for(std::chrono::milliseconds(500));
+        // stop() pushes a task, so the wait only ends when there is something to do.
+        auto task = tasks_.pop_for(std::chrono::seconds(5));
         if (!task || !*task) continue;
         try {
             (*task)();
@@ -569,6 +608,7 @@ void Application::do_reload() {
     // opened again (logrotate: `postrotate kill -HUP`).
     request_timeout_ms_ = fresh.value<int>("forge.request_timeout_ms");
     slow_task_ms_ = fresh.value<int>("forge.slow_task_ms");
+    max_pending_tasks_ = fresh.value<int>("forge.max_pending_tasks");
     watchdog_grace_s_ = fresh.value<double>("health.watchdog_grace_s");
     if (auto level = fresh.get<std::string>("log.level")) {
         try {
@@ -635,6 +675,10 @@ void Application::shutdown() {
     if (logger_) logger_->info("{} stopped", info_.name);
     log::flush();
     pthread_sigmask(SIG_SETMASK, &saved_signal_mask_, nullptr);  // as run() found it
+    // Tasks that never ran: dropped now, so a thread waiting on a call() future
+    // gets std::future_error (broken promise) instead of waiting for ever.
+    while (tasks_.try_pop()) {
+    }
 
     hub_->reset();
     console_->reset();
