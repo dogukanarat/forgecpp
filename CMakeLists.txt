@@ -27,7 +27,7 @@ set(FORGECPP_SANITIZE "" CACHE STRING
     "Build with sanitizers: address, undefined, thread or a list (address;undefined)")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type")
 endif()
 
 if(NOT DEFINED CMAKE_CXX_STANDARD)
@@ -201,12 +201,18 @@ if(FORGECPP_WARNINGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(forgecpp PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-# Test helper target: forgecpp + doctest with a ready-made main().
+# Test helper target: forgecpp + doctest with a ready-made main(). An
+# INTERFACE target that carries the main() as a source: nothing to install as
+# a library, so find_package(forgecpp) works with the -dev package alone.
 if(doctest_FOUND)
-    add_library(forgecpp_testing STATIC src/testing_main.cpp)
+    add_library(forgecpp_testing INTERFACE)
     add_library(forgecpp::testing ALIAS forgecpp_testing)
     set_target_properties(forgecpp_testing PROPERTIES EXPORT_NAME testing)
-    target_link_libraries(forgecpp_testing PUBLIC forgecpp doctest::doctest)
+    target_sources(forgecpp_testing INTERFACE
+        "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src/testing_main.cpp>"
+        "$<INSTALL_INTERFACE:${CMAKE_INSTALL_DATADIR}/forgecpp/testing_main.cpp>")
+    target_link_libraries(forgecpp_testing INTERFACE forgecpp doctest::doctest)
+    install(FILES src/testing_main.cpp DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp COMPONENT Development)
 endif()
 
 # forgecpp::zmq: kept for applications written when ZeroMQ was optional.
@@ -260,18 +266,22 @@ if(TARGET forgecpp_testing)
 endif()
 list(APPEND _forge_targets forgecpp_zmq)
 
+# Components: Runtime (the library, forgectl, the Python package) and
+# Development (headers, CMake and pkg-config files, protos, the generators):
+# cmake --install build --component Runtime, CPack, or a packager's split.
 install(TARGETS ${_forge_targets}
     EXPORT forgecppTargets
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Runtime NAMELINK_COMPONENT Development
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Development
     INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-install(DIRECTORY include/forge DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+install(DIRECTORY include/forge DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT Development
         FILES_MATCHING PATTERN "*.hpp")
 install(DIRECTORY "${PROJECT_BINARY_DIR}/forge_proto/forgecpp/forge" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-        FILES_MATCHING PATTERN "*.pb.h" PATTERN "*.forge.hpp")
-install(DIRECTORY proto/forge DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp/proto)
+        COMPONENT Development FILES_MATCHING PATTERN "*.pb.h" PATTERN "*.forge.hpp")
+install(DIRECTORY proto/forge DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp/proto COMPONENT Development
+        PATTERN "API.json" EXCLUDE)
 # Python package "forge": the generated forge/*_pb2.py, the stream framing and
 # the c2 command client, in site-packages (from a build directory:
 # PYTHONPATH=<build>/python).
@@ -281,7 +291,7 @@ endforeach()
 # pip install <build>/python (a ground segment without the C++ toolchain).
 configure_file(python/pyproject.toml.in "${PROJECT_BINARY_DIR}/python/pyproject.toml" @ONLY)
 forge_install_python(DIRECTORY "${PROJECT_BINARY_DIR}/python")
-install(TARGETS forgectl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS forgectl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
 install(FILES "${PROJECT_BINARY_DIR}/include/forge/version.hpp"
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/forge)
 install(FILES "${FORGECPP_THREAD_POOL_DIR}/BS_thread_pool.hpp"
@@ -291,12 +301,16 @@ install(FILES "${FORGECPP_NANOPB_DIR}/pb.h" "${FORGECPP_NANOPB_DIR}/pb_common.h"
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/forgecpp/nanopb)
 # forge_add_proto() in applications: the nanopb generator and forge-proto.py.
 install(DIRECTORY "${FORGECPP_NANOPB_DIR}/generator" DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp/nanopb
-        PATTERN "__pycache__" EXCLUDE PATTERN "*_pb2.py" EXCLUDE)
-install(PROGRAMS tools/forge-proto.py DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp)
+        COMPONENT Development
+        PATTERN "__pycache__" EXCLUDE PATTERN "*_pb2.py" EXCLUDE PATTERN "*.bat" EXCLUDE
+        PATTERN "*py2*" EXCLUDE PATTERN "platformio_generator.py" EXCLUDE PATTERN "Makefile" EXCLUDE)
+install(PROGRAMS tools/forge-proto.py DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp COMPONENT Development)
 # Native builds also install the protoc they used, so applications built
 # against this install need no protobuf of their own.
 if(FORGE_PROTOC AND NOT CMAKE_CROSSCOMPILING)
-    install(PROGRAMS "${FORGE_PROTOC}" DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp RENAME protoc)
+    # A program of this machine: libexec, not share.
+    install(PROGRAMS "${FORGE_PROTOC}" DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/forgecpp RENAME protoc
+            COMPONENT Development)
 endif()
 
 install(EXPORT forgecppTargets
@@ -305,7 +319,10 @@ install(EXPORT forgecppTargets
 
 configure_package_config_file(cmake/forgecppConfig.cmake.in
     "${PROJECT_BINARY_DIR}/forgecppConfig.cmake"
-    INSTALL_DESTINATION ${FORGECPP_CMAKE_DIR})
+    INSTALL_DESTINATION ${FORGECPP_CMAKE_DIR}
+    # Paths relative to the prefix, whatever libdir and datadir are (Debian
+    # multiarch, a BSP's layout): the config computes them from its own location.
+    PATH_VARS CMAKE_INSTALL_DATADIR CMAKE_INSTALL_LIBEXECDIR CMAKE_INSTALL_INCLUDEDIR)
 write_basic_package_version_file(
     "${PROJECT_BINARY_DIR}/forgecppConfigVersion.cmake"
     COMPATIBILITY SameMinorVersion)
@@ -315,15 +332,16 @@ install(FILES
         cmake/ForgeHelpers.cmake
         cmake/ForgeEmbed.cmake
         cmake/forge-app.service.in
-    DESTINATION ${FORGECPP_CMAKE_DIR})
+    DESTINATION ${FORGECPP_CMAKE_DIR} COMPONENT Development)
 
 # pkg-config for non-CMake consumers (plain Makefiles, autotools, meson).
 set(FORGECPP_PC_REQUIRES "libzmq")
+set(FORGECPP_PC_REQUIRES_PRIVATE "")
 if(TARGET OpenSSL::SSL)
-    string(APPEND FORGECPP_PC_REQUIRES " openssl")
+    string(APPEND FORGECPP_PC_REQUIRES_PRIVATE " openssl")
 endif()
 if(TARGET ZLIB::ZLIB)
-    string(APPEND FORGECPP_PC_REQUIRES " zlib")
+    string(APPEND FORGECPP_PC_REQUIRES_PRIVATE " zlib")
 endif()
 # httplib's feature macros (SSL, zlib, ...) change its class layouts, so
 # pkg-config users must compile with exactly the same definitions.
@@ -332,15 +350,15 @@ set(FORGECPP_PC_DEFINES "$<$<BOOL:${_httplib_defs}>:-D$<JOIN:${_httplib_defs}, -
 configure_file(cmake/forgecpp.pc.in "${PROJECT_BINARY_DIR}/forgecpp.pc.gen" @ONLY)
 file(GENERATE OUTPUT "${PROJECT_BINARY_DIR}/forgecpp.pc" INPUT "${PROJECT_BINARY_DIR}/forgecpp.pc.gen")
 install(FILES "${PROJECT_BINARY_DIR}/forgecpp.pc"
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig COMPONENT Development)
 
 if(FORGECPP_INSTALL_TOOLS)
-    install(PROGRAMS tools/forgecpp-new DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(PROGRAMS tools/forgecpp-new DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Development)
 endif()
 
-install(FILES LICENSE README.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(FILES LICENSE README.md DESTINATION ${CMAKE_INSTALL_DOCDIR} COMPONENT Runtime)
 install(FILES third_party/thread-pool/LICENSE.txt
-        DESTINATION ${CMAKE_INSTALL_DOCDIR}/licenses RENAME BS_thread_pool-LICENSE.txt)
+        DESTINATION ${CMAKE_INSTALL_DOCDIR}/licenses RENAME BS_thread_pool-LICENSE.txt COMPONENT Development)
 
 # API reference (Doxygen): cmake --build build --target forgecpp_docs -> build/docs/html
 find_package(Doxygen QUIET)

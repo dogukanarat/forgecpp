@@ -92,9 +92,17 @@ browser ──▶ http://<device>/ ──links──▶ http://<device>:<port>/ 
 
   The unit also has what a daemon never needs taken away: `NoNewPrivileges`,
   `PrivateTmp`, `ProtectSystem=full` (state goes to `StateDirectory`),
-  `ProtectHome=read-only`, `ProtectControlGroups`, `RestrictSUIDSGID`,
-  `LockPersonality`. Devices (`/dev/tty*`, IIO), `/sys` writes and real-time
-  priorities stay allowed. `NO_HARDENING` leaves them out.
+  `ProtectHome=read-only`, `ProtectControlGroups`, `ProtectKernelModules`,
+  `ProtectKernelLogs`, `ProtectClock`, `ProtectHostname`,
+  `ProtectProc=invisible`, `RestrictNamespaces`, `RestrictSUIDSGID`,
+  `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`,
+  `SystemCallArchitectures=native`, `LockPersonality`. Devices (`/dev/tty*`,
+  IIO), `/sys` writes and real-time priorities stay allowed. `NO_HARDENING`
+  leaves them out. The unit runs as root unless `USER <name>` or
+  `DYNAMIC_USER` is given; both drop every capability except those named with
+  `CAPABILITIES` (`CAP_NET_BIND_SERVICE` for a port below 1024). It starts
+  after `network.target`; `NETWORK_ONLINE` waits for routes and addresses
+  (`network-online.target`) for a program that connects out at start.
 
   A crash or a hang is restarted by systemd with or without the hub; after too
   many restarts the unit is `failed` and stays down. The hub reads it all from

@@ -232,6 +232,50 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   the armhf build, the systemd job and the API reference run on pull
   requests, weekly and by hand.
 
+### Changed (build, packaging and the Yocto layer)
+
+- `forgecpp::testing` is an INTERFACE target that carries `testing_main.cpp`
+  as a source: no static library to install, so `find_package(forgecpp)`
+  works with the development package alone (before, a sysroot without
+  `libforgecpp_testing.a` failed every consumer's configure).
+- `forgecppConfig.cmake` finds the install's data and protoc directories
+  from its own location (`PATH_VARS`), whatever libdir and datadir are;
+  `FORGECPP_DATADIR` and `FORGECPP_LIBEXECDIR` are set for the helpers. The
+  protoc of a native install is in `libexec/forgecpp`; in a Yocto SDK
+  `forge_add_proto` finds the SDK's protoc (`OECORE_NATIVE_SYSROOT`); a cross
+  build takes the Python site directory from the sysroot.
+- Install components `Runtime` and `Development`; the development files no
+  longer include nanopb's Windows and Python 2 generator files or
+  `API.json`; an RPATH is only set for host installs (`FORGE_INSTALL_RPATH`).
+- pkg-config: OpenSSL and zlib are `Requires.private`; `-std=c++20` is no
+  longer in `Cflags` (the consumer chooses the standard; C++20 or later).
+- Generated units: `USER` or `DYNAMIC_USER` drop every capability unless
+  `CAPABILITIES CAP_...` names some (`CAP_NET_BIND_SERVICE` for port 80
+  without root); `NETWORK_ONLINE` waits for `network-online.target`, the
+  default is `network.target` (no boot delay for a daemon that only binds);
+  the hardening block adds `ProtectKernelModules`, `ProtectKernelLogs`,
+  `ProtectClock`, `ProtectHostname`, `ProtectProc=invisible`,
+  `RestrictNamespaces`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+  AF_NETLINK` and `SystemCallArchitectures=native`.
+- `install.sh --package` writes a reproducible tarball (sorted, no owner,
+  `SOURCE_DATE_EPOCH` or the commit's time).
+- **Yocto layer** (untested in a bitbake build in this change; read against
+  the scarthgap classes): the `forgecpp` recipe links the distribution's
+  libraries (meta-oe's `zeromq`, `cppzmq`, `nlohmann-json`, `cli11`,
+  `tomlplusplus`, `doctest`, `protobuf`, `libiio`) with plain `inherit cmake`
+  instead of running `install.sh` and packaging ten libraries into `/usr`;
+  new recipes `quill`, `cpp-httplib` and `concurrentqueue` (the versions of
+  the submodules, `native` and `nativesdk` too); `forgecpp-tools`
+  (`nativesdk-forgecpp-tools` gives the SDK `forgecpp-new` and the message
+  generator); `forgecpp-protoc-native` is gone (`protobuf-native`); ptest
+  (`forgecpp-ptest`: the framework's tests on the target); one
+  `forgecpp-src.inc` with the source and the release commit
+  (`FORGECPP_SRCREV`; `tools/release.sh` sets it; `${AUTOREV}` for a
+  development build) instead of `AUTOREV` and `SRCPV` in every recipe;
+  `S = ${UNPACKDIR}/git` for styhead and walnascar; licenses per package and
+  `LIC_FILES_CHKSUM` for what is compiled in; `CVE_PRODUCT`; the four
+  example recipes share `forgecpp-app.inc`. The kas image adds ptest.
+
 ### Changed (API and configuration; the old names keep working)
 
 - **`setup_controls(forge::Controls&)`** is the hook that declares the control

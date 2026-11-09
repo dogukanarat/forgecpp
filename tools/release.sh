@@ -53,6 +53,17 @@ sed -i "s/^## Unreleased (${VERSION})$/## ${VERSION} ($(date -u +%Y-%m-%d))/" CH
 git add -A
 git commit -q -m "Release ${VERSION}"
 git tag -a "${TAG}" -m "forgecpp ${VERSION}"
+release_commit="$(git rev-parse HEAD)"
+
+# The Yocto layer ships the release: its recipes point at the tagged commit.
+# This is a second commit (a commit cannot name its own hash); the tag stays
+# on the release commit, the layer in master is what a BSP checks out.
+echo "== the Yocto layer points at ${TAG}"
+sed -i -e "s/^FORGECPP_PV = .*/FORGECPP_PV = \"${VERSION}\"/" \
+       -e "s/^FORGECPP_SRCREV ?= .*/FORGECPP_SRCREV ?= \"${release_commit}\"/" \
+       yocto/recipes-support/forgecpp/forgecpp-src.inc
+git add yocto/recipes-support/forgecpp/forgecpp-src.inc
+git commit -q -m "Yocto: the layer builds ${TAG}"
 echo
-echo "Release ${VERSION} is commit $(git rev-parse --short HEAD), tag ${TAG}. To publish:"
+echo "Release ${VERSION} is commit ${release_commit:0:7}, tag ${TAG}; the layer's commit follows it. To publish:"
 echo "  git push origin ${branch} ${TAG}"

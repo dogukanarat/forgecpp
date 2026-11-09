@@ -39,18 +39,20 @@ local_conf_header:
   forgecpp: |
     IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub radio-controller spectrum-analyzer qam-modem channel-emulator \
                              python3-forge curl"
+    DISTRO_FEATURES:append = " ptest"
+    IMAGE_INSTALL:append = " forgecpp-ptest"
     # No transceiver in QEMU: the radio's simulator.
     RADIO_BACKEND:pn-radio-controller = "sim"
     # Build this checkout, not the recipes' git URL.
     INHERIT += "externalsrc"
     EXTERNALSRC:pn-forgecpp = "${FORGECPP_SRC}"
-    EXTERNALSRC:pn-forgecpp-protoc-native = "${FORGECPP_SRC}/third_party/protobuf"
+    EXTERNALSRC:pn-forgecpp-tools = "${FORGECPP_SRC}"
     EXTERNALSRC:pn-radio-controller = "${FORGECPP_SRC}/examples/radio-controller"
     EXTERNALSRC:pn-spectrum-analyzer = "${FORGECPP_SRC}/examples/spectrum-analyzer"
     EXTERNALSRC:pn-qam-modem = "${FORGECPP_SRC}/examples/qam-modem"
     EXTERNALSRC:pn-channel-emulator = "${FORGECPP_SRC}/examples/channel-emulator"
     PV:pn-forgecpp = "0.4.0+ci"
-    PV:pn-forgecpp-protoc-native = "21.12+ci"
+    PV:pn-forgecpp-tools = "0.4.0+ci"
     PV:pn-radio-controller = "1.0.0+ci"
     PV:pn-spectrum-analyzer = "1.0.0+ci"
     PV:pn-qam-modem = "1.0.0+ci"
@@ -58,7 +60,7 @@ local_conf_header:
   testimage: |
     IMAGE_CLASSES += "testimage"
     IMAGE_FEATURES += "ssh-server-dropbear"
-    TEST_SUITES = "ping ssh forgecpp"
+    TEST_SUITES = "ping ssh ptest forgecpp"
     TEST_RUNQEMUPARAMS = "slirp nographic"
     TEST_QEMUBOOT_TIMEOUT = "1500"
   disk: |

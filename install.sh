@@ -554,7 +554,10 @@ if [[ "${PACKAGE}" == "ON" ]]; then
     fi
     PKG="${BUILD_DIR}/forgecpp-${FORGECPP_VERSION}-${ARCH}.tar.gz"
     info "Creating ${PKG}"
-    tar -C "${DESTDIR_ARG}" -czf "${PKG}" .
+    # Reproducible: sorted names, no owner, a fixed time (SOURCE_DATE_EPOCH or the commit's).
+    epoch="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT}" log -1 --format=%ct 2>/dev/null || date +%s)}"
+    tar -C "${DESTDIR_ARG}" --sort=name --mtime="@${epoch}" --owner=0 --group=0 --numeric-owner \
+        -cf - . | gzip -n >"${PKG}"
     echo
     info "Package ready: ${PKG}"
     echo "    install on a target with:  tar -xzf $(basename "${PKG}") -C /"

@@ -88,3 +88,10 @@ everything.
 git -C third_party/quill fetch --tags && git -C third_party/quill checkout v13.x.y
 git add third_party/quill && git commit -m "quill: v13.x.y"
 ```
+
+## Without CMake
+
+`pkg-config --cflags --libs forgecpp` gives the flags for a plain Makefile or
+meson (`lib/pkgconfig/forgecpp.pc`): the include directories, cpp-httplib's
+feature macros (they change its class layouts, so they must match) and the
+libraries. The standard is the consumer's: compile with `-std=c++20` or later.

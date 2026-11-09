@@ -39,7 +39,7 @@ Addresses are static: a program finds another one through its configuration
 ## Debugging on the device
 
 The generated unit is hardened (`ProtectSystem=full`, `PrivateTmp`,
-`NoNewPrivileges`, ...; [commands.md](commands.md#the-unit)). For a debugger:
+`NoNewPrivileges`, ...; [operations.md](operations.md#forge-hub-every-application-on-the-device-in-one-place)). For a debugger:
 
 - `gdbserver :2345 --attach $(pidof radio-controller)` from a shell on the
   device (the unit does not forbid ptrace from outside it); from the SDK:

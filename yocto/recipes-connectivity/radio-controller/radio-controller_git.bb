@@ -1,33 +1,10 @@
 SUMMARY = "AD936x radio controller daemon"
 DESCRIPTION = "Controls an AD936x (AD9364, AD9361/AD9363) transceiver through libiio and streams IQ \
-samples as streams over ZeroMQ. Web UI, forgectl, console and telnet \
-share the same controls. \
-Built on forgecpp."
-HOMEPAGE = "https://github.com/dogukanarat/forgecpp"
-SECTION = "network"
-LICENSE = "MIT"
-LIC_FILES_CHKSUM = "file://../../LICENSE;md5=d651bd6255f4ea85c3b1b170b8dd19c6"
+samples over ZeroMQ. Web UI, forgectl, console and telnet share the same controls. Built on forgecpp."
+FORGECPP_APP = "radio-controller"
+require recipes-connectivity/forgecpp-app.inc
 
-SRC_URI = "git://github.com/dogukanarat/forgecpp.git;protocol=https;branch=master"
-# Pin a release commit for reproducible builds.
-SRCREV ?= "${AUTOREV}"
-PV = "1.0.0+git${SRCPV}"
-
-S = "${WORKDIR}/git/examples/radio-controller"
-
-# forgecpp provides ZeroMQ, nanopb and libiio (built from its submodules);
-# forgecpp-protoc-native and python3-protobuf-native generate the
-# application's messages (radio, sa).
-DEPENDS = "forgecpp forgecpp-protoc-native python3-protobuf-native"
-
-inherit cmake systemd python3-dir python3native
-
-EXTRA_OECMAKE = " \
-    -DBUILD_TESTING=OFF \
-    -DFORGE_PYTHON_SITEDIR=${PYTHON_SITEPACKAGES_DIR} \
-    -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir} \
-    -DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/forgecpp-protoc \
-"
+DEPENDS += "libiio"
 
 # On the board the radio is the local IIO device; keep runtime changes across reboots.
 RADIO_BACKEND ?= "iio"
@@ -47,9 +24,6 @@ do_install:append() {
            -e 's|^tap_rx = .*|tap_rx = ${RADIO_TAP_RX}|' \
            ${conf}
 }
-
-SYSTEMD_SERVICE:${PN} = "radio-controller.service"
-CONFFILES:${PN} = "${sysconfdir}/radio-controller/radio-controller.toml"
 
 # Python helpers (rx_capture.py, tx_tone.py) and the radio modules
 # need pyzmq, protobuf and numpy (meta-python).

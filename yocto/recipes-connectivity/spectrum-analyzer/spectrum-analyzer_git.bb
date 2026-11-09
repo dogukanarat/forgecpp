@@ -3,31 +3,10 @@ DESCRIPTION = "Spectrum analyzer for AD936x transceivers (RX2 of radio-controlle
 web UI: RBW/VBW, detectors, max/min hold and average traces, markers with peak \
 search and peak track, waterfall, channel power and occupied bandwidth, limit \
 line alarm. sa.spectrum stream and the command link. Built on forgecpp."
-HOMEPAGE = "https://github.com/dogukanarat/forgecpp"
-SECTION = "network"
-LICENSE = "MIT"
-LIC_FILES_CHKSUM = "file://../../LICENSE;md5=d651bd6255f4ea85c3b1b170b8dd19c6"
+FORGECPP_APP = "spectrum-analyzer"
+require recipes-connectivity/forgecpp-app.inc
 
-SRC_URI = "git://github.com/dogukanarat/forgecpp.git;protocol=https;branch=master"
-# Pin a release commit for reproducible builds.
-SRCREV ?= "${AUTOREV}"
-PV = "1.0.0+git${SRCPV}"
-
-S = "${WORKDIR}/git/examples/spectrum-analyzer"
-
-# forgecpp provides ZeroMQ, nanopb and libiio (built from its submodules);
-# forgecpp-protoc-native and python3-protobuf-native generate the
-# application's messages (radio, sa).
-DEPENDS = "forgecpp forgecpp-protoc-native python3-protobuf-native"
-
-inherit cmake systemd python3-dir python3native
-
-EXTRA_OECMAKE = " \
-    -DBUILD_TESTING=OFF \
-    -DFORGE_PYTHON_SITEDIR=${PYTHON_SITEPACKAGES_DIR} \
-    -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir} \
-    -DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/forgecpp-protoc \
-"
+DEPENDS += "libiio"
 
 # "radio": RX2 of an AD9361/AD9363 shared with radio-controller (both run together).
 # "iio": own the RX path of the local IIO device (AD9364; radio-controller must not run).
@@ -46,10 +25,8 @@ do_install:append() {
            ${conf}
 }
 
-SYSTEMD_SERVICE:${PN} = "spectrum-analyzer.service"
 SYSTEMD_AUTO_ENABLE:${PN} ?= "enable"
 RRECOMMENDS:${PN} = "${@'radio-controller' if d.getVar('SA_BACKEND') == 'radio' else ''}"
-CONFFILES:${PN} = "${sysconfdir}/spectrum-analyzer/spectrum-analyzer.toml"
 
 # spectrum_watch.py and the sa modules; .proto files are development files.
 PACKAGES =+ "${PN}-clients"

@@ -13,9 +13,16 @@
 #       [RESTART_WINDOW <s>]         default 600
 #       [RESTART_DELAY <s>]          default 2
 #       [WATCHDOG <s>]               hung main loop -> killed and restarted (default 30; 0 = off)
-#       [DESCRIPTION <text>] [AFTER <units...>] [USER <user>]
+#       [DESCRIPTION <text>] [AFTER <units...>]
+#       [USER <user> | DYNAMIC_USER] run as that user (default root), or as a user systemd makes
+#                                    for the unit's lifetime; both drop every capability unless:
+#       [CAPABILITIES <CAP_...>]     e.g. CAP_NET_BIND_SERVICE for a port below 1024 without root
+#       [NETWORK_ONLINE]             wait for network-online.target (routes up) instead of
+#                                    network.target; for a program that connects out at start
 #       [NO_HARDENING]               leave out NoNewPrivileges, PrivateTmp, ProtectSystem=full,
-#                                    ProtectHome=read-only, ... (the generated unit has them)
+#                                    ProtectHome=read-only, ProtectKernelModules, ProtectClock,
+#                                    RestrictNamespaces, RestrictAddressFamilies, ... (the
+#                                    generated unit has them; devices, /sys and real-time stay open)
 #       [TEMPLATE]                   also <name>@.service: several instances on one device,
 #                                    <name>@<instance> reads <sysconfdir>/<name>/<instance>.toml,
 #                                    runs with --instance <instance> and its own StateDirectory;
@@ -66,19 +73,29 @@ else()
     set(_FORGE_LIB forgecpp)
 endif()
 
-# forge/*.proto: in the source tree, or under share/forgecpp when installed.
+# Where forgecpp's files are: in the source tree (this file under cmake/), or
+# in an install, where forgecppConfig.cmake sets FORGECPP_DATADIR and
+# FORGECPP_LIBEXECDIR from its own location (any libdir and datadir). The
+# ../../../share fallback is for a ForgeHelpers.cmake included on its own.
+if(NOT DEFINED FORGECPP_DATADIR AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/forge-proto.py")
+    get_filename_component(FORGECPP_DATADIR "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp" ABSOLUTE)
+endif()
+if(NOT DEFINED FORGECPP_LIBEXECDIR AND DEFINED FORGECPP_DATADIR)
+    get_filename_component(FORGECPP_LIBEXECDIR "${FORGECPP_DATADIR}/../../libexec/forgecpp" ABSOLUTE)
+endif()
+
+# forge/*.proto
 if(NOT DEFINED FORGECPP_PROTO_DIR)
     if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../proto/forge/messages.proto")
         get_filename_component(FORGECPP_PROTO_DIR "${CMAKE_CURRENT_LIST_DIR}/../proto" ABSOLUTE)
-    elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/proto/forge/messages.proto")
-        get_filename_component(FORGECPP_PROTO_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/proto" ABSOLUTE)
+    elseif(DEFINED FORGECPP_DATADIR AND EXISTS "${FORGECPP_DATADIR}/proto/forge/messages.proto")
+        set(FORGECPP_PROTO_DIR "${FORGECPP_DATADIR}/proto")
     endif()
 endif()
 
-# nanopb (runtime sources and generator) and forge-proto.py: in the source
-# tree, or under share/forgecpp when installed.
+# nanopb (runtime sources and generator) and forge-proto.py.
 if(NOT DEFINED FORGECPP_NANOPB_DIR)
-    foreach(dir "${CMAKE_CURRENT_LIST_DIR}/../third_party/nanopb" "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/nanopb")
+    foreach(dir "${CMAKE_CURRENT_LIST_DIR}/../third_party/nanopb" "${FORGECPP_DATADIR}/nanopb")
         if(EXISTS "${dir}/generator/nanopb_generator.py")
             get_filename_component(FORGECPP_NANOPB_DIR "${dir}" ABSOLUTE)
             break()
@@ -86,7 +103,7 @@ if(NOT DEFINED FORGECPP_NANOPB_DIR)
     endforeach()
 endif()
 if(NOT DEFINED FORGECPP_PROTO_GEN)
-    foreach(file "${CMAKE_CURRENT_LIST_DIR}/../tools/forge-proto.py" "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/forge-proto.py")
+    foreach(file "${CMAKE_CURRENT_LIST_DIR}/../tools/forge-proto.py" "${FORGECPP_DATADIR}/forge-proto.py")
         if(EXISTS "${file}")
             get_filename_component(FORGECPP_PROTO_GEN "${file}" ABSOLUTE)
             break()
@@ -94,10 +111,18 @@ if(NOT DEFINED FORGECPP_PROTO_GEN)
     endforeach()
 endif()
 
-# The protoc installed with forgecpp (native builds), unless one is given.
-if(NOT FORGE_PROTOC AND NOT CMAKE_CROSSCOMPILING
-   AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/protoc")
-    get_filename_component(FORGE_PROTOC "${CMAKE_CURRENT_LIST_DIR}/../../../share/forgecpp/protoc" ABSOLUTE)
+# The protoc installed with forgecpp (native builds), unless one is given; in
+# a Yocto SDK, the one of the SDK (OECORE_NATIVE_SYSROOT).
+if(NOT FORGE_PROTOC AND NOT CMAKE_CROSSCOMPILING)
+    foreach(candidate "${FORGECPP_LIBEXECDIR}/protoc" "${FORGECPP_DATADIR}/protoc")
+        if(EXISTS "${candidate}")
+            set(FORGE_PROTOC "${candidate}")
+            break()
+        endif()
+    endforeach()
+endif()
+if(NOT FORGE_PROTOC AND DEFINED ENV{OECORE_NATIVE_SYSROOT} AND EXISTS "$ENV{OECORE_NATIVE_SYSROOT}/usr/bin/protoc")
+    set(FORGE_PROTOC "$ENV{OECORE_NATIVE_SYSROOT}/usr/bin/protoc")
 endif()
 # protoc that runs on the build machine.
 function(_forge_protoc out)
@@ -208,6 +233,18 @@ function(_forge_python_sitedir out)
         return()
     endif()
     set(dir "lib/python3/site-packages")
+    if(CMAKE_CROSSCOMPILING AND CMAKE_SYSROOT)
+        # The target's Python, from its sysroot (a Yocto SDK: lib/python3.12).
+        file(GLOB _py_dirs LIST_DIRECTORIES true "${CMAKE_SYSROOT}/usr/lib/python3.*" "${CMAKE_SYSROOT}/usr/lib64/python3.*")
+        list(FILTER _py_dirs EXCLUDE REGEX "python3\\.[0-9]+/.*|python3$")
+        if(_py_dirs)
+            list(GET _py_dirs 0 _py_dir)
+            get_filename_component(_py_name "${_py_dir}" NAME)
+            get_filename_component(_py_lib "${_py_dir}" DIRECTORY)
+            get_filename_component(_py_lib "${_py_lib}" NAME)
+            set(dir "${_py_lib}/${_py_name}/site-packages")
+        endif()
+    endif()
     find_package(Python3 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND AND NOT CMAKE_CROSSCOMPILING)
         # The interpreter's own directory when it is under the prefix (Debian:
@@ -245,9 +282,9 @@ function(_forge_pch target)
 endfunction()
 
 function(forge_add_app name)
-    cmake_parse_arguments(ARG "NO_INSTALL;SYSTEMD;TEMPLATE;PCH;NO_HARDENING"
+    cmake_parse_arguments(ARG "NO_INSTALL;SYSTEMD;TEMPLATE;PCH;NO_HARDENING;DYNAMIC_USER;NETWORK_ONLINE"
         "CONFIG;SERVICE;WEB;RESTART;MAX_RESTARTS;RESTART_WINDOW;RESTART_DELAY;WATCHDOG;DESCRIPTION;USER"
-        "SOURCES;LIBS;AFTER" ${ARGN})
+        "SOURCES;LIBS;AFTER;CAPABILITIES" ${ARGN})
     if(NOT ARG_SOURCES)
         message(FATAL_ERROR "forge_add_app(${name}): SOURCES is required")
     endif()
@@ -255,7 +292,19 @@ function(forge_add_app name)
     add_executable(${name} ${ARG_SOURCES})
     target_link_libraries(${name} PRIVATE ${_FORGE_LIB} ${ARG_LIBS})
     target_compile_features(${name} PRIVATE cxx_std_20)
-    set_target_properties(${name} PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
+    # An RPATH to the libraries it was linked with: for a host install under
+    # /usr/local or /opt; not in a cross build (the image's loader finds them;
+    # bitbake would strip it anyway). FORGE_INSTALL_RPATH overrides.
+    if(NOT DEFINED FORGE_INSTALL_RPATH)
+        if(CMAKE_CROSSCOMPILING)
+            set(FORGE_INSTALL_RPATH OFF)
+        else()
+            set(FORGE_INSTALL_RPATH ON)
+        endif()
+    endif()
+    if(FORGE_INSTALL_RPATH)
+        set_target_properties(${name} PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
+    endif()
     _forge_pch(${name} ${ARG_PCH})
     target_compile_definitions(${name} PRIVATE
         FORGE_APP_INSTALLED_CONFIG="${CMAKE_INSTALL_FULL_SYSCONFDIR}/${name}/${name}.toml")
@@ -270,20 +319,22 @@ function(forge_add_app name)
         endif()
     endforeach()
     if(ARG_SYSTEMD AND NOT ARG_SERVICE)
-        set(_hardening)
-        if(ARG_NO_HARDENING)
-            set(_hardening NO_HARDENING)
-        endif()
+        set(_flags)
+        foreach(flag NO_HARDENING DYNAMIC_USER NETWORK_ONLINE)
+            if(ARG_${flag})
+                list(APPEND _flags ${flag})
+            endif()
+        endforeach()
         forge_generate_unit(${name} "${CMAKE_CURRENT_BINARY_DIR}/${name}.service"
             RESTART "${ARG_RESTART}" MAX_RESTARTS "${ARG_MAX_RESTARTS}" RESTART_WINDOW "${ARG_RESTART_WINDOW}"
             RESTART_DELAY "${ARG_RESTART_DELAY}" WATCHDOG "${ARG_WATCHDOG}" DESCRIPTION "${ARG_DESCRIPTION}"
-            USER "${ARG_USER}" AFTER ${ARG_AFTER} ${_hardening})
+            USER "${ARG_USER}" AFTER ${ARG_AFTER} CAPABILITIES ${ARG_CAPABILITIES} ${_flags})
         set(ARG_SERVICE "${CMAKE_CURRENT_BINARY_DIR}/${name}.service")
         if(ARG_TEMPLATE)
             forge_generate_unit(${name} "${CMAKE_CURRENT_BINARY_DIR}/${name}@.service" INSTANCE
                 RESTART "${ARG_RESTART}" MAX_RESTARTS "${ARG_MAX_RESTARTS}" RESTART_WINDOW "${ARG_RESTART_WINDOW}"
                 RESTART_DELAY "${ARG_RESTART_DELAY}" WATCHDOG "${ARG_WATCHDOG}" DESCRIPTION "${ARG_DESCRIPTION}"
-                USER "${ARG_USER}" AFTER ${ARG_AFTER} ${_hardening})
+                USER "${ARG_USER}" AFTER ${ARG_AFTER} CAPABILITIES ${ARG_CAPABILITIES} ${_flags})
             list(APPEND ARG_SERVICE "${CMAKE_CURRENT_BINARY_DIR}/${name}@.service")
         endif()
     endif()
@@ -382,8 +433,9 @@ endfunction()
 # Writes a systemd unit for the application <name> (see forge_add_app).
 set(_FORGE_HELPERS_DIR "${CMAKE_CURRENT_LIST_DIR}")
 function(forge_generate_unit name output)
-    cmake_parse_arguments(ARG "INSTANCE;NO_HARDENING" "RESTART;MAX_RESTARTS;RESTART_WINDOW;RESTART_DELAY;WATCHDOG;DESCRIPTION;USER"
-                          "AFTER" ${ARGN})
+    cmake_parse_arguments(ARG "INSTANCE;NO_HARDENING;DYNAMIC_USER;NETWORK_ONLINE"
+                          "RESTART;MAX_RESTARTS;RESTART_WINDOW;RESTART_DELAY;WATCHDOG;DESCRIPTION;USER"
+                          "AFTER;CAPABILITIES" ${ARGN})
     foreach(pair "RESTART;on-failure" "MAX_RESTARTS;3" "RESTART_WINDOW;600" "RESTART_DELAY;2" "WATCHDOG;30")
         list(GET pair 0 key)
         list(GET pair 1 def)
@@ -402,8 +454,15 @@ function(forge_generate_unit name output)
     if(NOT FORGE_UNIT_DESCRIPTION)
         set(FORGE_UNIT_DESCRIPTION "${name} (forgecpp)")
     endif()
-    set(FORGE_UNIT_AFTER "")
+    # network.target: the interfaces are configured (enough to bind a port).
+    # NETWORK_ONLINE waits for routes and addresses too (a program that
+    # connects out at start); it delays boot, so it is asked for.
+    set(FORGE_UNIT_AFTER "network.target")
     set(FORGE_UNIT_WANTS "")
+    if(ARG_NETWORK_ONLINE)
+        set(FORGE_UNIT_AFTER "network-online.target")
+        set(FORGE_UNIT_WANTS "Wants=network-online.target\n")
+    endif()
     foreach(u IN LISTS ARG_AFTER)
         string(APPEND FORGE_UNIT_AFTER " ${u}")
     endforeach()
@@ -427,13 +486,27 @@ function(forge_generate_unit name output)
         set(FORGE_UNIT_STATE_DIR "${name}/%i")
     endif()
     set(FORGE_UNIT_EXTRA "")
+    if(ARG_USER AND ARG_DYNAMIC_USER)
+        message(FATAL_ERROR "forge_add_app(${name}): USER and DYNAMIC_USER exclude each other")
+    endif()
     if(ARG_USER)
         set(FORGE_UNIT_EXTRA "User=${ARG_USER}\n")
+    elseif(ARG_DYNAMIC_USER)
+        # A user that exists only while the unit runs; StateDirectory stays its own.
+        set(FORGE_UNIT_EXTRA "DynamicUser=yes\n")
+    endif()
+    if(ARG_CAPABILITIES)
+        # e.g. CAPABILITIES CAP_NET_BIND_SERVICE for port 80 without root.
+        string(REPLACE ";" " " _caps "${ARG_CAPABILITIES}")
+        string(APPEND FORGE_UNIT_EXTRA "AmbientCapabilities=${_caps}\nCapabilityBoundingSet=${_caps}\n")
+    elseif(ARG_USER OR ARG_DYNAMIC_USER)
+        string(APPEND FORGE_UNIT_EXTRA "CapabilityBoundingSet=\n")  # a plain user: no capability at all
     endif()
     if(NOT ARG_NO_HARDENING)
         # What a daemon never needs. Left out on purpose: PrivateDevices (UARTs,
         # IIO, GPIO), ProtectKernelTunables (libiio writes /sys), RestrictRealtime
-        # (real-time threads), MemoryDenyWriteExecute (JIT in some libraries).
+        # (real-time threads), MemoryDenyWriteExecute (JIT in some libraries),
+        # PrivateNetwork (the links). AF_NETLINK: libiio and systemd notify.
         string(APPEND FORGE_UNIT_EXTRA
             "# Hardening (forge_add_app NO_HARDENING leaves it out)\n"
             "NoNewPrivileges=yes\n"
@@ -441,7 +514,15 @@ function(forge_generate_unit name output)
             "ProtectSystem=full\n"
             "ProtectHome=read-only\n"
             "ProtectControlGroups=yes\n"
+            "ProtectKernelModules=yes\n"
+            "ProtectKernelLogs=yes\n"
+            "ProtectClock=yes\n"
+            "ProtectHostname=yes\n"
+            "ProtectProc=invisible\n"
+            "RestrictNamespaces=yes\n"
             "RestrictSUIDSGID=yes\n"
+            "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK\n"
+            "SystemCallArchitectures=native\n"
             "LockPersonality=yes\n")
     endif()
     configure_file("${_FORGE_HELPERS_DIR}/forge-app.service.in" "${output}" @ONLY)
