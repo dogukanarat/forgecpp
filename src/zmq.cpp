@@ -487,6 +487,12 @@ bool Sender::send(const Message& m) {
                        m.blob.empty() ? nullptr : m.blob.data(), m.blob.size());
 }
 
+bool Sender::send_wait(const Message& m, std::chrono::milliseconds timeout) {
+    ::zmq::pollitem_t item{socket_.handle(), 0, ZMQ_POLLOUT, 0};
+    if (::zmq::poll(&item, 1, timeout) <= 0 || (item.revents & ZMQ_POLLOUT) == 0) return false;
+    return send(m);
+}
+
 std::string Sender::endpoint() const { return resolved_endpoint(const_cast<::zmq::socket_t&>(socket_), ""); }
 
 // ---------------------------------------------------------------------------

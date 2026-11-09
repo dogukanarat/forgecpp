@@ -152,8 +152,9 @@ protected:
                            std::format("Window mean {:.1f} exceeds threshold {:.1f}", e.mean, e.threshold));
         });
 
-        // Producer: an independent thread that never touches application state.
-        producer_ = std::thread([this] { produce(); });
+        // Producer: an independent thread that never touches application state
+        // (stopped and joined before on_stop()).
+        worker("producer", [this](std::stop_token stop) { produce(stop); });
 
         // Consumer: every 100 ms drain the channel on the main loop, and hand
         // full windows to the thread pool for (pretend) heavy processing.
@@ -163,11 +164,7 @@ protected:
 
     void on_reload(const forge::Config& cfg) override { apply_config(cfg); }
 
-    void on_stop() override {
-        running_ = false;
-        samples_.close();
-        if (producer_.joinable()) producer_.join();
-    }
+    void on_stop() override { samples_.close(); }
 
 private:
     void apply_config(const forge::Config& cfg) {
@@ -178,17 +175,17 @@ private:
         logger()->info("sensor: {} Hz, window {}, alarm > {}", rate_hz_.load(), window_size_, threshold_);
     }
 
-    void produce() {
+    void produce(const std::stop_token& stop) {
         std::mt19937 rng{std::random_device{}()};
         std::normal_distribution<double> noise(0.0, 3.0);
         std::uniform_real_distribution<double> spike(0.0, 1.0);
         double t = 0;
-        while (running_) {
+        while (!stop.stop_requested()) {
             double value = 50.0 + 20.0 * std::sin(t) + noise(rng);
             if (spikes_ && spike(rng) < 0.05) value += 60.0;
             samples_.push(Sample{std::chrono::system_clock::now(), value});
             t += 0.05;
-            std::this_thread::sleep_for(std::chrono::duration<double>(1.0 / rate_hz_.load()));
+            forge::sleep_for(stop, std::chrono::duration<double>(1.0 / rate_hz_.load()));
         }
     }
 
@@ -233,8 +230,6 @@ private:
     std::atomic<bool> spikes_{false};
 
     // Producer side
-    std::atomic<bool> running_{true};
-    std::thread producer_;
     forge::Channel<Sample> samples_;
 
     // Main loop state (only touched on the main loop)

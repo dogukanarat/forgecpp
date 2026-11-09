@@ -1,7 +1,7 @@
 # The command link: c2 frames and tmtc commands
 
-What goes over `[forge].control` (and, later, a UART or CAN link), byte for
-byte. It is the c2 frame of [zephyrus](https://github.com/embedded-aviation/zephyrus),
+What goes over `[forge].control` and `[forge].serial` (and, later, CAN), byte
+for byte. It is the c2 frame of [zephyrus](https://github.com/embedded-aviation/zephyrus),
 so a forgecpp program and a zephyrus device can talk to each other directly.
 This page is enough to write a client or a device in any language; the
 reference implementation is `include/forge/c2.hpp` and `src/tmtc.cpp`.
@@ -21,8 +21,8 @@ reference implementation is `include/forge/c2.hpp` and `src/tmtc.cpp`.
   bytes: a longer or shorter one is dropped, never cut.
 - The **payload** is a protobuf message (the request or reply of the command).
 - There is no sync word, checksum or address: the transport gives whole,
-  checked frames. ZeroMQ carries one frame per ZeroMQ frame; a UART adds its
-  own framing and CRC; CAN uses ISO-TP.
+  checked frames. ZeroMQ carries one frame per ZeroMQ frame; a serial line
+  adds its own framing and CRC ([below](#on-a-serial-line)); CAN will use ISO-TP.
 
 ### Flags
 
@@ -115,7 +115,7 @@ ways (`forge::Status`, `errno_to_wire()`, `errno_from_wire()`).
 | unknown (a plain errno) | 0 |
 | app (zephyrus `MODULE_ID_APP`) | 64 |
 | first id for modules outside zephyrus | 128 |
-| forgecpp: c2, tmtc, pb, zmq | `0x0100`, `0x0101`, `0x0102`, `0x0103` |
+| forgecpp: c2, tmtc, pb, zmq, serial | `0x0100` .. `0x0104` |
 | Nordic modem library (codes are not errnos) | `0x7FFD` |
 | Zephyr kernel, drivers, libc | `0x7FFE` |
 
@@ -137,9 +137,65 @@ Common codes:
 | `EMSGSIZE` | 122 | 400 | a message too large |
 
 The status has no text: the reason only travels on HTTP. On a link, log it on
-the side that refuses. A handler's `forge::Error` goes out with module tmtc and
-the errno of its HTTP status (400 → `EINVAL`, 403 → `EACCES`, 404 → `ENOENT`,
-409 → `EBUSY`, 503 → `EAGAIN`, 504 → `ETIMEDOUT`, others → `EIO`).
+the side that refuses. A handler's `forge::Error` goes out with the errno of
+its HTTP status (400 → `EINVAL`, 403 → `EACCES`, 404 → `ENOENT`, 409 →
+`EBUSY`, 503 → `EAGAIN`, 504 → `ETIMEDOUT`, others → `EIO`) and the module of
+the command: **app** (64) for the application's commands, tmtc for forgecpp's
+(`0x0001`–`0x00FF`). A `forge::Status` the handler returns keeps its own
+module. forgecpp's own checks before a handler runs (the caller's role, a busy
+main loop) are module tmtc.
+
+## On a serial line
+
+`[forge].serial = "/dev/ttyUSB0"` answers the same commands on a UART (or USB
+CDC), as zephyrus does on its links (`modules/lib/cobs`). The two ends are
+equal: either may send requests, answers and reports. A c2 frame is one
+*message*; a message is cut into *fragments* that fit one frame of at most
+`[forge].serial_frame_size` bytes (244, zephyrus's
+`CONFIG_ZEPHYRUS_COBS_FRAME_SIZE`):
+
+```
+0x00 | COBS( flags | seq | total | part of the message | CRC16 ) | 0x00
+```
+
+- **flags**: `0x01` first fragment, `0x02` last; **seq** counts from 0;
+  **total** is the number of fragments (at most 255). A one-fragment message
+  has flags `0x03`, seq 0, total 1.
+- **CRC16** is CRC16-CCITT (polynomial `0x1021`, start `0xFFFF`, no
+  reflection, no final XOR; `"123456789"` gives `0x29B1`) of the bytes before
+  it, **little-endian**.
+- **COBS** (Consistent Overhead Byte Stuffing) removes every zero byte, at a
+  cost of one byte per 254, so `0x00` only marks a boundary. A receiver that
+  starts in the middle or loses bytes finds the next frame at the next
+  `0x00`. Every frame has both of its delimiters.
+- A fragment out of order, a bad CRC, or a fragment after one was lost drops
+  that message only; nothing is acknowledged or sent again. The c2 answer (or
+  its absence: a timeout) tells the sender.
+- A message is at most 16384 bytes on the forgecpp side (forgecpp's longest
+  replies are about 12.5 kB); zephyrus's default is 4096
+  (`CONFIG_ZEPHYRUS_COBS_MAX_MESSAGE_SIZE`): a device that asks for the long
+  lists needs more.
+- 8 data bits, no parity, one stop bit, no flow control;
+  `[forge].serial_baud` (115200).
+
+`tests/compat/zephyrus` checks this against zephyrus's own C code: the same
+bytes for the same message, the same messages from the same damaged stream.
+
+From code (to a device, or to a program with `[forge].serial`):
+
+```cpp
+forge::serial::Link link({.device = "/dev/ttyUSB0", .baud = 115200});
+forge_info_reply info{};
+auto s = link.call(forge_msg_id_info, forge_info_request{}, info);
+```
+
+```python
+from forge import serial, messages_pb2 as m      # the standard library only, no pyserial
+print(serial.Client("/dev/ttyUSB0").call(m.info, m.info_request(), m.info_reply).name)
+```
+
+`serial::Link` also answers requests from the other end (`on_request`, e.g.
+with a `tmtc::Dispatcher`) and takes its reports (`on_push`).
 
 ## The same commands in JSON
 

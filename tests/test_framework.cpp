@@ -749,6 +749,15 @@ TEST_CASE("threading: background(), call() on the loop, the dashboard's owner, s
         r->background([] {}, [&] { after_failure.set_value(); });
     });
     after_failure.get_future().get();
+    // With on_error: the reason, on the main loop.
+    std::promise<std::pair<std::string, bool>> failed;
+    r->post([&] {
+        r->background([]() -> int { throw std::runtime_error("disk gone"); }, [](int) { FAIL("not called"); },
+                      [&](const std::string& why) { failed.set_value({why, r->on_main_loop()}); });
+    });
+    const auto f = failed.get_future().get();
+    CHECK(f.first == "disk gone");
+    CHECK(f.second);
 
     // call() from the main loop runs at once instead of deadlocking on itself
     CHECK(r->invoke([&] { return r->call([] { return 7; }).get(); }) == 7);
@@ -786,4 +795,43 @@ TEST_CASE("daemon naming standard: lowercase words separated by '-'") {
                             "radio controller", ""}) {
         CHECK_FALSE_MESSAGE(forge::is_standard_name(bad), bad);
     }
+}
+
+TEST_CASE("threading: worker() threads stop before on_stop; one that throws raises an alarm") {
+    std::atomic<int> loops{0};
+    std::atomic<bool> stopped_first{false};
+    {
+        forge::testing::AppRunner<RolesApp> r({});
+        r->invoke([&] {
+            r->worker("ticker", [&](std::stop_token stop) {
+                while (!forge::sleep_for(stop, std::chrono::milliseconds(5))) ++loops;
+                stopped_first = true;
+            });
+            r->worker("broken", [](std::stop_token) { throw std::runtime_error("device gone"); });
+        });
+        CHECK(forge::testing::wait_until([&] { return loops > 2; }));
+        CHECK(forge::testing::wait_until([&] {
+            return r->invoke([&] {
+                const auto a = r->alarms().list();
+                return std::any_of(a.begin(), a.end(), [](const auto& x) {
+                    return x.id == "worker.broken" && x.message.find("device gone") != std::string::npos;
+                });
+            });
+        }));
+    }
+    CHECK(stopped_first);  // the runner's end stopped and joined it
+}
+
+TEST_CASE("threading: forge::Worker and sleep_for wake at once on stop") {
+    std::atomic<bool> done{false};
+    const auto t0 = std::chrono::steady_clock::now();
+    {
+        forge::Worker w("sleeper", [&](std::stop_token stop) {
+            CHECK(forge::sleep_for(stop, std::chrono::seconds(30)));
+            done = true;
+        });
+        CHECK(w.running());
+    }
+    CHECK(done);
+    CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5));
 }

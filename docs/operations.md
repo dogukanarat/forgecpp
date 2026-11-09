@@ -83,6 +83,12 @@ browser ──▶ http://<device>/ ──links──▶ http://<device>:<port>/ 
       WATCHDOG 30)           # hung main loop: killed and restarted      -> WatchdogSec=
   ```
 
+  The unit also has what a daemon never needs taken away: `NoNewPrivileges`,
+  `PrivateTmp`, `ProtectSystem=full` (state goes to `StateDirectory`),
+  `ProtectHome=read-only`, `ProtectControlGroups`, `RestrictSUIDSGID`,
+  `LockPersonality`. Devices (`/dev/tty*`, IIO), `/sys` writes and real-time
+  priorities stay allowed. `NO_HARDENING` leaves them out.
+
   A crash or a hang is restarted by systemd with or without the hub; after too
   many restarts the unit is `failed` and stays down. The hub reads it all from
   systemd (`systemctl show`: state, `NRestarts`, `Result`, the policy) and

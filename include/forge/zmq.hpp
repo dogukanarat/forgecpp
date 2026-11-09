@@ -259,6 +259,10 @@ public:
     bool publish(std::string_view topic, const pb::Type& type, const void* body, const void* blob, std::size_t size);
     /// Send a prepared message as is.
     bool send(const Message& message);
+    /// Wait up to `timeout` until the socket takes a message (PUSH: a peer with
+    /// room: backpressure), then send it. False after the timeout: nothing was
+    /// sent and nothing counted as dropped, so a loop can wait again.
+    bool send_wait(const Message& message, std::chrono::milliseconds timeout);
 
     /// PUB only: active subscriptions (each subscriber counts once per topic).
     std::size_t subscriptions();

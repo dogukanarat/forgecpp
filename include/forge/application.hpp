@@ -54,6 +54,7 @@
 #include "forge/scheduler.hpp"
 #include "forge/thread_pool.hpp"
 #include "forge/tmtc.hpp"
+#include "forge/worker.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -223,14 +224,24 @@ public:
 
     /// Heavy work off the main loop: `work` runs on the worker pool, then
     /// `then(result)` on the main loop (where the application's state may be
-    /// touched). An exception from `work` is logged, `then` is not called.
+    /// touched). If `work` throws, `on_error(message)` runs on the main loop
+    /// instead (to show it, retry, raise an alarm); without it the error is
+    /// logged.
     ///
     ///   background([path] { return load_big_file(path); },
-    ///              [this](Data d) { data_ = std::move(d); });
+    ///              [this](Data d) { data_ = std::move(d); },
+    ///              [this](const std::string& why) { alarms().raise("load", Severity::warning, why); });
     template <class Work, class Then>
     void background(Work work, Then then) {
+        background(std::move(work), std::move(then),
+                   [this](const std::string& why) { background_failed(why.c_str()); });
+    }
+    template <class Work, class Then, class OnError>
+    void background(Work work, Then then, OnError on_error) {
         using R = std::invoke_result_t<Work>;
-        pool().detach_task([this, work = std::move(work), then = std::move(then)]() mutable {
+        pool().detach_task(
+            [this, work = std::move(work), then = std::move(then), on_error = std::move(on_error)]() mutable {
+            std::string error;
             try {
                 if constexpr (std::is_void_v<R>) {
                     work();
@@ -239,11 +250,13 @@ public:
                     auto result = std::make_shared<R>(work());
                     post([then = std::move(then), result]() mutable { then(std::move(*result)); });
                 }
+                return;
             } catch (const std::exception& e) {
-                background_failed(e.what());
+                error = e.what();
             } catch (...) {
-                background_failed("unknown exception");
+                error = "unknown exception";
             }
+            post([on_error = std::move(on_error), error = std::move(error)]() mutable { on_error(error); });
         });
     }
 
@@ -351,6 +364,16 @@ public:
     /// Apply [threads.<name>] (policy, priority, cpus) to the calling thread and
     /// name it for the trace view. Returns "" or what could not be applied.
     std::string configure_thread(const std::string& name);
+
+    /// A thread of the application (forge/worker.hpp), from on_start() on:
+    /// it applies [threads.<name>], and an exception that ends it is logged
+    /// and raises the alarm "worker.<name>". Stopped and joined before
+    /// on_stop(), so on_stop() may release what it used.
+    ///
+    ///   worker("producer", [this](std::stop_token stop) {
+    ///       while (!stop.stop_requested()) { produce(); forge::sleep_for(stop, 50ms); }
+    ///   });
+    Worker& worker(const std::string& name, Worker::Body body);
 
     /// Add a component (before run()); see component.hpp.
     template <class T, class... A>
@@ -560,6 +583,8 @@ private:
     Auth auth_;
     std::unique_ptr<ControlService> control_;
     std::vector<std::unique_ptr<Component>> components_;
+    std::mutex workers_mutex_;
+    std::vector<std::unique_ptr<Worker>> workers_;
     // services (src/app/)
     std::unique_ptr<detail::StateStore> state_;
     std::unique_ptr<detail::Watchdog> watchdog_;

@@ -7,6 +7,8 @@
 #include <forge/trace.hpp>
 #include <forge/zmq.hpp>
 
+#include <pty.h>
+#include <unistd.h>
 #include <zmq_addon.hpp>
 
 #include <algorithm>
@@ -494,4 +496,49 @@ TEST_CASE("zmq: the same commands answer JSON over HTTP") {
         CHECK(e.status() == 400);
         CHECK(std::string(e.what()).find("idd: not a field of forge.get_request") != std::string::npos);
     }
+}
+
+TEST_CASE("serial: the program's commands on [forge].serial, as on [forge].control") {
+    int peer_fd = -1, other = -1;
+    char name[128] = {};
+    REQUIRE(::openpty(&peer_fd, &other, name, nullptr, nullptr) == 0);
+    ::close(other);  // the program opens it by name
+    forge::testing::AppRunner<ControlledApp> r({"-D", std::string("forge.serial=") + name, "-D", "http.enabled=false"});
+    CHECK(r->endpoints().at("serial") == name);
+
+    forge::serial::LinkOptions o;
+    o.fd = peer_fd;
+    forge::serial::Link device(o);
+    forge_ping_request req{};
+    req.token = 4;
+    forge_ping_reply rsp{};
+    REQUIRE(device.call(kKick, req, rsp).ok());
+    CHECK(rsp.token == 4);
+    forge_info_reply info{};
+    REQUIRE(device.call(forge_msg_id_info, forge_info_request{}, info).ok());
+    CHECK(pb::view(info.name) == "zmqapp");
+    // A long reply in parts: every control, more than one frame each.
+    int pages = 0;
+    REQUIRE(device
+                .call_parts<forge_controls_request, forge_controls_reply>(forge_msg_id_controls, {},
+                                                                          [&](const forge_controls_reply&) {
+        ++pages;
+    }).ok());
+    CHECK(pages >= 1);
+    CHECK(device.stats().framing.frames_dropped == 0);
+}
+
+TEST_CASE("zmq: send_wait() waits for a peer instead of dropping") {
+    fz::Sender out(fz::Sender::Kind::push, "tcp://127.0.0.1:*");
+    const auto m = fz::make_message("x", forge_ping_request{7});
+    const auto t0 = std::chrono::steady_clock::now();
+    CHECK_FALSE(out.send_wait(m, std::chrono::milliseconds(50)));  // nobody to take it
+    CHECK(std::chrono::steady_clock::now() - t0 >= std::chrono::milliseconds(40));
+    CHECK(out.sent() == 0);
+    CHECK(out.dropped() == 0);  // a wait is not a loss
+
+    std::atomic<int> got{0};
+    fz::Receiver in(fz::Receiver::Kind::pull, out.endpoint(), [&](fz::Message&&) { ++got; });
+    CHECK(out.send_wait(m, std::chrono::seconds(5)));
+    CHECK(forge::testing::wait_until([&] { return got == 1; }));
 }

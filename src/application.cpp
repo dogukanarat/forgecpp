@@ -160,7 +160,8 @@ void Application::loop_busy() const {
     timeouts.inc();
     const auto lag = loop_age_ms();
     throw Error(503, std::format("main loop busy (last heartbeat {} ms ago)", lag),
-                json{{"error", "main loop busy"}, {"loop_age_ms", lag}, {"timeout_ms", request_timeout_ms_.load()}});
+                json{{"error", "main loop busy"}, {"loop_age_ms", lag}, {"timeout_ms", request_timeout_ms_.load()}})
+        .module(module_id::tmtc);  // forgecpp refuses, not the command
 }
 
 void Application::reload() {
@@ -593,6 +594,12 @@ void Application::shutdown() {
     drain_while([this] { http_->stop(); });
     drain_while([this] { messaging_->stop_control(); });
 
+    // The application's threads may wait on the main loop too.
+    drain_while([this] {
+        std::lock_guard lock(workers_mutex_);
+        workers_.clear();
+    });
+
     try {
         for (auto it = components_.rbegin(); it != components_.rend(); ++it) (*it)->on_stop();
         on_stop();
@@ -654,6 +661,18 @@ std::map<std::string, std::string> Application::endpoints() const {
     http_->add_endpoints(e);
     console_->add_endpoints(e);
     return e;
+}
+
+Worker& Application::worker(const std::string& name, Worker::Body body) {
+    auto w = std::make_unique<Worker>(name, [this, name, body = std::move(body)](std::stop_token stop) {
+        configure_thread(name);
+        body(std::move(stop));
+    }, [this, name](const std::string& why) {
+        alarms().raise("worker." + name, Severity::error, "thread " + name + " ended: " + why);
+    });
+    std::lock_guard lock(workers_mutex_);
+    workers_.push_back(std::move(w));
+    return *workers_.back();
 }
 
 std::string Application::configure_thread(const std::string& name) {

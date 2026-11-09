@@ -322,10 +322,8 @@ void ChannelEmulator::on_block(forge::zmq::Message&& m) {
         signal_dbfs_ = st.signal_dbfs;
     }
     // Forward; wait while radio-controller is a few blocks behind (backpressure to the sender).
-    zmq::pollitem_t item{static_cast<void*>(out_->native()), 0, ZMQ_POLLOUT, 0};
     while (running_) {
-        if (zmq::poll(&item, 1, std::chrono::milliseconds(50)) > 0 && (item.revents & ZMQ_POLLOUT) &&
-            out_->send(m)) {  // the sender's header (its time: radio-controller's tx_max_age_ms)
+        if (out_->send_wait(m, std::chrono::milliseconds(50))) {  // the sender's header (its time: tx_max_age_ms)
             ++blocks_;
             samples_ += n;
             return;

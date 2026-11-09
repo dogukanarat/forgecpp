@@ -4,7 +4,8 @@
 // ControlService, the control registry (web::Dashboard) and application code
 // throw it; each channel maps it to its own form:
 //   HTTP          status code, {"error": message} or `details` as the body
-//   commands      NACK with the errno of the status (forge::errno_for_http)
+//   commands      NACK with the errno of the status (forge::errno_for_http), from
+//                 module() or, if not set, the command's module (tmtc::module_of)
 //   console       "error: message"
 //
 // http::HttpError derives from it, so code that throws HttpError keeps
@@ -12,6 +13,7 @@
 
 #include "forge/json.hpp"
 
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 
@@ -26,10 +28,18 @@ public:
     int status() const { return status_; }
     /// Structured details; when set, HTTP answers with them as the body.
     const json& details() const { return details_; }
+    /// The module that refuses (forge::module_id), for a NACK; 0: the module
+    /// of the command whose handler threw it.
+    std::uint16_t module() const { return module_; }
+    Error& module(std::uint16_t id) {
+        module_ = id;
+        return *this;
+    }
 
 private:
     int status_;
     json details_;
+    std::uint16_t module_ = 0;
 };
 
 }  // namespace forge

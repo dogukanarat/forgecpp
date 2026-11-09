@@ -41,9 +41,15 @@ namespace forge::tmtc {
 [[noreturn]] void throw_status(const Status& s);
 
 /// Runs a handler on the binary path: a forge::Error it throws becomes the
-/// errno of its HTTP status, any other exception EIO (module tmtc), so that
-/// nothing leaves a link thread.
+/// errno of its HTTP status (with Error::module(), or else `module`), any
+/// other exception EIO of `module`, so that nothing leaves a link thread.
+Status guarded(std::uint16_t module, const std::function<Status()>& handler);
+/// The same with module tmtc.
 Status guarded(const std::function<Status()>& handler);
+
+/// The module of a refusal by the handler of command `id`: tmtc for
+/// forgecpp's numbers (0x0001..0x00FF), app for the application's.
+constexpr std::uint16_t module_of(std::uint16_t id) { return id <= 0x00FF ? module_id::tmtc : module_id::app; }
 
 template <class Req, class Rsp>
 using PartHandler = std::function<Status(const Req& req, Rsp& rsp, std::uint32_t& more)>;
@@ -133,12 +139,12 @@ void Registry::add_parts(std::uint16_t id, std::string name, PartHandler<Req, Rs
     c.name = std::move(name);
     c.req = pb::type_of<Req>;
     c.rsp = pb::type_of<Rsp>;
-    c.run_binary = [h](std::span<const std::uint8_t> in, std::span<std::uint8_t> out, std::size_t& written,
-                       std::uint32_t& more) -> Status {
+    c.run_binary = [h, id](std::span<const std::uint8_t> in, std::span<std::uint8_t> out, std::size_t& written,
+                           std::uint32_t& more) -> Status {
         Req req{};
         if (auto s = pb::decode(in, req); !s.ok()) return s;
         Rsp rsp{};
-        const auto s = guarded([&] { return (*h)(req, rsp, more); });
+        const auto s = guarded(module_of(id), [&] { return (*h)(req, rsp, more); });
         if (!s.ok()) {
             more = 0;
             return s;

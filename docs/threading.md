@@ -17,7 +17,7 @@ touches your members there, so you need no locks for them.
 | `every()`, `after()` callbacks | main loop | yes |
 | controls: setters, getters, buttons, commands (`setup_web`) | main loop | yes |
 | console and telnet commands (`setup_console`) | main loop | yes |
-| `background(work, then)`: `then` | main loop | yes |
+| `background(work, then, on_error)`: `then`, `on_error` | main loop | yes |
 | `post(fn)`, `invoke(fn)`, `call(fn)`: `fn` | main loop | yes |
 | `background(work, then)`: `work` | worker pool | **no**: compute, return the result |
 | `pool().detach_task(...)` | worker pool | **no** |
@@ -83,7 +83,8 @@ class Pump : public forge::Application {
     void on_pressure(double p) { pressure_ = p; }        // on the loop
     void export_log() {                                   // a command: on the loop
         background([log = history_] { return write_csv(log); },     // pool
-                   [this](std::string file) { notify_web("saved " + file); });  // loop
+                   [this](std::string file) { notify_web("saved " + file); },   // loop
+                   [this](const std::string& why) { notify_web("not saved: " + why); });  // loop, if it threw
     }
 };
 ```

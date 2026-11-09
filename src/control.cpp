@@ -60,7 +60,8 @@ void ControlService::require(Role needed, const Caller& caller, const std::strin
     if (static_cast<int>(caller.role) >= static_cast<int>(needed)) return;
     throw Error(
         caller.user.empty() && app_.auth().enabled() ? 401 : 403,
-        std::format("{} needs role {} ({} is {})", what, to_string(needed), caller.describe(), to_string(caller.role)));
+        std::format("{} needs role {} ({} is {})", what, to_string(needed), caller.describe(), to_string(caller.role)))
+        .module(module_id::tmtc);  // forgecpp refuses, not the command
 }
 
 json ControlService::leases() const {

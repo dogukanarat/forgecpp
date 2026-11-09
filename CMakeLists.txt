@@ -132,6 +132,7 @@ add_library(forgecpp
     src/pb.cpp
     src/rt.cpp
     src/scheduler.cpp
+    src/serial.cpp
     src/status.cpp
     src/systemd.cpp
     src/telnet.cpp
@@ -139,6 +140,7 @@ add_library(forgecpp
     src/tmtc.cpp
     src/trace.cpp
     src/web.cpp
+    src/worker.cpp
     src/zmq.cpp)
 add_library(forgecpp::forgecpp ALIAS forgecpp)
 
@@ -273,7 +275,7 @@ install(DIRECTORY proto/forge DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp/prot
 # Python package "forge": the generated forge/*_pb2.py, the stream framing and
 # the c2 command client, in site-packages (from a build directory:
 # PYTHONPATH=<build>/python).
-foreach(py framing.py c2.py)
+foreach(py framing.py c2.py serial.py)
     configure_file(python/forge/${py} "${PROJECT_BINARY_DIR}/python/forge/${py}" COPYONLY)
 endforeach()
 forge_install_python(DIRECTORY "${PROJECT_BINARY_DIR}/python")

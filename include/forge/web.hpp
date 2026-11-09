@@ -23,9 +23,11 @@
 
 #include "forge/assets.hpp"
 #include "forge/auth.hpp"
+#include "forge/metrics.hpp"
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <cmath>
 #include <functional>
 #include <map>
@@ -197,6 +199,18 @@ public:
     template <class T, class = std::enable_if_t<!std::is_invocable_v<const T&>>>
     Control value(const std::string& id, const std::string& label, const T& ref) {
         return value(id, label, Getter([&ref] { return json(ref); }));
+    }
+    /// Read-only value of an atomic another thread updates (a counter, a flag).
+    template <class T>
+    Control value(const std::string& id, const std::string& label, const std::atomic<T>& ref) {
+        return value(id, label, [&ref] { return ref.load(std::memory_order_relaxed); });
+    }
+    /// A counter or gauge of the metrics registry: the panel shows what /metrics shows.
+    Control value(const std::string& id, const std::string& label, const metrics::Counter& c) {
+        return value(id, label, [&c] { return c.value(); });
+    }
+    Control value(const std::string& id, const std::string& label, const metrics::Gauge& g) {
+        return value(id, label, [&g] { return g.value(); });
     }
     /// Read-only value computed by `get` (its result is converted to JSON).
     template <class F, class = std::enable_if_t<std::is_invocable_v<const F&>>, class = void>

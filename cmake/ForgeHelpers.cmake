@@ -14,6 +14,8 @@
 #       [RESTART_DELAY <s>]          default 2
 #       [WATCHDOG <s>]               hung main loop -> killed and restarted (default 30; 0 = off)
 #       [DESCRIPTION <text>] [AFTER <units...>] [USER <user>]
+#       [NO_HARDENING]               leave out NoNewPrivileges, PrivateTmp, ProtectSystem=full,
+#                                    ProtectHome=read-only, ... (the generated unit has them)
 #       [TEMPLATE]                   also <name>@.service: several instances on one device,
 #                                    <name>@<instance> reads <sysconfdir>/<name>/<instance>.toml,
 #                                    runs with --instance <instance> and its own StateDirectory;
@@ -243,7 +245,7 @@ function(_forge_pch target)
 endfunction()
 
 function(forge_add_app name)
-    cmake_parse_arguments(ARG "NO_INSTALL;SYSTEMD;TEMPLATE;PCH"
+    cmake_parse_arguments(ARG "NO_INSTALL;SYSTEMD;TEMPLATE;PCH;NO_HARDENING"
         "CONFIG;SERVICE;WEB;RESTART;MAX_RESTARTS;RESTART_WINDOW;RESTART_DELAY;WATCHDOG;DESCRIPTION;USER"
         "SOURCES;LIBS;AFTER" ${ARGN})
     if(NOT ARG_SOURCES)
@@ -268,16 +270,20 @@ function(forge_add_app name)
         endif()
     endforeach()
     if(ARG_SYSTEMD AND NOT ARG_SERVICE)
+        set(_hardening)
+        if(ARG_NO_HARDENING)
+            set(_hardening NO_HARDENING)
+        endif()
         forge_generate_unit(${name} "${CMAKE_CURRENT_BINARY_DIR}/${name}.service"
             RESTART "${ARG_RESTART}" MAX_RESTARTS "${ARG_MAX_RESTARTS}" RESTART_WINDOW "${ARG_RESTART_WINDOW}"
             RESTART_DELAY "${ARG_RESTART_DELAY}" WATCHDOG "${ARG_WATCHDOG}" DESCRIPTION "${ARG_DESCRIPTION}"
-            USER "${ARG_USER}" AFTER ${ARG_AFTER})
+            USER "${ARG_USER}" AFTER ${ARG_AFTER} ${_hardening})
         set(ARG_SERVICE "${CMAKE_CURRENT_BINARY_DIR}/${name}.service")
         if(ARG_TEMPLATE)
             forge_generate_unit(${name} "${CMAKE_CURRENT_BINARY_DIR}/${name}@.service" INSTANCE
                 RESTART "${ARG_RESTART}" MAX_RESTARTS "${ARG_MAX_RESTARTS}" RESTART_WINDOW "${ARG_RESTART_WINDOW}"
                 RESTART_DELAY "${ARG_RESTART_DELAY}" WATCHDOG "${ARG_WATCHDOG}" DESCRIPTION "${ARG_DESCRIPTION}"
-                USER "${ARG_USER}" AFTER ${ARG_AFTER})
+                USER "${ARG_USER}" AFTER ${ARG_AFTER} ${_hardening})
             list(APPEND ARG_SERVICE "${CMAKE_CURRENT_BINARY_DIR}/${name}@.service")
         endif()
     endif()
@@ -372,11 +378,12 @@ function(forge_add_web target)
 endfunction()
 
 # forge_generate_unit(<name> <output> [RESTART ..] [MAX_RESTARTS ..] [RESTART_WINDOW ..]
-#                     [RESTART_DELAY ..] [WATCHDOG ..] [DESCRIPTION ..] [USER ..] [AFTER ..])
+#                     [RESTART_DELAY ..] [WATCHDOG ..] [DESCRIPTION ..] [USER ..] [AFTER ..] [NO_HARDENING])
 # Writes a systemd unit for the application <name> (see forge_add_app).
 set(_FORGE_HELPERS_DIR "${CMAKE_CURRENT_LIST_DIR}")
 function(forge_generate_unit name output)
-    cmake_parse_arguments(ARG "INSTANCE" "RESTART;MAX_RESTARTS;RESTART_WINDOW;RESTART_DELAY;WATCHDOG;DESCRIPTION;USER" "AFTER" ${ARGN})
+    cmake_parse_arguments(ARG "INSTANCE;NO_HARDENING" "RESTART;MAX_RESTARTS;RESTART_WINDOW;RESTART_DELAY;WATCHDOG;DESCRIPTION;USER"
+                          "AFTER" ${ARGN})
     foreach(pair "RESTART;on-failure" "MAX_RESTARTS;3" "RESTART_WINDOW;600" "RESTART_DELAY;2" "WATCHDOG;30")
         list(GET pair 0 key)
         list(GET pair 1 def)
@@ -422,6 +429,20 @@ function(forge_generate_unit name output)
     set(FORGE_UNIT_EXTRA "")
     if(ARG_USER)
         set(FORGE_UNIT_EXTRA "User=${ARG_USER}\n")
+    endif()
+    if(NOT ARG_NO_HARDENING)
+        # What a daemon never needs. Left out on purpose: PrivateDevices (UARTs,
+        # IIO, GPIO), ProtectKernelTunables (libiio writes /sys), RestrictRealtime
+        # (real-time threads), MemoryDenyWriteExecute (JIT in some libraries).
+        string(APPEND FORGE_UNIT_EXTRA
+            "# Hardening (forge_add_app NO_HARDENING leaves it out)\n"
+            "NoNewPrivileges=yes\n"
+            "PrivateTmp=yes\n"
+            "ProtectSystem=full\n"
+            "ProtectHome=read-only\n"
+            "ProtectControlGroups=yes\n"
+            "RestrictSUIDSGID=yes\n"
+            "LockPersonality=yes\n")
     endif()
     configure_file("${_FORGE_HELPERS_DIR}/forge-app.service.in" "${output}" @ONLY)
 endfunction()

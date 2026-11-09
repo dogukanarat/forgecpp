@@ -102,6 +102,26 @@ TEST_CASE("dashboard: bound controls, validation and changes") {
     CHECK(controls[6]["readonly"] == true);
 }
 
+TEST_CASE("dashboard: values from atomics and metrics") {
+    forge::web::Dashboard ui("Test");
+    std::atomic<std::uint64_t> frames{3};
+    std::atomic<bool> busy{true};
+    forge::metrics::Counter errors;
+    forge::metrics::Gauge level;
+    errors.inc(2);
+    level.set(-3.5);
+    auto& g = ui.group("Counters");
+    g.value("frames", "Frames", frames);
+    g.value("busy", "Busy", busy);
+    g.value("errors", "Errors", errors);
+    g.value("level", "Level", level).unit("dB");
+    frames = 4;
+    CHECK(ui.get("frames") == 4);
+    CHECK(ui.get("busy") == true);
+    CHECK(ui.get("errors") == 2);
+    CHECK(ui.get("level") == -3.5);
+}
+
 TEST_CASE("web: mime types and built-in assets") {
     CHECK(forge::web::mime_type("/a/index.html") == "text/html; charset=utf-8");
     CHECK(forge::web::mime_type("x.JS") == "text/javascript; charset=utf-8");

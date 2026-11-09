@@ -21,6 +21,15 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   Linux and 88 on Zephyr). `http_status()` gives the HTTP answer for the web.
 - Wire compatibility tests: `-DFORGE_ZEPHYRUS_DIR=<zephyrus>` builds the C code
   of zephyrus on the host and compares it with forgecpp on the same input.
+- **Serial link** (`forge/serial.hpp`): c2 frames on a UART or USB CDC line,
+  framed as zephyrus's `modules/lib/cobs` (COBS, CRC16-CCITT, fragments of at
+  most 255 per message). `serial::Link` works both ways: `call()` to the other
+  end, `on_request` for its requests, `push()` and `on_push` for reports.
+  `[forge].serial`, `serial_baud`, `serial_frame_size` answer the
+  application's commands on a tty, as `[forge].control` does on ZeroMQ. The
+  compatibility tests compare the bytes and the decisions on damaged streams
+  with zephyrus's C code. Python: `forge.serial.Client` (standard library only).
+- radio-controller: typed commands `tune` and `status` (`radio.proto`).
 - `docs/CODING_STANDARDS.md`: the rules of forgecpp, from the principles of
   zephyrus, with the naming of forgecpp.
 - `tools/check-layers.py` (test `forgecpp_layers`): each module uses only
@@ -81,8 +90,32 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   (`tests/fuzz`): a short ctest by default, libFuzzer with
   `-DFORGECPP_FUZZ=ON`.
 
+- `forge::Worker` (`forge/worker.hpp`): a named thread on `std::jthread` that
+  stops when asked; `forge::sleep_for(stop, d)` returns at once on stop.
+  `Application::worker(name, body)` applies `[threads.<name>]`, raises the
+  alarm `worker.<name>` when the body throws, and stops the thread before
+  `on_stop()`. sensor-service uses it.
+- `background(work, then, on_error)`: the error of `work` on the main loop.
+- `zmq::Sender::send_wait(message, timeout)`: waits for room instead of
+  dropping (backpressure); channel-emulator uses it.
+- `Group::value(id, label, ...)` takes a `std::atomic<T>`, a
+  `metrics::Counter` or a `metrics::Gauge` directly.
+- Generated systemd units are hardened: `NoNewPrivileges`, `PrivateTmp`,
+  `ProtectSystem=full`, `ProtectHome=read-only`, `ProtectControlGroups`,
+  `RestrictSUIDSGID`, `LockPersonality` (devices, `/sys` and real-time
+  priorities stay allowed); `forge_add_app(... NO_HARDENING)` leaves them out.
+- `.github/dependabot.yml`: monthly updates of the actions and the bundled
+  libraries (not protobuf, libzmq, libiio).
+- `forge::Error::module()`: the module a refusal goes out with on a link.
+
 ### Changed
 
+- A refusal by an application command's handler (a `forge::Error` it throws)
+  goes out on a link with module **app** (64) instead of tmtc; forgecpp's own
+  commands and forgecpp's checks (role, busy main loop) stay tmtc.
+- Python `c2.Client.call_parts()` no longer drops the parts before an ACK
+  that ends a list; `import forge.c2` no longer needs pyzmq until a
+  `c2.Client` is made.
 - `zmq::serve_control()` and `zmq::serve_application()` are declared in
   `forge/control.hpp` (was `forge/zmq.hpp`): the transport no longer depends
   on the application. Code that includes `forge/forge.hpp` needs no change.
