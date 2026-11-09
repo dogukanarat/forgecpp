@@ -184,12 +184,10 @@ struct HubFixture {
 
     std::optional<forgehub::Entry> entry(const std::string& name) { return h().entry(name); }
     bool wait_state(const std::string& name, forge_hub_app_state s, std::chrono::milliseconds t = 5s) {
-        return forge::testing::wait_until(
-            [&] {
-                const auto e = entry(name);
-                return e && e->state == s;
-            },
-            t);
+        return forge::testing::wait_until([&] {
+            const auto e = entry(name);
+            return e && e->state == s;
+        }, t);
     }
     forge_hub_app_status status(const std::string& name) {
         const auto l = h().list();

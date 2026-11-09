@@ -118,12 +118,10 @@ double tolerance(const sa::Frame& f) {
 std::shared_ptr<const sa::Frame> wait_frame(sa::Engine& e, const std::function<bool(const sa::Frame&)>& ok,
                                             std::chrono::milliseconds timeout = 10s) {
     std::shared_ptr<const sa::Frame> f;
-    forge::testing::wait_until(
-        [&] {
-            f = e.latest();
-            return f && ok(*f);
-        },
-        timeout);
+    forge::testing::wait_until([&] {
+        f = e.latest();
+        return f && ok(*f);
+    }, timeout);
     return f && ok(*f) ? f : nullptr;
 }
 
@@ -379,12 +377,9 @@ TEST_CASE("sa radio tap: with the real radio-controller (simulated AD9361, TX1 -
     std::strcpy(tb.format, "cs16");
     tb.cyclic = true;
     REQUIRE(forge::testing::wait_until([&] { return push.publish("tx", tb, tx.data(), tx.size() * 2); }));
-    f = wait_frame(
-        e,
-        [](const sa::Frame& f) {
-            return !f.peaks.empty() && std::abs(f.peaks.front().freq_hz - 2411.5e6) < tolerance(f);
-        },
-        15s);
+    f = wait_frame(e, [](const sa::Frame& f) {
+        return !f.peaks.empty() && std::abs(f.peaks.front().freq_hz - 2411.5e6) < tolerance(f);
+    }, 15s);
     CHECK(f);
     e.stop();
     app.stop();

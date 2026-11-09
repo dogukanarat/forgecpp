@@ -48,13 +48,10 @@ struct Sink {
     std::deque<std::pair<radio_tx_block, std::string>> blocks;
     fz::Receiver rx;
     Sink()
-        : rx(
-              fz::Receiver::Kind::pull, "tcp://127.0.0.1:*",
-              [this](fz::Message&& msg) {
-                  std::lock_guard lock(m);
-                  blocks.emplace_back(msg.as<radio_tx_block>(), std::move(msg.blob));
-              },
-              fz::Receiver::Options{true, {""}, {}}) {}
+        : rx(fz::Receiver::Kind::pull, "tcp://127.0.0.1:*", [this](fz::Message&& msg) {
+              std::lock_guard lock(m);
+              blocks.emplace_back(msg.as<radio_tx_block>(), std::move(msg.blob));
+          }, fz::Receiver::Options{true, {""}, {}}) {}
     std::size_t size() {
         std::lock_guard lock(m);
         return blocks.size();

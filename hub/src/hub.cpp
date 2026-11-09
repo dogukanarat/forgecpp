@@ -167,17 +167,17 @@ void Hub::setup_web(forge::web::Dashboard& ui) {
     g.value("registry", "Registration endpoint", [this] { return registry_endpoint(); });
     using forge::web::text_param;
     g.command("restart", "Restart", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
-         return restart(a["name"].get<std::string>());
-     }).help("systemctl restart (also after the unit failed)");
+        return restart(a["name"].get<std::string>());
+    }).help("systemctl restart (also after the unit failed)");
     g.command("stop", "Stop", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
-         return stop_app(a["name"].get<std::string>());
-     }).help("systemctl stop (SIGTERM for applications without a unit)");
+        return stop_app(a["name"].get<std::string>());
+    }).help("systemctl stop (SIGTERM for applications without a unit)");
     g.command("start", "Start", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
-         return start(a["name"].get<std::string>());
-     }).help("systemctl start (also after the unit failed)");
+        return start(a["name"].get<std::string>());
+    }).help("systemctl start (also after the unit failed)");
     g.command("forget", "Forget", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
-         return forget(a["name"].get<std::string>());
-     }).help("Remove an application that is not running from the list");
+        return forget(a["name"].get<std::string>());
+    }).help("Remove an application that is not running from the list");
 }
 
 void Hub::setup_http(forge::http::Server& server) {
@@ -233,15 +233,15 @@ void Hub::proxy_request(const forge::http::Request& req, forge::http::Response& 
     // Live events (Server-Sent Events): streamed for as long as the browser listens.
     if (req.method == "GET" && req.get_header_value("Accept").find("text/event-stream") != std::string::npos) {
         res.set_header("Cache-Control", "no-cache");
-        res.set_chunked_content_provider(
-            "text/event-stream", [port, path, headers](std::size_t, httplib::DataSink& sink) {
-                httplib::Client up("127.0.0.1", port);
-                up.set_connection_timeout(std::chrono::seconds(2));
-                up.set_read_timeout(std::chrono::hours(24));
-                up.Get(path, headers, [&sink](const char* data, std::size_t n) { return sink.write(data, n); });
-                sink.done();
-                return true;
-            });
+        res.set_chunked_content_provider("text/event-stream",
+                                         [port, path, headers](std::size_t, httplib::DataSink& sink) {
+            httplib::Client up("127.0.0.1", port);
+            up.set_connection_timeout(std::chrono::seconds(2));
+            up.set_read_timeout(std::chrono::hours(24));
+            up.Get(path, headers, [&sink](const char* data, std::size_t n) { return sink.write(data, n); });
+            sink.done();
+            return true;
+        });
         return;
     }
 
@@ -330,9 +330,9 @@ void Hub::on_start() {
         [this](const auto& req, auto& rsp) { return on_register(req.app, rsp); });
     registry_commands_.add<forge_hub_unregister_request, forge_hub_unregister_reply>(
         forge_hub_msg_id_unregister, "unregister", [this](const auto& req, auto&) {
-            on_unregister(req);
-            return forge::Status();
-        });
+        on_unregister(req);
+        return forge::Status();
+    });
     registry_ = std::make_unique<forge::zmq::Server>(cfg.value<std::string>("registry.listen"),
                                                      [this](std::string_view req) { return handle(req); });
     logger()->info("registry on {}", registry_->endpoint());
@@ -618,8 +618,8 @@ void Hub::tick() {
                     int active = 0;
                     const auto st = c.call_parts<forge_alarms_request, forge_alarms_reply>(
                         forge_msg_id_alarms, {}, [&](const forge_alarms_reply& page) {
-                            for (pb_size_t k = 0; k < page.alarms_count; ++k) active += page.alarms[k].active ? 1 : 0;
-                        });
+                        for (pb_size_t k = 0; k < page.alarms_count; ++k) active += page.alarms[k].active ? 1 : 0;
+                    });
                     if (!st.ok()) throw std::runtime_error(st.to_string());
                     health = {{"status", "ok"},
                               {"health", forge::to_string(static_cast<forge::HealthState>(h.state ? h.state : 1))},

@@ -73,8 +73,8 @@ protected:
     }
 
     void setup_cli(CLI::App& cli) override {
-        cli.add_flag_callback(
-            "--simulate-spikes", [this] { spikes_ = true; }, "Inject random spikes to trigger alarms");
+        cli.add_flag_callback("--simulate-spikes", [this] { spikes_ = true; },
+                              "Inject random spikes to trigger alarms");
     }
 
     void setup_http(forge::http::Server& server) override {
@@ -102,9 +102,8 @@ protected:
         live.value("exceedances", "Threshold exceedances", exceedances_);
 
         auto& acq = ui.group("Acquisition");
-        acq.slider(
-               "rate_hz", "Sampling rate", [this] { return rate_hz_.load(); }, [this](double hz) { rate_hz_ = hz; }, 1,
-               500, 1)
+        acq.slider("rate_hz", "Sampling rate", [this] { return rate_hz_.load(); }, [this](double hz) { rate_hz_ = hz; },
+                   1, 500, 1)
             .unit("Hz");
         acq.number("window", "Window size", window_size_).range(5, 1000, 1).unit("samples");
         acq.toggle("spikes", "Simulate spikes", [this] { return spikes_.load(); }, [this](bool on) { spikes_ = on; });
@@ -120,9 +119,9 @@ protected:
         alarm
             .button("reset", "Reset counters",
                     [this] {
-                        total_ = 0;
-                        exceedances_ = 0;
-                    })
+            total_ = 0;
+            exceedances_ = 0;
+        })
             .confirm("Reset the sample and alarm counters?")
             .danger();
     }
@@ -130,16 +129,14 @@ protected:
     void setup_console(forge::Console& console) override {
         console.add("stats", "stats  show the latest statistics window",
                     [this, &console](const forge::Console::Args&) { console.print("{}", stats_json().dump(2)); });
-        console.add(
-            "rate", "rate [hz]  show or change the sampling rate",
-            [this, &console](const forge::Console::Args& args) {
-                if (!args.empty()) rate_hz_ = std::stod(args[0]);
-                console.print("rate: {} Hz", rate_hz_.load());
-            },
-            [](const forge::Console::Args& so_far) -> std::vector<std::string> {
-                if (!so_far.empty()) return {};
-                return {"1", "10", "50", "100"};
-            });
+        console.add("rate", "rate [hz]  show or change the sampling rate",
+                    [this, &console](const forge::Console::Args& args) {
+            if (!args.empty()) rate_hz_ = std::stod(args[0]);
+            console.print("rate: {} Hz", rate_hz_.load());
+        }, [](const forge::Console::Args& so_far) -> std::vector<std::string> {
+            if (!so_far.empty()) return {};
+            return {"1", "10", "50", "100"};
+        });
     }
 
     void on_start() override {

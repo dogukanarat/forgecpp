@@ -31,20 +31,20 @@ struct Fixture {
     Fixture() {
         commands.add<forge_test_echo_request, forge_test_echo_reply>(
             kEcho, "echo", [](const forge_test_echo_request& req, forge_test_echo_reply& rsp) {
-                rsp.token = req.token;
-                return pb::assign(rsp.text, pb::view(req.text));
-            });
+            rsp.token = req.token;
+            return pb::assign(rsp.text, pb::view(req.text));
+        });
         // Answers 1, 2, ... `to` in one reply each.
         commands.add_parts<forge_test_count_request, forge_test_count_reply>(
             kCount, "count", [](const forge_test_count_request& req, forge_test_count_reply& rsp, std::uint32_t& more) {
-                rsp.value = more + 1;
-                more = rsp.value < req.to ? rsp.value : 0;
-                return Status();
-            });
+            rsp.value = more + 1;
+            more = rsp.value < req.to ? rsp.value : 0;
+            return Status();
+        });
         commands.add<forge_test_count_request, forge_test_count_reply>(
             kFail, "fail", [](const forge_test_count_request&, forge_test_count_reply&) {
-                return Status::error(forge::module_id::app, ERANGE, "too far");
-            });
+            return Status::error(forge::module_id::app, ERANGE, "too far");
+        });
         commands.add<forge_test_count_request, forge_test_count_reply>(
             kQuiet, "quiet", [](const forge_test_count_request&, forge_test_count_reply&) { return Status(); });
         commands.add_push<forge_test_level_report>(kLevel, "level");

@@ -141,39 +141,39 @@ void register_builtin_commands(Application& app) {
 
     r.add_parts<forge_controls_request, forge_controls_reply>(
         forge_msg_id_controls, "controls", [&app, &control](const auto&, auto& rsp, std::uint32_t& more) {
-            if (!app.dashboard()) return Status();
-            const auto schema = app.invoke_for(app.request_timeout(), [&] { return app.dashboard()->schema(); });
-            put(rsp.title, schema.value("title", std::string()));
-            std::vector<std::pair<std::string, json>> controls;  // group, control
-            for (const auto& g : schema["groups"]) {
-                for (const auto& c : g["controls"]) controls.emplace_back(g.value("title", std::string()), c);
+        if (!app.dashboard()) return Status();
+        const auto schema = app.invoke_for(app.request_timeout(), [&] { return app.dashboard()->schema(); });
+        put(rsp.title, schema.value("title", std::string()));
+        std::vector<std::pair<std::string, json>> controls;  // group, control
+        for (const auto& g : schema["groups"]) {
+            for (const auto& c : g["controls"]) controls.emplace_back(g.value("title", std::string()), c);
+        }
+        page(controls, std::size(rsp.controls), more, [&](const std::pair<std::string, json>& item, std::size_t) {
+            const auto& [group, c] = item;
+            auto& p = rsp.controls[rsp.controls_count++];
+            put(p.id, c.value("id", std::string()));
+            put(p.group, group);
+            put(p.label, c.value("label", std::string()));
+            put(p.kind, c.value("kind", std::string()));
+            if (c.contains("value")) put(p.value, text(c["value"]));
+            put(p.unit, c.value("unit", std::string()));
+            put(p.help, c.value("help", std::string()));
+            p.has_range = c.contains("min") || c.contains("max");
+            p.min = c.value("min", 0.0);
+            p.max = c.value("max", 0.0);
+            p.step = c.value("step", 0.0);
+            p.precision = c.value("precision", -1);
+            for (const auto& o : c.value("options", json::array())) {
+                if (p.options_count == std::size(p.options)) break;
+                put(p.options[p.options_count++], o.get<std::string>());
             }
-            page(controls, std::size(rsp.controls), more, [&](const std::pair<std::string, json>& item, std::size_t) {
-                const auto& [group, c] = item;
-                auto& p = rsp.controls[rsp.controls_count++];
-                put(p.id, c.value("id", std::string()));
-                put(p.group, group);
-                put(p.label, c.value("label", std::string()));
-                put(p.kind, c.value("kind", std::string()));
-                if (c.contains("value")) put(p.value, text(c["value"]));
-                put(p.unit, c.value("unit", std::string()));
-                put(p.help, c.value("help", std::string()));
-                p.has_range = c.contains("min") || c.contains("max");
-                p.min = c.value("min", 0.0);
-                p.max = c.value("max", 0.0);
-                p.step = c.value("step", 0.0);
-                p.precision = c.value("precision", -1);
-                for (const auto& o : c.value("options", json::array())) {
-                    if (p.options_count == std::size(p.options)) break;
-                    put(p.options[p.options_count++], o.get<std::string>());
-                }
-                p.readonly = c.value("readonly", false) || c.value("kind", std::string()) == "value";
-                put(p.role, c.value("role", std::string("operator")));
-                p.persistent = c.value("persist", false);
-                put(p.lease_holder, control.lease_holder(c.value("id", std::string())));
-            });
-            return Status();
+            p.readonly = c.value("readonly", false) || c.value("kind", std::string()) == "value";
+            put(p.role, c.value("role", std::string("operator")));
+            p.persistent = c.value("persist", false);
+            put(p.lease_holder, control.lease_holder(c.value("id", std::string())));
         });
+        return Status();
+    });
 
     r.add<forge_get_request, forge_get_reply>(forge_msg_id_get, "get", [&control](const auto& req, auto& rsp) {
         put(rsp.value, text(control.get(req.id, current_caller())));
@@ -201,89 +201,89 @@ void register_builtin_commands(Application& app) {
         return Status();
     });
 
-    r.add_parts<forge_commands_request, forge_commands_reply>(
-        forge_msg_id_commands, "commands", [&app](const auto&, auto& rsp, std::uint32_t& more) {
-            if (!app.dashboard()) return Status();
-            const auto schema = app.invoke_for(app.request_timeout(), [&] { return app.dashboard()->schema(); });
-            std::vector<json> commands;
-            for (const auto& g : schema["groups"]) {
-                for (const auto& c : g.value("commands", json::array())) commands.push_back(c);
-            }
-            page(commands, std::size(rsp.commands), more, [&](const json& c, std::size_t) {
-                auto& p = rsp.commands[rsp.commands_count++];
-                put(p.id, c.value("id", std::string()));
-                put(p.label, c.value("label", std::string()));
-                put(p.help, c.value("help", std::string()));
-                put(p.role, c.value("role", std::string("operator")));
-                for (const auto& pa : c.value("params", json::array())) {
-                    if (p.params_count == std::size(p.params)) break;
-                    auto& q = p.params[p.params_count++];
-                    put(q.name, pa.value("name", std::string()));
-                    put(q.type, pa.value("type", std::string()));
-                    put(q.help, pa.value("help", std::string()));
-                    if (pa.contains("default")) put(q.default_value, text(pa["default"]));
-                    for (const auto& o : pa.value("options", json::array())) {
-                        if (q.options_count == std::size(q.options)) break;
-                        put(q.options[q.options_count++], o.get<std::string>());
-                    }
-                    q.required = !pa.contains("default");
+    r.add_parts<forge_commands_request, forge_commands_reply>(forge_msg_id_commands, "commands",
+                                                              [&app](const auto&, auto& rsp, std::uint32_t& more) {
+        if (!app.dashboard()) return Status();
+        const auto schema = app.invoke_for(app.request_timeout(), [&] { return app.dashboard()->schema(); });
+        std::vector<json> commands;
+        for (const auto& g : schema["groups"]) {
+            for (const auto& c : g.value("commands", json::array())) commands.push_back(c);
+        }
+        page(commands, std::size(rsp.commands), more, [&](const json& c, std::size_t) {
+            auto& p = rsp.commands[rsp.commands_count++];
+            put(p.id, c.value("id", std::string()));
+            put(p.label, c.value("label", std::string()));
+            put(p.help, c.value("help", std::string()));
+            put(p.role, c.value("role", std::string("operator")));
+            for (const auto& pa : c.value("params", json::array())) {
+                if (p.params_count == std::size(p.params)) break;
+                auto& q = p.params[p.params_count++];
+                put(q.name, pa.value("name", std::string()));
+                put(q.type, pa.value("type", std::string()));
+                put(q.help, pa.value("help", std::string()));
+                if (pa.contains("default")) put(q.default_value, text(pa["default"]));
+                for (const auto& o : pa.value("options", json::array())) {
+                    if (q.options_count == std::size(q.options)) break;
+                    put(q.options[q.options_count++], o.get<std::string>());
                 }
-            });
-            return Status();
+                q.required = !pa.contains("default");
+            }
         });
+        return Status();
+    });
 
-    r.add_parts<forge_alarms_request, forge_alarms_reply>(
-        forge_msg_id_alarms, "alarms", [&app](const auto&, auto& rsp, std::uint32_t& more) {
-            page(app.alarms().list(), std::size(rsp.alarms), more,
-                 [&](const Alarm& a, std::size_t) { fill(rsp.alarms[rsp.alarms_count++], a); });
-            return Status();
-        });
+    r.add_parts<forge_alarms_request, forge_alarms_reply>(forge_msg_id_alarms, "alarms",
+                                                          [&app](const auto&, auto& rsp, std::uint32_t& more) {
+        page(app.alarms().list(), std::size(rsp.alarms), more,
+             [&](const Alarm& a, std::size_t) { fill(rsp.alarms[rsp.alarms_count++], a); });
+        return Status();
+    });
 
     r.add<forge_ack_request, forge_ack_reply>(forge_msg_id_ack, "ack", [&control](const auto& req, auto& rsp) {
         rsp.count = static_cast<std::uint32_t>(control.ack(req.id, current_caller()));
         return Status();
     });
 
-    r.add_parts<forge_logs_request, forge_logs_reply>(
-        forge_msg_id_logs, "logs", [](const auto& req, auto& rsp, std::uint32_t& more) {
-            page(log::history(req.limit), std::size(rsp.records), more,
-                 [&](const log::Record& rec, std::size_t) { fill(rsp.records[rsp.records_count++], rec); });
-            return Status();
-        });
+    r.add_parts<forge_logs_request, forge_logs_reply>(forge_msg_id_logs, "logs",
+                                                      [](const auto& req, auto& rsp, std::uint32_t& more) {
+        page(log::history(req.limit), std::size(rsp.records), more,
+             [&](const log::Record& rec, std::size_t) { fill(rsp.records[rsp.records_count++], rec); });
+        return Status();
+    });
 
-    r.add_parts<forge_metrics_request, forge_metrics_reply>(
-        forge_msg_id_metrics, "metrics", [](const auto& req, auto& rsp, std::uint32_t& more) {
-            const auto snap = metrics::registry().snapshot(req.prefix);
-            rsp.time_unix_ns = snap.time_unix_ns;
-            page(snap.metrics, std::size(rsp.metrics), more, [&](const metrics::Sample& m, std::size_t) {
-                auto& o = rsp.metrics[rsp.metrics_count++];
-                put(o.name, m.name);
-                put(o.help, m.help);
-                o.type = static_cast<forge_metric_type>(static_cast<int>(m.type) + 1);
-                put(o.unit, m.unit);
-                o.value = m.value;
-                o.bounds_count = static_cast<pb_size_t>(std::min(m.bounds.size(), std::size(o.bounds)));
-                std::copy_n(m.bounds.begin(), o.bounds_count, o.bounds);
-                o.buckets_count = static_cast<pb_size_t>(std::min(m.buckets.size(), std::size(o.buckets)));
-                std::copy_n(m.buckets.begin(), o.buckets_count, o.buckets);
-                o.count = m.count;
-                o.sum = m.sum;
-                for (const auto& [k, v] : m.labels) {
-                    if (o.labels_count == std::size(o.labels)) break;
-                    auto& l = o.labels[o.labels_count++];
-                    put(l.key, k);
-                    put(l.value, v);
-                }
-            });
-            return Status();
+    r.add_parts<forge_metrics_request, forge_metrics_reply>(forge_msg_id_metrics, "metrics",
+                                                            [](const auto& req, auto& rsp, std::uint32_t& more) {
+        const auto snap = metrics::registry().snapshot(req.prefix);
+        rsp.time_unix_ns = snap.time_unix_ns;
+        page(snap.metrics, std::size(rsp.metrics), more, [&](const metrics::Sample& m, std::size_t) {
+            auto& o = rsp.metrics[rsp.metrics_count++];
+            put(o.name, m.name);
+            put(o.help, m.help);
+            o.type = static_cast<forge_metric_type>(static_cast<int>(m.type) + 1);
+            put(o.unit, m.unit);
+            o.value = m.value;
+            o.bounds_count = static_cast<pb_size_t>(std::min(m.bounds.size(), std::size(o.bounds)));
+            std::copy_n(m.bounds.begin(), o.bounds_count, o.bounds);
+            o.buckets_count = static_cast<pb_size_t>(std::min(m.buckets.size(), std::size(o.buckets)));
+            std::copy_n(m.buckets.begin(), o.buckets_count, o.buckets);
+            o.count = m.count;
+            o.sum = m.sum;
+            for (const auto& [k, v] : m.labels) {
+                if (o.labels_count == std::size(o.labels)) break;
+                auto& l = o.labels[o.labels_count++];
+                put(l.key, k);
+                put(l.value, v);
+            }
         });
+        return Status();
+    });
 
-    r.add_parts<forge_audit_request, forge_audit_reply>(
-        forge_msg_id_audit, "audit", [&app](const auto& req, auto& rsp, std::uint32_t& more) {
-            page(app.audit().list(req.limit), std::size(rsp.records), more,
-                 [&](const Audit::Record& rec, std::size_t) { fill(rsp.records[rsp.records_count++], rec); });
-            return Status();
-        });
+    r.add_parts<forge_audit_request, forge_audit_reply>(forge_msg_id_audit, "audit",
+                                                        [&app](const auto& req, auto& rsp, std::uint32_t& more) {
+        page(app.audit().list(req.limit), std::size(rsp.records), more,
+             [&](const Audit::Record& rec, std::size_t) { fill(rsp.records[rsp.records_count++], rec); });
+        return Status();
+    });
 
     r.add<forge_lease_request, forge_lease_reply>(forge_msg_id_lease, "lease", [&control](const auto& req, auto& rsp) {
         rsp.seconds = static_cast<std::uint32_t>(control.lease(req.id, req.seconds, current_caller()).count());
@@ -292,43 +292,43 @@ void register_builtin_commands(Application& app) {
 
     r.add<forge_release_request, forge_release_reply>(forge_msg_id_release, "release",
                                                       [&control](const auto& req, auto&) {
-                                                          control.release(req.id, current_caller());
-                                                          return Status();
-                                                      });
+        control.release(req.id, current_caller());
+        return Status();
+    });
 
-    r.add_parts<forge_health_request, forge_health_reply>(
-        forge_msg_id_health, "health", [&app](const auto&, auto& rsp, std::uint32_t& more) {
-            const auto h = app.health().snapshot();
-            const std::size_t from = more;
-            fill(rsp, h, from);
-            more = from + std::size(rsp.components) < h.components.size()
-                       ? static_cast<std::uint32_t>(from + std::size(rsp.components))
-                       : 0;
-            return Status();
-        });
+    r.add_parts<forge_health_request, forge_health_reply>(forge_msg_id_health, "health",
+                                                          [&app](const auto&, auto& rsp, std::uint32_t& more) {
+        const auto h = app.health().snapshot();
+        const std::size_t from = more;
+        fill(rsp, h, from);
+        more = from + std::size(rsp.components) < h.components.size()
+                   ? static_cast<std::uint32_t>(from + std::size(rsp.components))
+                   : 0;
+        return Status();
+    });
 
-    r.add_parts<forge_streams_request, forge_streams_reply>(
-        forge_msg_id_streams, "streams", [&app](const auto&, auto& rsp, std::uint32_t& more) {
-            page(app.stream_list(), std::size(rsp.streams), more, [&](const zmq::StreamInfo& i, std::size_t) {
-                auto& o = rsp.streams[rsp.streams_count++];
-                put(o.name, i.name);
-                put(o.endpoint, i.endpoint);
-                put(o.topic, i.topic);
-                put(o.type, i.type);
-                put(o.policy, i.policy);
-                o.max_rate_hz = i.max_rate_hz;
-                o.subscribers = i.subscribers;
-                o.sent = i.sent;
-                o.dropped = i.dropped;
-            });
-            return Status();
+    r.add_parts<forge_streams_request, forge_streams_reply>(forge_msg_id_streams, "streams",
+                                                            [&app](const auto&, auto& rsp, std::uint32_t& more) {
+        page(app.stream_list(), std::size(rsp.streams), more, [&](const zmq::StreamInfo& i, std::size_t) {
+            auto& o = rsp.streams[rsp.streams_count++];
+            put(o.name, i.name);
+            put(o.endpoint, i.endpoint);
+            put(o.topic, i.topic);
+            put(o.type, i.type);
+            put(o.policy, i.policy);
+            o.max_rate_hz = i.max_rate_hz;
+            o.subscribers = i.subscribers;
+            o.sent = i.sent;
+            o.dropped = i.dropped;
         });
+        return Status();
+    });
 
-    r.add<forge_log_level_request, forge_log_level_reply>(
-        forge_msg_id_log_level, "log_level", [&control](const auto& req, auto&) {
-            control.set_log_level(req.logger, req.level, current_caller());
-            return Status();
-        });
+    r.add<forge_log_level_request, forge_log_level_reply>(forge_msg_id_log_level, "log_level",
+                                                          [&control](const auto& req, auto&) {
+        control.set_log_level(req.logger, req.level, current_caller());
+        return Status();
+    });
 
     r.add_push<forge_state_report>(forge_msg_id_state_changed, "state_changed");
     r.add_push<forge_alarm>(forge_msg_id_alarm_changed, "alarm_changed");

@@ -251,35 +251,34 @@ int main(int argc, char** argv) {
             }
         } else if (controls->parsed() || state->parsed()) {
             std::string group;
-            link.each<forge_controls_request, forge_controls_reply>(
-                forge_msg_id_controls, "controls", {}, [&](const forge_controls_reply& page) {
-                    if (t.as_json) return print_json(page);
-                    for (pb_size_t k = 0; k < page.controls_count; ++k) {
-                        const auto& c = page.controls[k];
-                        const bool button = pb::view(c.kind) == "button";
-                        if (state->parsed()) {
-                            if (!button) std::cout << c.id << " = " << c.value << "\n";
-                            continue;
-                        }
-                        if (group != c.group) std::cout << "[" << (group = c.group) << "]\n";
-                        std::cout << "  " << c.id << "  " << c.kind;
-                        if (!button) std::cout << "  " << c.value;
-                        if (c.unit[0]) std::cout << " " << c.unit;
-                        if (c.lease_holder[0]) std::cout << "  (leased by " << c.lease_holder << ")";
-                        std::cout << "\n";
+            link.each<forge_controls_request, forge_controls_reply>(forge_msg_id_controls, "controls", {},
+                                                                    [&](const forge_controls_reply& page) {
+                if (t.as_json) return print_json(page);
+                for (pb_size_t k = 0; k < page.controls_count; ++k) {
+                    const auto& c = page.controls[k];
+                    const bool button = pb::view(c.kind) == "button";
+                    if (state->parsed()) {
+                        if (!button) std::cout << c.id << " = " << c.value << "\n";
+                        continue;
+                    }
+                    if (group != c.group) std::cout << "[" << (group = c.group) << "]\n";
+                    std::cout << "  " << c.id << "  " << c.kind;
+                    if (!button) std::cout << "  " << c.value;
+                    if (c.unit[0]) std::cout << " " << c.unit;
+                    if (c.lease_holder[0]) std::cout << "  (leased by " << c.lease_holder << ")";
+                    std::cout << "\n";
+                }
+            });
+            if (controls->parsed() && !t.as_json) {
+                link.each<forge_commands_request, forge_commands_reply>(forge_msg_id_commands, "commands", {},
+                                                                        [&](const forge_commands_reply& page) {
+                    for (pb_size_t k = 0; k < page.commands_count; ++k) {
+                        const auto& c = page.commands[k];
+                        std::cout << "  " << c.id << "  command(";
+                        for (pb_size_t p = 0; p < c.params_count; ++p) std::cout << (p ? ", " : "") << c.params[p].name;
+                        std::cout << ")\n";
                     }
                 });
-            if (controls->parsed() && !t.as_json) {
-                link.each<forge_commands_request, forge_commands_reply>(
-                    forge_msg_id_commands, "commands", {}, [&](const forge_commands_reply& page) {
-                        for (pb_size_t k = 0; k < page.commands_count; ++k) {
-                            const auto& c = page.commands[k];
-                            std::cout << "  " << c.id << "  command(";
-                            for (pb_size_t p = 0; p < c.params_count; ++p)
-                                std::cout << (p ? ", " : "") << c.params[p].name;
-                            std::cout << ")\n";
-                        }
-                    });
             }
         } else if (get->parsed()) {
             forge_get_request req{};
@@ -312,11 +311,10 @@ int main(int argc, char** argv) {
             bool any = false;
             link.each<forge_alarms_request, forge_alarms_reply>(forge_msg_id_alarms, "alarms", {},
                                                                 [&](const forge_alarms_reply& page) {
-                                                                    if (t.as_json) return print_json(page);
-                                                                    for (pb_size_t k = 0; k < page.alarms_count; ++k)
-                                                                        print_alarm("", page.alarms[k]);
-                                                                    any = any || page.alarms_count > 0;
-                                                                });
+                if (t.as_json) return print_json(page);
+                for (pb_size_t k = 0; k < page.alarms_count; ++k) print_alarm("", page.alarms[k]);
+                any = any || page.alarms_count > 0;
+            });
             if (!any && !t.as_json) std::cout << "no alarms\n";
         } else if (ack->parsed()) {
             forge_ack_request req{};
@@ -326,31 +324,31 @@ int main(int argc, char** argv) {
         } else if (logs->parsed()) {
             forge_logs_request req{};
             req.limit = limit;
-            link.each<forge_logs_request, forge_logs_reply>(
-                forge_msg_id_logs, "logs", req, [&](const forge_logs_reply& page) {
-                    if (t.as_json) return print_json(page);
-                    for (pb_size_t k = 0; k < page.records_count; ++k) {
-                        const auto& x = page.records[k];
-                        std::cout << clock_time(x.time_unix_ns) << " [" << level_text(x.level) << "] [" << x.logger
-                                  << "] " << x.message << "\n";
-                    }
-                });
+            link.each<forge_logs_request, forge_logs_reply>(forge_msg_id_logs, "logs", req,
+                                                            [&](const forge_logs_reply& page) {
+                if (t.as_json) return print_json(page);
+                for (pb_size_t k = 0; k < page.records_count; ++k) {
+                    const auto& x = page.records[k];
+                    std::cout << clock_time(x.time_unix_ns) << " [" << level_text(x.level) << "] [" << x.logger << "] "
+                              << x.message << "\n";
+                }
+            });
         } else if (metrics->parsed()) {
             forge_metrics_request req{};
             set_text(req.prefix, prefix);
-            link.each<forge_metrics_request, forge_metrics_reply>(
-                forge_msg_id_metrics, "metrics", req, [&](const forge_metrics_reply& page) {
-                    if (t.as_json) return print_json(page);
-                    for (pb_size_t k = 0; k < page.metrics_count; ++k) {
-                        const auto& x = page.metrics[k];
-                        if (x.type == forge_metric_type_histogram) {
-                            std::cout << x.name << "  count " << x.count << "  mean "
-                                      << (x.count ? x.sum / static_cast<double>(x.count) : 0) << " " << x.unit << "\n";
-                        } else {
-                            std::cout << x.name << "  " << x.value << " " << x.unit << "\n";
-                        }
+            link.each<forge_metrics_request, forge_metrics_reply>(forge_msg_id_metrics, "metrics", req,
+                                                                  [&](const forge_metrics_reply& page) {
+                if (t.as_json) return print_json(page);
+                for (pb_size_t k = 0; k < page.metrics_count; ++k) {
+                    const auto& x = page.metrics[k];
+                    if (x.type == forge_metric_type_histogram) {
+                        std::cout << x.name << "  count " << x.count << "  mean "
+                                  << (x.count ? x.sum / static_cast<double>(x.count) : 0) << " " << x.unit << "\n";
+                    } else {
+                        std::cout << x.name << "  " << x.value << " " << x.unit << "\n";
                     }
-                });
+                }
+            });
         } else if (trace->parsed()) {
             // A file, not a message: always over HTTP.
             const auto base = link.is_http() ? t.endpoint : endpoint_of("http");
@@ -364,18 +362,18 @@ int main(int argc, char** argv) {
         } else if (audit->parsed()) {
             forge_audit_request req{};
             req.limit = limit;
-            link.each<forge_audit_request, forge_audit_reply>(
-                forge_msg_id_audit, "audit", req, [&](const forge_audit_reply& page) {
-                    if (t.as_json) return print_json(page);
-                    for (pb_size_t k = 0; k < page.records_count; ++k) {
-                        const auto& x = page.records[k];
-                        std::cout << clock_time(x.time_unix_ns) << "  " << (x.user[0] ? std::string(x.user) + "@" : "")
-                                  << x.channel << " " << x.client << "  " << x.action << " " << x.target;
-                        if (x.new_value[0]) std::cout << " = " << x.new_value;
-                        if (!x.ok) std::cout << "  REFUSED: " << x.error;
-                        std::cout << "\n";
-                    }
-                });
+            link.each<forge_audit_request, forge_audit_reply>(forge_msg_id_audit, "audit", req,
+                                                              [&](const forge_audit_reply& page) {
+                if (t.as_json) return print_json(page);
+                for (pb_size_t k = 0; k < page.records_count; ++k) {
+                    const auto& x = page.records[k];
+                    std::cout << clock_time(x.time_unix_ns) << "  " << (x.user[0] ? std::string(x.user) + "@" : "")
+                              << x.channel << " " << x.client << "  " << x.action << " " << x.target;
+                    if (x.new_value[0]) std::cout << " = " << x.new_value;
+                    if (!x.ok) std::cout << "  REFUSED: " << x.error;
+                    std::cout << "\n";
+                }
+            });
         } else if (health->parsed()) {
             link.each<forge_health_request, forge_health_reply>(
                 forge_msg_id_health, "health", {}, [&](const forge_health_reply& page) { print_json(page); });
@@ -459,34 +457,30 @@ int main(int argc, char** argv) {
             forge::zmq::Receiver::Options o;
             o.topics = topics;
             std::cerr << "watching " << events_endpoint << " (Ctrl-C to stop)\n";
-            forge::zmq::Receiver sub(
-                forge::zmq::Receiver::Kind::sub, events_endpoint,
-                [&](forge::zmq::Message&& m) {
-                    const auto when = clock_time(m.header.time_unix_ns);
-                    if (m.topic == "log") {
-                        const auto x = m.as<forge_log_record>();
-                        std::cout << when << " log   [" << level_text(x.level) << "] [" << x.logger << "] " << x.message
-                                  << "\n";
-                    } else if (m.topic == "state") {
-                        const auto x = m.as<forge_state_report>();
-                        std::cout << when << " state " << x.id << " = " << x.value << "\n";
-                    } else if (m.topic == "audit") {
-                        const auto x = m.as<forge_audit_record>();
-                        std::cout << when << " audit " << (x.user[0] ? std::string(x.user) + "@" : "") << x.channel
-                                  << " " << x.action << " " << x.target
-                                  << (x.new_value[0] ? " = " + std::string(x.new_value) : "")
-                                  << (x.ok ? "" : " REFUSED: " + std::string(x.error)) << "\n";
-                    } else if (m.topic == "alarms") {
-                        const auto a = m.as<forge_alarm>();
-                        if (a.active && !a.acknowledged) print_alarm(when + " alarm ", a);
-                    } else if (m.topic == "health") {
-                        std::cout << when << " health " << pb::to_json(m.as<forge_health_reply>()).dump() << "\n";
-                    } else if (m.topic == "metrics") {
-                        std::cout << when << " metrics " << m.as<forge_metrics_reply>().metrics_count << " values\n";
-                    }
-                    std::cout.flush();
-                },
-                o);
+            forge::zmq::Receiver sub(forge::zmq::Receiver::Kind::sub, events_endpoint, [&](forge::zmq::Message&& m) {
+                const auto when = clock_time(m.header.time_unix_ns);
+                if (m.topic == "log") {
+                    const auto x = m.as<forge_log_record>();
+                    std::cout << when << " log   [" << level_text(x.level) << "] [" << x.logger << "] " << x.message
+                              << "\n";
+                } else if (m.topic == "state") {
+                    const auto x = m.as<forge_state_report>();
+                    std::cout << when << " state " << x.id << " = " << x.value << "\n";
+                } else if (m.topic == "audit") {
+                    const auto x = m.as<forge_audit_record>();
+                    std::cout << when << " audit " << (x.user[0] ? std::string(x.user) + "@" : "") << x.channel << " "
+                              << x.action << " " << x.target << (x.new_value[0] ? " = " + std::string(x.new_value) : "")
+                              << (x.ok ? "" : " REFUSED: " + std::string(x.error)) << "\n";
+                } else if (m.topic == "alarms") {
+                    const auto a = m.as<forge_alarm>();
+                    if (a.active && !a.acknowledged) print_alarm(when + " alarm ", a);
+                } else if (m.topic == "health") {
+                    std::cout << when << " health " << pb::to_json(m.as<forge_health_reply>()).dump() << "\n";
+                } else if (m.topic == "metrics") {
+                    std::cout << when << " metrics " << m.as<forge_metrics_reply>().metrics_count << " values\n";
+                }
+                std::cout.flush();
+            }, o);
             while (!g_stop) std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     } catch (const std::exception& e) {

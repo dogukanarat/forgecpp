@@ -32,12 +32,10 @@ sa::Engine::BackendFactory sim() {
 std::shared_ptr<const sa::Frame> wait_frame(sa::Engine& e, const std::function<bool(const sa::Frame&)>& ok,
                                             std::chrono::milliseconds timeout = 10s) {
     std::shared_ptr<const sa::Frame> f;
-    forge::testing::wait_until(
-        [&] {
-            f = e.latest();
-            return f && ok(*f);
-        },
-        timeout);
+    forge::testing::wait_until([&] {
+        f = e.latest();
+        return f && ok(*f);
+    }, timeout);
     return f && ok(*f) ? f : nullptr;
 }
 
@@ -140,12 +138,10 @@ TEST_CASE("sa engine: single sweep while stopped") {
 
 TEST_CASE("sa engine: a failing backend is reported and retried") {
     std::atomic<int> attempts{0};
-    sa::Engine e(
-        [&]() -> std::unique_ptr<radio::Backend> {
-            ++attempts;
-            throw radio::DeviceError("no device");
-        },
-        {});
+    sa::Engine e([&]() -> std::unique_ptr<radio::Backend> {
+        ++attempts;
+        throw radio::DeviceError("no device");
+    }, {});
     e.start({});
     REQUIRE(forge::testing::wait_until([&] { return attempts >= 1; }));
     forge::testing::wait_until([&] { return !e.status().error.empty(); });
@@ -193,19 +189,14 @@ TEST_CASE("sa app: controls over ZeroMQ, spectrum stream, persistence") {
     std::vector<fz::Message> frames;
     fz::Receiver::Options opts;
     opts.topics = {"spectrum"};
-    fz::Receiver sub(
-        fz::Receiver::Kind::sub, app.spectrum_endpoint(),
-        [&](fz::Message&& msg) {
-            std::lock_guard lock(m);
-            frames.push_back(std::move(msg));
-        },
-        opts);
-    REQUIRE(forge::testing::wait_until(
-        [&] {
-            std::lock_guard lock(m);
-            return frames.size() >= 2;
-        },
-        10s));
+    fz::Receiver sub(fz::Receiver::Kind::sub, app.spectrum_endpoint(), [&](fz::Message&& msg) {
+        std::lock_guard lock(m);
+        frames.push_back(std::move(msg));
+    }, opts);
+    REQUIRE(forge::testing::wait_until([&] {
+        std::lock_guard lock(m);
+        return frames.size() >= 2;
+    }, 10s));
     {
         std::lock_guard lock(m);
         CHECK(forge::pb::view(frames.back().header.type) == "sa.spectrum");

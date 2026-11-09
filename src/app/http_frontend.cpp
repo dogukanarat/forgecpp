@@ -187,20 +187,20 @@ void HttpFrontend::create_web(const Config& cfg) {
     };
     http_->post_json(api + "/controls/:id",
                      [this, dashboard, &control, web_caller](const http::Request& req, const json& body) {
-                         const auto id = req.path_params.at("id");
-                         const auto caller = web_caller(req);
-                         const bool button = app_.invoke_for(
-                             app_.request_timeout(), [&] { return dashboard->control(id).kind == web::Kind::button; });
-                         if (button) {
-                             control.press(id, caller);
-                         } else {
-                             if (!(body.is_object() && body.contains("value"))) {
-                                 throw Error(400, "request body must be {\"value\": ...}");
-                             }
-                             control.set(id, body["value"], caller);
-                         }
-                         return json{{"id", id}, {"value", control.get(id, caller)}};
-                     });
+        const auto id = req.path_params.at("id");
+        const auto caller = web_caller(req);
+        const bool button =
+            app_.invoke_for(app_.request_timeout(), [&] { return dashboard->control(id).kind == web::Kind::button; });
+        if (button) {
+            control.press(id, caller);
+        } else {
+            if (!(body.is_object() && body.contains("value"))) {
+                throw Error(400, "request body must be {\"value\": ...}");
+            }
+            control.set(id, body["value"], caller);
+        }
+        return json{{"id", id}, {"value", control.get(id, caller)}};
+    });
     http_->post_json(api + "/commands/:id", [&control, web_caller](const http::Request& req, const json& body) {
         const auto id = req.path_params.at("id");
         json args = body.is_object() && body.contains("args") ? body["args"] : body;

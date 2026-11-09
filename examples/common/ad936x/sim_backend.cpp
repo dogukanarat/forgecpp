@@ -66,10 +66,10 @@ public:
                 {"tx_channels", options_.channels},
                 {"loopback", options_.loopback ? nlohmann::json(fmt_loopback()) : nlohmann::json(false)},
                 {"carriers_mhz", [] {
-                     nlohmann::json a = nlohmann::json::array();
-                     for (const auto& c : carriers()) a.push_back(c.hz / 1e6);
-                     return a;
-                 }()}};
+            nlohmann::json a = nlohmann::json::array();
+            for (const auto& c : carriers()) a.push_back(c.hz / 1e6);
+            return a;
+        }()}};
     }
 
     // --- control -------------------------------------------------------------

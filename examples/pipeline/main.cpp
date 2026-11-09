@@ -117,43 +117,37 @@ protected:
         auto& prod = ui.group("Producers");
         prod.value("producers", "Threads", producer_count_);
         prod.toggle("paused", "Paused", [this] { return paused_.load(); }, [this](bool v) { paused_ = v; });
-        prod.slider(
-                "rate", "Rate per producer", [this] { return double(rate_per_producer_.load()); },
-                [this](double v) { rate_per_producer_ = static_cast<int>(v); }, 1, 5000, 1)
+        prod.slider("rate", "Rate per producer", [this] { return double(rate_per_producer_.load()); },
+                    [this](double v) { rate_per_producer_ = static_cast<int>(v); }, 1, 5000, 1)
             .unit("jobs/s");
-        prod.slider(
-                "job_size", "Job size", [this] { return double(job_size_.load()); },
-                [this](double v) { job_size_ = static_cast<std::uint32_t>(v); }, 100, 200000, 100)
+        prod.slider("job_size", "Job size", [this] { return double(job_size_.load()); },
+                    [this](double v) { job_size_ = static_cast<std::uint32_t>(v); }, 100, 200000, 100)
             .unit("rounds");
         prod.button("burst", "Burst 10 000 jobs", [this] { burst(10000); }).primary();
 
         auto& work = ui.group("Workers");
         work.value("workers", "Pool threads", [this] { return pool().get_thread_count(); });
-        work.slider(
-                "failure_rate", "Simulated failures", [this] { return failure_rate_.load() * 100; },
-                [this](double pct) { failure_rate_ = pct / 100; }, 0, 50, 0.5)
+        work.slider("failure_rate", "Simulated failures", [this] { return failure_rate_.load() * 100; },
+                    [this](double pct) { failure_rate_ = pct / 100; }, 0, 50, 0.5)
             .unit("%")
             .precision(1);
-        work.number(
-                "queue_limit", "Backlog alarm at", [this] { return double(queue_limit_.load()); },
-                [this](double v) { queue_limit_ = static_cast<std::size_t>(v); })
+        work.number("queue_limit", "Backlog alarm at", [this] { return double(queue_limit_.load()); },
+                    [this](double v) { queue_limit_ = static_cast<std::size_t>(v); })
             .range(100, 1000000, 100)
             .unit("jobs");
-        work.button("reset", "Reset counters",
-                    [this] {
-                        completed_ = failed_ = 0;
-                        latency_avg_ = latency_max_ = 0;
-                    })
-            .confirm("Reset all counters?");
+        work.button("reset", "Reset counters", [this] {
+            completed_ = failed_ = 0;
+            latency_avg_ = latency_max_ = 0;
+        }).confirm("Reset all counters?");
     }
 
     void setup_console(forge::Console& console) override {
         console.add("burst", "burst [n]  enqueue n jobs at once (default 10000)",
                     [this, &console](const forge::Console::Args& a) {
-                        const auto n = a.empty() ? 10000 : std::stoul(a[0]);
-                        burst(n);
-                        console.print("queued {} jobs", n);
-                    });
+            const auto n = a.empty() ? 10000 : std::stoul(a[0]);
+            burst(n);
+            console.print("queued {} jobs", n);
+        });
     }
 
     void on_start() override {

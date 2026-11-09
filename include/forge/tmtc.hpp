@@ -73,9 +73,9 @@ public:
     void add(std::uint16_t id, std::string name, Handler<Req, Rsp> handler) {
         add_parts<Req, Rsp>(id, std::move(name),
                             [h = std::move(handler)](const Req& req, Rsp& rsp, std::uint32_t& more) {
-                                more = 0;
-                                return h(req, rsp);
-                            });
+            more = 0;
+            return h(req, rsp);
+        });
     }
 
     template <pb::Message Req, pb::Message Rsp>

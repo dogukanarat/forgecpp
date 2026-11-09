@@ -420,14 +420,11 @@ int Application::run(int argc, char** argv) {
         if (cfg.value<bool>("console.enabled")) console_->start_repl();
 
         if (auto wd = systemd::watchdog_interval()) {
-            every(
-                *wd / 2,
-                [this] {
-                    if (watchdog_->tick(health_, config().value<double>("health.watchdog_grace_s"), logger_)) {
-                        systemd::notify("WATCHDOG=1");
-                    }
-                },
-                true);
+            every(*wd / 2, [this] {
+                if (watchdog_->tick(health_, config().value<double>("health.watchdog_grace_s"), logger_)) {
+                    systemd::notify("WATCHDOG=1");
+                }
+            }, true);
             logger_->debug("systemd watchdog enabled ({} ms)",
                            std::chrono::duration_cast<std::chrono::milliseconds>(*wd).count());
         }
@@ -904,50 +901,38 @@ void Application::start_observability(const Config& cfg) {
 
     // Process metrics, computed when read.
     auto& m = metrics::registry();
-    m.gauge_fn(
-        "process.uptime_seconds", [this] { return std::chrono::duration<double>(uptime()).count(); }, "Uptime", "s");
-    m.gauge_fn(
-        "process.rss_bytes",
-        [] {
-            long pages = 0, rss = 0;
-            if (FILE* f = std::fopen("/proc/self/statm", "r")) {
-                if (std::fscanf(f, "%ld %ld", &pages, &rss) != 2) rss = 0;
-                std::fclose(f);
-            }
-            return static_cast<double>(rss) * static_cast<double>(::sysconf(_SC_PAGESIZE));
-        },
-        "Resident memory", "bytes");
-    m.gauge_fn(
-        "process.cpu_seconds",
-        [] {
-            rusage u{};
-            ::getrusage(RUSAGE_SELF, &u);
-            return static_cast<double>(u.ru_utime.tv_sec + u.ru_stime.tv_sec) +
-                   static_cast<double>(u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6;
-        },
-        "CPU time (user + system)", "s");
-    m.gauge_fn(
-        "process.threads",
-        [] {
-            std::error_code ec;
-            std::size_t n = 0;
-            for (auto it = std::filesystem::directory_iterator("/proc/self/task", ec);
-                 !ec && it != std::filesystem::directory_iterator(); ++it) {
-                ++n;
-            }
-            return static_cast<double>(n);
-        },
-        "Threads");
-    m.gauge_fn(
-        "forge.pool.queued", [this] { return pool_ ? static_cast<double>(pool_->get_tasks_queued()) : 0.0; },
-        "Tasks waiting for a worker thread");
-    m.gauge_fn(
-        "forge.scheduler.timers", [this] { return scheduler_ ? static_cast<double>(scheduler_->pending()) : 0.0; },
-        "Pending timers");
+    m.gauge_fn("process.uptime_seconds", [this] { return std::chrono::duration<double>(uptime()).count(); }, "Uptime",
+               "s");
+    m.gauge_fn("process.rss_bytes", [] {
+        long pages = 0, rss = 0;
+        if (FILE* f = std::fopen("/proc/self/statm", "r")) {
+            if (std::fscanf(f, "%ld %ld", &pages, &rss) != 2) rss = 0;
+            std::fclose(f);
+        }
+        return static_cast<double>(rss) * static_cast<double>(::sysconf(_SC_PAGESIZE));
+    }, "Resident memory", "bytes");
+    m.gauge_fn("process.cpu_seconds", [] {
+        rusage u{};
+        ::getrusage(RUSAGE_SELF, &u);
+        return static_cast<double>(u.ru_utime.tv_sec + u.ru_stime.tv_sec) +
+               static_cast<double>(u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6;
+    }, "CPU time (user + system)", "s");
+    m.gauge_fn("process.threads", [] {
+        std::error_code ec;
+        std::size_t n = 0;
+        for (auto it = std::filesystem::directory_iterator("/proc/self/task", ec);
+             !ec && it != std::filesystem::directory_iterator(); ++it) {
+            ++n;
+        }
+        return static_cast<double>(n);
+    }, "Threads");
+    m.gauge_fn("forge.pool.queued", [this] { return pool_ ? static_cast<double>(pool_->get_tasks_queued()) : 0.0; },
+               "Tasks waiting for a worker thread");
+    m.gauge_fn("forge.scheduler.timers",
+               [this] { return scheduler_ ? static_cast<double>(scheduler_->pending()) : 0.0; }, "Pending timers");
     m.gauge_fn("forge.alarms.active", [this] { return static_cast<double>(alarms_.active_count()); }, "Active alarms");
-    m.gauge_fn(
-        "forge.health.state", [this] { return static_cast<double>(health_.overall()); },
-        "Overall health: 1 ok, 2 degraded, 3 failed");
+    m.gauge_fn("forge.health.state", [this] { return static_cast<double>(health_.overall()); },
+               "Overall health: 1 ok, 2 degraded, 3 failed");
 }
 
 // ---------------------------------------------------------------------------

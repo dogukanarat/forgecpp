@@ -109,8 +109,8 @@ protected:
         climate.value("outside", "Outside", outside_).unit("°C").precision(1);
         climate.value("status", "Status", [this] { return status(); });
         climate
-            .slider(
-                "setpoint", "Setpoint", [this] { return setpoint_; }, [this](double v) { set_setpoint(v); }, 5, 35, 0.5)
+            .slider("setpoint", "Setpoint", [this] { return setpoint_; }, [this](double v) { set_setpoint(v); }, 5, 35,
+                    0.5)
             .unit("°C")
             .precision(1);
         climate.select("mode", "Mode", {"off", "heat", "cool", "auto"}, mode_);

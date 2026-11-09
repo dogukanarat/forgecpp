@@ -84,21 +84,17 @@ template <class T>
 void ChannelEmulator::bind(forge::web::Group& g, const std::string& id, const std::string& label,
                            T channel::Settings::*field, double min, double max, double step, const std::string& unit) {
     if constexpr (std::is_same_v<T, bool>) {
-        g.toggle(
-            id, label, [this, field] { return settings_.*field; },
-            [this, field](bool on) {
-                settings_.*field = on;
-                preset_ = "custom";
-                changed();
-            });
+        g.toggle(id, label, [this, field] { return settings_.*field; }, [this, field](bool on) {
+            settings_.*field = on;
+            preset_ = "custom";
+            changed();
+        });
     } else {
-        auto c = g.number(
-            id, label, [this, field] { return settings_.*field; },
-            [this, field](double v) {
-                settings_.*field = v;
-                preset_ = "custom";
-                changed();
-            });
+        auto c = g.number(id, label, [this, field] { return settings_.*field; }, [this, field](double v) {
+            settings_.*field = v;
+            preset_ = "custom";
+            changed();
+        });
         c.range(min, max, step);
         if (!unit.empty()) c.unit(unit);
     }
@@ -114,8 +110,8 @@ void ChannelEmulator::setup_web(forge::web::Dashboard& ui) {
     e.value("sample_rate", "Sample rate", [this] { return msps_; }).unit("MSPS").precision(3);
     e.value("rate_source", "Rate from", [this] { return rate_source_; });
     e.value("signal_dbfs", "Signal (while present)", [this] {
-         return round_to(signal_dbfs_.load(), 0.1);
-     }).unit("dBFS");
+        return round_to(signal_dbfs_.load(), 0.1);
+    }).unit("dBFS");
     e.value("blocks", "Blocks", [this] { return blocks_.load(); });
     e.value("clipped", "Clipped samples", [this] { return clipped_.load(); });
     e.value("cpu_percent", "CPU (of real time)", [this] { return round_to(cpu_.load() * 100, 0.1); }).unit("%");
@@ -131,13 +127,12 @@ void ChannelEmulator::setup_web(forge::web::Dashboard& ui) {
     bind(level, "noise", "Noise", &S::noise);
     bind(level, "snr_db", "SNR", &S::snr_db, -10, 60, 0.5, "dB");
     level
-        .number(
-            "noise_bw_khz", "SNR bandwidth", [this] { return noise_bandwidth_hz_ / 1e3; },
-            [this](double v) {
-                noise_bandwidth_hz_ = v * 1e3;
-                settings_.noise_bandwidth_hz = noise_bandwidth_hz_;
-                changed();
-            })
+        .number("noise_bw_khz", "SNR bandwidth", [this] { return noise_bandwidth_hz_ / 1e3; },
+                [this](double v) {
+        noise_bandwidth_hz_ = v * 1e3;
+        settings_.noise_bandwidth_hz = noise_bandwidth_hz_;
+        changed();
+    })
         .range(0, 122880, 1)
         .unit("kHz");
 
@@ -155,15 +150,14 @@ void ChannelEmulator::setup_web(forge::web::Dashboard& ui) {
 
     auto& mp = ui.group("Multipath and fading");
     bind(mp, "multipath", "Multipath", &S::multipath);
-    mp.text(
-        "paths", "Paths (delay_us:gain_db:phase_deg, ...)", [this] { return paths_text_; },
-        [this](const std::string& t) {
-            auto p = parse_paths(t);  // throws: the control reports the error
-            settings_.paths = std::move(p);
-            paths_text_ = format_paths(settings_.paths);
-            preset_ = "custom";
-            changed();
-        });
+    mp.text("paths", "Paths (delay_us:gain_db:phase_deg, ...)", [this] { return paths_text_; },
+            [this](const std::string& t) {
+        auto p = parse_paths(t);  // throws: the control reports the error
+        settings_.paths = std::move(p);
+        paths_text_ = format_paths(settings_.paths);
+        preset_ = "custom";
+        changed();
+    });
     bind(mp, "fading", "Fading", &S::fading);
     bind(mp, "fading_hz", "Fading Doppler", &S::fading_hz, 0.01, 5000, 0.1, "Hz");
     bind(mp, "rician_k_db", "Rician K (-100 = Rayleigh)", &S::rician_k_db, -100, 40, 0.5, "dB");
@@ -207,9 +201,9 @@ void ChannelEmulator::on_start() {
     ro.bind = true;
     ro.socket.recv_hwm = 4;
     running_ = true;
-    in_ = std::make_unique<forge::zmq::Receiver>(
-        forge::zmq::Receiver::Kind::pull, cfg.value<std::string>("emulator.input"),
-        [this](forge::zmq::Message&& m) { on_block(std::move(m)); }, ro);
+    in_ = std::make_unique<forge::zmq::Receiver>(forge::zmq::Receiver::Kind::pull,
+                                                 cfg.value<std::string>("emulator.input"),
+                                                 [this](forge::zmq::Message&& m) { on_block(std::move(m)); }, ro);
     logger()->info("emulator: {} -> {} (preset {}), sample rate from {}", in_->endpoint(),
                    cfg.value<std::string>("emulator.output"), preset_name,
                    radio_control_.empty() ? "the configuration" : radio_control_);
@@ -256,25 +250,23 @@ void ChannelEmulator::read_sample_rate() {
     if (reading_rate_) return;
     reading_rate_ = true;
     const auto endpoint = radio_control_;
-    background(
-        [endpoint]() -> double {
-            try {
-                forge::Remote c(endpoint, 2s);
-                return c.get("sample_rate_msps").get<double>() * 1e6;
-            } catch (const std::exception&) {
-                return 0;
-            }
-        },
-        [this](double hz) {
-            reading_rate_ = false;
-            if (hz > 0) {
-                rate_hz_ = hz;
-                rate_source_ = "radio-controller";
-            } else {
-                rate_source_ = "configuration (radio-controller not answering)";
-            }
-            msps_ = rate_hz_ / 1e6;
-        });
+    background([endpoint]() -> double {
+        try {
+            forge::Remote c(endpoint, 2s);
+            return c.get("sample_rate_msps").get<double>() * 1e6;
+        } catch (const std::exception&) {
+            return 0;
+        }
+    }, [this](double hz) {
+        reading_rate_ = false;
+        if (hz > 0) {
+            rate_hz_ = hz;
+            rate_source_ = "radio-controller";
+        } else {
+            rate_source_ = "configuration (radio-controller not answering)";
+        }
+        msps_ = rate_hz_ / 1e6;
+    });
 }
 
 void ChannelEmulator::tick() {

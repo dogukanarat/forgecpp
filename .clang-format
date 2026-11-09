@@ -15,6 +15,7 @@ AlignTrailingComments:
 AllowShortIfStatementsOnASingleLine: WithoutElse
 AllowShortLoopsOnASingleLine: true
 AllowShortLambdasOnASingleLine: All
+LambdaBodyIndentation: OuterScope
 BreakBeforeBraces: Attach
 SpaceBeforeCpp11BracedList: false
 Cpp11BracedListStyle: true

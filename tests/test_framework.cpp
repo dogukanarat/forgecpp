@@ -729,9 +729,9 @@ TEST_CASE("threading: background(), call() on the loop, the dashboard's owner, s
     // background(): the work on a worker, the result on the main loop
     std::promise<std::pair<int, bool>> got;
     r->post([&] {
-        r->background(
-            [&] { return std::make_pair(42, r->on_main_loop()); },
-            [&](std::pair<int, bool> v) { got.set_value({v.first + (r->on_main_loop() ? 1 : 0), v.second}); });
+        r->background([&] { return std::make_pair(42, r->on_main_loop()); }, [&](std::pair<int, bool> v) {
+            got.set_value({v.first + (r->on_main_loop() ? 1 : 0), v.second});
+        });
     });
     const auto v = got.get_future().get();
     CHECK(v.first == 43);   // then() ran on the main loop

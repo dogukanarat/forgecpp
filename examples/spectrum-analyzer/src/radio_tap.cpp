@@ -42,8 +42,8 @@ public:
         fz::Receiver::Options ro;
         ro.topics = {"rx" + std::to_string(options_.channel)};
         ro.socket.recv_hwm = 4;
-        receiver_ = std::make_unique<fz::Receiver>(
-            fz::Receiver::Kind::sub, options_.data, [this](fz::Message&& m) { on_block(std::move(m)); }, ro);
+        receiver_ = std::make_unique<fz::Receiver>(fz::Receiver::Kind::sub, options_.data,
+                                                   [this](fz::Message&& m) { on_block(std::move(m)); }, ro);
     }
 
     ~RadioTapBackend() override {

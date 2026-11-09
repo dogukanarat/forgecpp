@@ -153,66 +153,58 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
     ui.link("Spectrum", "/");
 
     auto& rx = ui.group("Receiver");
-    rx.toggle(
-        "rx_enabled", "RX streaming", [this] { return rx_enabled_.load(); },
-        [this](bool on) {
-            rx_enabled_ = on;
-            logger()->info("RX streaming {}", on ? "enabled" : "disabled");
-            if (!on && backend_) backend_->cancel_rx();
-            mark_dirty();
-        });
-    rx.number(
-          "rx_lo_mhz", "RX LO", [this] { return settings_.rx_lo_hz / 1e6; },
-          [this](double mhz) {
-              const double hz = round_to(mhz * 1e6, 1);
-              control("RX LO", [&] { backend_->set_rx_lo(hz); });
-              settings_.rx_lo_hz = hz;
-              rx_lo_hz_ = hz;
-              ++tuning_version_;
-          })
+    rx.toggle("rx_enabled", "RX streaming", [this] { return rx_enabled_.load(); }, [this](bool on) {
+        rx_enabled_ = on;
+        logger()->info("RX streaming {}", on ? "enabled" : "disabled");
+        if (!on && backend_) backend_->cancel_rx();
+        mark_dirty();
+    });
+    rx.number("rx_lo_mhz", "RX LO", [this] { return settings_.rx_lo_hz / 1e6; },
+              [this](double mhz) {
+        const double hz = round_to(mhz * 1e6, 1);
+        control("RX LO", [&] { backend_->set_rx_lo(hz); });
+        settings_.rx_lo_hz = hz;
+        rx_lo_hz_ = hz;
+        ++tuning_version_;
+    })
         .range(Limits::lo_min_hz / 1e6, Limits::lo_max_hz / 1e6, 0.001)
         .unit("MHz")
         .precision(3);
-    rx.number(
-          "sample_rate_msps", "Sample rate", [this] { return settings_.sample_rate_hz / 1e6; },
-          [this](double msps) {
-              const double hz = round_to(msps * 1e6, 1);
-              control("sample rate", [&] { backend_->set_sample_rate(hz); });
-              settings_.sample_rate_hz = hz;
-              rate_hz_ = hz;
-              ++tuning_version_;
-          })
+    rx.number("sample_rate_msps", "Sample rate", [this] { return settings_.sample_rate_hz / 1e6; },
+              [this](double msps) {
+        const double hz = round_to(msps * 1e6, 1);
+        control("sample rate", [&] { backend_->set_sample_rate(hz); });
+        settings_.sample_rate_hz = hz;
+        rate_hz_ = hz;
+        ++tuning_version_;
+    })
         .range(Limits::rate_min_hz / 1e6, Limits::rate_max_hz / 1e6, 0.001)
         .unit("MSPS")
         .precision(3);
-    rx.number(
-          "rx_bw_mhz", "RX bandwidth", [this] { return settings_.rx_bandwidth_hz / 1e6; },
-          [this](double mhz) {
-              const double hz = round_to(mhz * 1e6, 1);
-              control("RX bandwidth", [&] { backend_->set_rx_bandwidth(hz); });
-              settings_.rx_bandwidth_hz = hz;
-              ++tuning_version_;
-          })
+    rx.number("rx_bw_mhz", "RX bandwidth", [this] { return settings_.rx_bandwidth_hz / 1e6; },
+              [this](double mhz) {
+        const double hz = round_to(mhz * 1e6, 1);
+        control("RX bandwidth", [&] { backend_->set_rx_bandwidth(hz); });
+        settings_.rx_bandwidth_hz = hz;
+        ++tuning_version_;
+    })
         .range(Limits::bw_min_hz / 1e6, Limits::bw_max_hz / 1e6, 0.001)
         .unit("MHz")
         .precision(3);
-    rx.select(
-        "gain_mode", "RX1 gain control", gain_modes(), [this] { return settings_.gain_mode; },
-        [this](const std::string& mode) {
-            control("gain mode", [&] { backend_->set_gain_mode(mode); });
-            settings_.gain_mode = mode;
-        });
-    rx.slider(
-          "rx_gain_db", "RX1 gain", [this] { return rx_gain_actual_[0].load(); },
-          [this](double db) {
-              if (settings_.gain_mode != "manual") {
-                  throw HttpError(409, "RX gain is controlled by the AGC; set gain_mode to manual first");
-              }
-              control("RX gain", [&] { backend_->set_rx_gain(db); });
-              settings_.rx_gain_db = db;
-              rx_gain_actual_[0] = db;
-          },
-          Limits::rx_gain_min_db, Limits::rx_gain_max_db, 1)
+    rx.select("gain_mode", "RX1 gain control", gain_modes(), [this] { return settings_.gain_mode; },
+              [this](const std::string& mode) {
+        control("gain mode", [&] { backend_->set_gain_mode(mode); });
+        settings_.gain_mode = mode;
+    });
+    rx.slider("rx_gain_db", "RX1 gain", [this] { return rx_gain_actual_[0].load(); },
+              [this](double db) {
+        if (settings_.gain_mode != "manual") {
+            throw HttpError(409, "RX gain is controlled by the AGC; set gain_mode to manual first");
+        }
+        control("RX gain", [&] { backend_->set_rx_gain(db); });
+        settings_.rx_gain_db = db;
+        rx_gain_actual_[0] = db;
+    }, Limits::rx_gain_min_db, Limits::rx_gain_max_db, 1)
         .unit("dB")
         .precision(0)
         .help("Writable in manual gain mode; shows the AGC gain otherwise");
@@ -224,24 +216,20 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
     rx.value("subscriptions", "IQ subscribers", [this] { return subscriptions_.load(); });
 
     auto& rx2 = ui.group("RX2");
-    rx2.select(
-           "rx2_gain_mode", "RX2 gain control", gain_modes(), [this] { return settings_.rx2_gain_mode; },
-           [this](const std::string& mode) {
-               control("RX2 gain mode", [&] { backend_->set_gain_mode(mode, 1); });
-               settings_.rx2_gain_mode = mode;
-           })
-        .help("AD9361/AD9363: RX2 shares the RX LO and sample rate with RX1 and has its own gain");
-    rx2.slider(
-           "rx2_gain_db", "RX2 gain", [this] { return rx_gain_actual_[1].load(); },
-           [this](double db) {
-               if (settings_.rx2_gain_mode != "manual") {
-                   throw HttpError(409, "RX2 gain is controlled by the AGC; set rx2_gain_mode to manual first");
-               }
-               control("RX2 gain", [&] { backend_->set_rx_gain(db, 1); });
-               settings_.rx2_gain_db = db;
-               rx_gain_actual_[1] = db;
-           },
-           Limits::rx_gain_min_db, Limits::rx_gain_max_db, 1)
+    rx2.select("rx2_gain_mode", "RX2 gain control", gain_modes(), [this] { return settings_.rx2_gain_mode; },
+               [this](const std::string& mode) {
+        control("RX2 gain mode", [&] { backend_->set_gain_mode(mode, 1); });
+        settings_.rx2_gain_mode = mode;
+    }).help("AD9361/AD9363: RX2 shares the RX LO and sample rate with RX1 and has its own gain");
+    rx2.slider("rx2_gain_db", "RX2 gain", [this] { return rx_gain_actual_[1].load(); },
+               [this](double db) {
+        if (settings_.rx2_gain_mode != "manual") {
+            throw HttpError(409, "RX2 gain is controlled by the AGC; set rx2_gain_mode to manual first");
+        }
+        control("RX2 gain", [&] { backend_->set_rx_gain(db, 1); });
+        settings_.rx2_gain_db = db;
+        rx_gain_actual_[1] = db;
+    }, Limits::rx_gain_min_db, Limits::rx_gain_max_db, 1)
         .unit("dB")
         .precision(0);
 
@@ -256,65 +244,57 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
     roles.value("tap_subscriptions", "Tap subscribers", [this] { return tap_subscriptions_.load(); });
 
     auto& tx = ui.group("Transmitter");
-    tx.toggle(
-          "tx_enabled", "TX enabled", [this] { return tx_enabled_.load(); },
-          [this](bool on) {
-              tx_enabled_ = on;
-              if (!on && backend_) {
-                  backend_->stop_tx();
-                  tx_mode_ = TxMode::idle;
-                  tx_reset_ = true;
-              }
-              logger()->info("TX {}", on ? "enabled" : "disabled");
-              mark_dirty();
-          })
-        .help("Frames received while disabled are dropped");
-    tx.number(
-          "tx_lo_mhz", "TX LO", [this] { return settings_.tx_lo_hz / 1e6; },
-          [this](double mhz) {
-              const double hz = round_to(mhz * 1e6, 1);
-              control("TX LO", [&] { backend_->set_tx_lo(hz); });
-              settings_.tx_lo_hz = hz;
-          })
+    tx.toggle("tx_enabled", "TX enabled", [this] { return tx_enabled_.load(); }, [this](bool on) {
+        tx_enabled_ = on;
+        if (!on && backend_) {
+            backend_->stop_tx();
+            tx_mode_ = TxMode::idle;
+            tx_reset_ = true;
+        }
+        logger()->info("TX {}", on ? "enabled" : "disabled");
+        mark_dirty();
+    }).help("Frames received while disabled are dropped");
+    tx.number("tx_lo_mhz", "TX LO", [this] { return settings_.tx_lo_hz / 1e6; },
+              [this](double mhz) {
+        const double hz = round_to(mhz * 1e6, 1);
+        control("TX LO", [&] { backend_->set_tx_lo(hz); });
+        settings_.tx_lo_hz = hz;
+    })
         .range(Limits::lo_min_hz / 1e6, Limits::lo_max_hz / 1e6, 0.001)
         .unit("MHz")
         .precision(3);
-    tx.number(
-          "tx_bw_mhz", "TX bandwidth", [this] { return settings_.tx_bandwidth_hz / 1e6; },
-          [this](double mhz) {
-              const double hz = round_to(mhz * 1e6, 1);
-              control("TX bandwidth", [&] { backend_->set_tx_bandwidth(hz); });
-              settings_.tx_bandwidth_hz = hz;
-          })
+    tx.number("tx_bw_mhz", "TX bandwidth", [this] { return settings_.tx_bandwidth_hz / 1e6; },
+              [this](double mhz) {
+        const double hz = round_to(mhz * 1e6, 1);
+        control("TX bandwidth", [&] { backend_->set_tx_bandwidth(hz); });
+        settings_.tx_bandwidth_hz = hz;
+    })
         .range(Limits::bw_min_hz / 1e6, Limits::bw_max_hz / 1e6, 0.001)
         .unit("MHz")
         .precision(3);
-    tx.slider(
-          "tx_atten_db", "TX attenuation", [this] { return settings_.tx_attenuation_db; },
-          [this](double db) {
-              control("TX attenuation", [&] { backend_->set_tx_attenuation(db, tx_channel_); });
-              settings_.tx_attenuation_db = round_to(db, 0.25);
-          },
-          Limits::tx_atten_min_db, Limits::tx_atten_max_db, 0.25)
+    tx.slider("tx_atten_db", "TX attenuation", [this] { return settings_.tx_attenuation_db; },
+              [this](double db) {
+        control("TX attenuation", [&] { backend_->set_tx_attenuation(db, tx_channel_); });
+        settings_.tx_attenuation_db = round_to(db, 0.25);
+    }, Limits::tx_atten_min_db, Limits::tx_atten_max_db, 0.25)
         .unit("dB")
         .precision(2);
     tx.value("tx_mode", "Output", [this] { return to_string(static_cast<int>(tx_mode_.load())); });
     tx.value("tx_frames", "Frames", [this] { return tx_frames_.load(); });
     tx.value("tx_underflows", "Underflows", [this] { return tx_underflows_.load(); });
     tx.value("tx_dropped", "Dropped (TX disabled)", [this] { return tx_dropped_.load(); });
-    tx.number(
-          "tx_max_age_ms", "Drop TX blocks older than", [this] { return double(tx_max_age_ms_.load()); },
-          [this](double ms) { tx_max_age_ms_ = static_cast<int>(ms); })
+    tx.number("tx_max_age_ms", "Drop TX blocks older than", [this] { return double(tx_max_age_ms_.load()); },
+              [this](double ms) { tx_max_age_ms_ = static_cast<int>(ms); })
         .range(0, 60000, 1)
         .unit("ms")
         .help("0 = play everything. Bounds the TX latency: a backlog after a stall is dropped, not played late.");
     tx.value("tx_late", "Dropped (late)", [this] { return tx_late_.load(); });
     tx.button("tx_stop", "Stop output", [this] {
-          if (backend_) backend_->stop_tx();
-          tx_mode_ = TxMode::idle;
-          tx_reset_ = true;
-          logger()->info("TX output stopped");
-      }).danger();
+        if (backend_) backend_->stop_tx();
+        tx_mode_ = TxMode::idle;
+        tx_reset_ = true;
+        logger()->info("TX output stopped");
+    }).danger();
 
     auto& dev = ui.group("Device");
     dev.value("connected", "Connected", connected_);
@@ -331,24 +311,21 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
     dev.value("temperature_c", "Temperature", [this] { return temperature_ ? json(*temperature_) : json(nullptr); })
         .unit("°C")
         .precision(1);
-    dev.number(
-           "buffer_size", "Buffer size", [this] { return double(buffer_size_.load()); },
-           [this](double v) {
-               buffer_size_ = static_cast<std::size_t>(v);
-               restart_rx_ = true;
-               tx_reset_ = true;
-               std::shared_lock lock(backend_mutex_);
-               if (backend_) backend_->cancel_rx();
-               mark_dirty();
-           })
+    dev.number("buffer_size", "Buffer size", [this] { return double(buffer_size_.load()); },
+               [this](double v) {
+        buffer_size_ = static_cast<std::size_t>(v);
+        restart_rx_ = true;
+        tx_reset_ = true;
+        std::shared_lock lock(backend_mutex_);
+        if (backend_) backend_->cancel_rx();
+        mark_dirty();
+    })
         .range(1024, 1 << 20, 1024)
         .unit("samples");
-    dev.button("reconnect", "Reconnect",
-               [this] {
-                   close_backend();
-                   open_backend();
-               })
-        .confirm("Reopen the radio? Streaming restarts.");
+    dev.button("reconnect", "Reconnect", [this] {
+        close_backend();
+        open_backend();
+    }).confirm("Reopen the radio? Streaming restarts.");
 
     auto& net = ui.group("ZeroMQ");
     net.value("zmq_data", "Streams (PUB: iq, rx1, rx2)", [this] { return data_endpoint(); });
@@ -436,9 +413,9 @@ void RadioController::on_start() {
     forge::zmq::Receiver::Options tx_opts;
     tx_opts.bind = true;
     tx_opts.socket.recv_hwm = 64;  // backpressure towards fast senders
-    tx_receiver_ = std::make_unique<forge::zmq::Receiver>(
-        forge::zmq::Receiver::Kind::pull, cfg.value<std::string>("zmq.tx"),
-        [this](forge::zmq::Message&& m) { on_tx_frame(std::move(m)); }, tx_opts);
+    tx_receiver_ =
+        std::make_unique<forge::zmq::Receiver>(forge::zmq::Receiver::Kind::pull, cfg.value<std::string>("zmq.tx"),
+                                               [this](forge::zmq::Message&& m) { on_tx_frame(std::move(m)); }, tx_opts);
     logger()->info("zmq: streams on {}, TX input on {}", data_endpoint(), tx_endpoint());
     logger()->info("channels: listens to {}, drives TX{}, shares {}", channel_list(rx_mask_, "RX"), tx_channel_ + 1,
                    channel_list(tap_mask_, "RX"));

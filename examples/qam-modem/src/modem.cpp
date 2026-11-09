@@ -107,20 +107,18 @@ void QamModem::setup_web(forge::web::Dashboard& ui) {
     auto& link = ui.group("Link");
     link.value("radio", "Radio", [this] { return radio_status_; });
     link.toggle("tx_enabled", "Transmit", [this] { return tx_enabled_.load(); }, [this](bool on) { tx_enabled_ = on; });
-    link.toggle(
-        "test_mode", "Test packets", [this] { return test_mode_.load(); },
-        [this](bool on) {
-            test_mode_ = on;
-            test_expect_ = -1;
-        });
-    link.number(
-            "tx_level_dbfs", "TX level", [this] { return tx_level_dbfs_.load(); },
-            [this](double v) { tx_level_dbfs_ = std::clamp(v, -40.0, -6.0); })
+    link.toggle("test_mode", "Test packets", [this] { return test_mode_.load(); }, [this](bool on) {
+        test_mode_ = on;
+        test_expect_ = -1;
+    });
+    link.number("tx_level_dbfs", "TX level", [this] { return tx_level_dbfs_.load(); },
+                [this](double v) { tx_level_dbfs_ = std::clamp(v, -40.0, -6.0); })
         .range(-40, -6, 0.5)
         .unit("dBFS");
     link.value("symbol_rate", "Symbol rate", [this] { return params_.symbol_rate() / 1e3; }).unit("ksym/s");
-    link.value("bandwidth", "Occupied bandwidth", [this] { return round_to(params_.occupied_bandwidth() / 1e3, 0.1); })
-        .unit("kHz");
+    link.value("bandwidth", "Occupied bandwidth", [this] {
+        return round_to(params_.occupied_bandwidth() / 1e3, 0.1);
+    }).unit("kHz");
     link.value("raw_rate", "16QAM bit rate", [this] { return params_.symbol_rate() * 4 / 1e3; }).unit("kbit/s");
     link.value("equalizer", "Equalizer", [this] {
         return params_.equalizer ? std::format("DFE {} + {} taps", params_.eq_ff, params_.eq_fb) : std::string("off");
@@ -160,13 +158,10 @@ void QamModem::setup_web(forge::web::Dashboard& ui) {
     test.value("test_kbps", "Rate", [this] { return round_to(test_ok_.kbps, 0.1); }).unit("kbit/s");
     test.value("test_lost", "Lost", [this] { return test_lost_.load(); });
     test.value("test_bad", "Wrong content", [this] { return test_bad_.load(); });
-    test.value("test_per", "Packet error rate",
-               [this] {
-                   const double ok = static_cast<double>(test_ok_.packets.load()),
-                                lost = static_cast<double>(test_lost_.load());
-                   return ok + lost > 0 ? lost / (ok + lost) : 0.0;
-               })
-        .precision(6);
+    test.value("test_per", "Packet error rate", [this] {
+        const double ok = static_cast<double>(test_ok_.packets.load()), lost = static_cast<double>(test_lost_.load());
+        return ok + lost > 0 ? lost / (ok + lost) : 0.0;
+    }).precision(6);
 }
 
 void QamModem::setup_http(forge::http::Server& server) {
@@ -244,8 +239,8 @@ void QamModem::on_start() {
     tx_out_ = std::make_unique<forge::zmq::Sender>(forge::zmq::Sender::Kind::push, radio_tx_, false, so);
     forge::zmq::Receiver::Options ro;
     ro.topics = {"iq"};
-    rx_in_ = std::make_unique<forge::zmq::Receiver>(
-        forge::zmq::Receiver::Kind::sub, radio_data_, [this](forge::zmq::Message&& m) { on_iq(std::move(m)); }, ro);
+    rx_in_ = std::make_unique<forge::zmq::Receiver>(forge::zmq::Receiver::Kind::sub, radio_data_,
+                                                    [this](forge::zmq::Message&& m) { on_iq(std::move(m)); }, ro);
 
     credit_ = static_cast<std::int64_t>(lead_samples_);
     running_ = true;
@@ -293,46 +288,44 @@ void QamModem::configure_radio() {
     const auto max_age = cfg.value<int>("modem.radio_tx_max_age_ms");
     const std::string endpoint = radio_control_;
     const unsigned ch = rx_channel_;
-    background(
-        [=]() -> std::string {
+    background([=]() -> std::string {
+        try {
+            forge::Remote c(endpoint, 3s);
+            c.set("rx_lo_mhz", lo_mhz);
+            c.set("tx_lo_mhz", lo_mhz);
+            c.set("sample_rate_msps", rate_msps);
+            c.set("rx_bw_mhz", bw_mhz);
+            c.set("tx_bw_mhz", bw_mhz);
+            c.set(ch == 1 ? "gain_mode" : "rx2_gain_mode", "manual");
+            c.set(ch == 1 ? "rx_gain_db" : "rx2_gain_db", gain);
+            c.set("tx_atten_db", atten);
+            if (c.get("buffer_size").get<double>() != static_cast<double>(buffer)) c.set("buffer_size", buffer);
             try {
-                forge::Remote c(endpoint, 3s);
-                c.set("rx_lo_mhz", lo_mhz);
-                c.set("tx_lo_mhz", lo_mhz);
-                c.set("sample_rate_msps", rate_msps);
-                c.set("rx_bw_mhz", bw_mhz);
-                c.set("tx_bw_mhz", bw_mhz);
-                c.set(ch == 1 ? "gain_mode" : "rx2_gain_mode", "manual");
-                c.set(ch == 1 ? "rx_gain_db" : "rx2_gain_db", gain);
-                c.set("tx_atten_db", atten);
-                if (c.get("buffer_size").get<double>() != static_cast<double>(buffer)) c.set("buffer_size", buffer);
-                try {
-                    c.set("tx_max_age_ms", max_age);
-                } catch (const forge::zmq::Error&) {  // an older radio-controller without it: not fatal
-                }
-                c.set("rx_enabled", true);
-                c.set("tx_enabled", true);
-                return {};
-            } catch (const std::exception& e) {
-                return e.what();
+                c.set("tx_max_age_ms", max_age);
+            } catch (const forge::zmq::Error&) {  // an older radio-controller without it: not fatal
             }
-        },
-        [this, lo_mhz, rate_msps](std::string error) {
-            configuring_ = false;
-            radio_ok_ = error.empty();
-            if (radio_ok_) {
-                radio_status_ = std::format("{:.3f} MHz, {:.3f} MSPS", lo_mhz, rate_msps);
-                alarms().clear(kRadioAlarm);
-                logger()->info("modem: radio-controller set up ({})", radio_status_);
-            } else {
-                radio_status_ = "error: " + error;
-                alarms().raise(kRadioAlarm, forge::Severity::error, "radio-controller set-up failed: " + error);
-                logger()->warn("modem: radio-controller set-up failed: {} (retrying in 5 s)", error);
-                after(5s, [this] {
-                    if (!radio_ok_) configure_radio();
-                });
-            }
-        });
+            c.set("rx_enabled", true);
+            c.set("tx_enabled", true);
+            return {};
+        } catch (const std::exception& e) {
+            return e.what();
+        }
+    }, [this, lo_mhz, rate_msps](std::string error) {
+        configuring_ = false;
+        radio_ok_ = error.empty();
+        if (radio_ok_) {
+            radio_status_ = std::format("{:.3f} MHz, {:.3f} MSPS", lo_mhz, rate_msps);
+            alarms().clear(kRadioAlarm);
+            logger()->info("modem: radio-controller set up ({})", radio_status_);
+        } else {
+            radio_status_ = "error: " + error;
+            alarms().raise(kRadioAlarm, forge::Severity::error, "radio-controller set-up failed: " + error);
+            logger()->warn("modem: radio-controller set-up failed: {} (retrying in 5 s)", error);
+            after(5s, [this] {
+                if (!radio_ok_) configure_radio();
+            });
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------

@@ -26,10 +26,10 @@ const tmtc::Registry& commands() {
         });
         r->add_parts<forge_test_count_request, forge_test_count_reply>(
             kCount, "count", [](const auto& req, auto& rsp, std::uint32_t& more) {
-                rsp.value = more + 1;
-                more = rsp.value < req.to && rsp.value < 50 ? rsp.value : 0;  // at most 50 parts
-                return Status();
-            });
+            rsp.value = more + 1;
+            more = rsp.value < req.to && rsp.value < 50 ? rsp.value : 0;  // at most 50 parts
+            return Status();
+        });
         r->add<forge_test_count_request, forge_test_count_reply>(
             kFail, "fail", [](const auto&, auto&) { return Status::error(module_id::app, ERANGE, "no"); });
         r->add_push<forge_test_level_report>(kLevel, "level");

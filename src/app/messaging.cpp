@@ -106,13 +106,10 @@ void Messaging::start(const Config& cfg) {
         options.workers = cfg.value<int>("forge.control_workers");
         options.thread_name = "forge-control";
         options.busy = refuse_busy;
-        control_server_ = std::make_unique<zmq::Server>(
-            control,
-            [this](std::string_view request) {
-                CallerScope caller(app_.control().identify("link", "zmq", {}));
-                return zmq::answer(app_.commands(), request);
-            },
-            options);
+        control_server_ = std::make_unique<zmq::Server>(control, [this](std::string_view request) {
+            CallerScope caller(app_.control().identify("link", "zmq", {}));
+            return zmq::answer(app_.commands(), request);
+        }, options);
         logger->info("forge: commands on {}", control_server_->endpoint());
     }
 }

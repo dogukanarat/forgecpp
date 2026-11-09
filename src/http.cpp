@@ -453,34 +453,31 @@ Handler EventStream::handler() {
 
         res.set_header("Cache-Control", "no-cache");
         res.set_header("X-Accel-Buffering", "no");
-        res.set_chunked_content_provider(
-            "text/event-stream",
-            [client](std::size_t, httplib::DataSink& sink) {
-                std::string out;
-                {
-                    std::unique_lock lock(client->mutex);
-                    const auto ready = [&] { return client->closed || !client->pending.empty(); };
-                    const auto deadline = std::chrono::steady_clock::now() + Impl::kHeartbeat;
+        res.set_chunked_content_provider("text/event-stream", [client](std::size_t, httplib::DataSink& sink) {
+            std::string out;
+            {
+                std::unique_lock lock(client->mutex);
+                const auto ready = [&] { return client->closed || !client->pending.empty(); };
+                const auto deadline = std::chrono::steady_clock::now() + Impl::kHeartbeat;
                     // Wake up regularly to notice browsers that went away, so
                     // their slot (and HTTP thread) is released quickly.
-                    while (!client->cv.wait_for(lock, Impl::kLivenessCheck, ready)) {
-                        lock.unlock();
-                        const bool alive = sink.is_writable();
-                        lock.lock();
-                        if (!alive) return false;
-                        if (std::chrono::steady_clock::now() >= deadline) break;
-                    }
-                    if (client->closed) {
-                        lock.unlock();
-                        sink.done();
-                        return true;
-                    }
-                    out.swap(client->pending);
+                while (!client->cv.wait_for(lock, Impl::kLivenessCheck, ready)) {
+                    lock.unlock();
+                    const bool alive = sink.is_writable();
+                    lock.lock();
+                    if (!alive) return false;
+                    if (std::chrono::steady_clock::now() >= deadline) break;
                 }
-                if (out.empty()) out = ": keep-alive\n\n";
-                return sink.is_writable() && sink.write(out.data(), out.size());
-            },
-            [impl, client](bool) { impl->remove(client); });
+                if (client->closed) {
+                    lock.unlock();
+                    sink.done();
+                    return true;
+                }
+                out.swap(client->pending);
+            }
+            if (out.empty()) out = ": keep-alive\n\n";
+            return sink.is_writable() && sink.write(out.data(), out.size());
+        }, [impl, client](bool) { impl->remove(client); });
     };
 }
 
