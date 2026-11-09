@@ -125,9 +125,15 @@ void install(const std::string& app, const std::string& dir) {
 }
 
 void use_alternate_stack() {
-    // One per thread (sigaltstack is a thread property), kept for the thread's life.
+    // One per thread (sigaltstack is a thread property), kept for the thread's
+    // life. A stack that is already there (AddressSanitizer installs its own
+    // on every thread, and frees it itself) is left alone.
     thread_local std::unique_ptr<char[]> stack;
     if (stack) return;
+    stack_t current{};
+    if (::sigaltstack(nullptr, &current) == 0 && current.ss_sp != nullptr && (current.ss_flags & SS_DISABLE) == 0) {
+        return;
+    }
     constexpr std::size_t kSize = 128 * 1024;  // backtrace() and the writes need little
     stack = std::make_unique<char[]>(kSize);
     stack_t ss{};

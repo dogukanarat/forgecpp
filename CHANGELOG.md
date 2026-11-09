@@ -410,7 +410,8 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   component.
 - The crash handler runs on an alternate stack (`SA_ONSTACK`): a stack
   overflow is reported too. `forge::Worker` and `configure_thread()` give
-  their threads one; `crash::use_alternate_stack()` for threads of your own.
+  their threads one; `crash::use_alternate_stack()` for threads of your own
+  (a stack that is already installed, AddressSanitizer's for one, is kept).
   The handler no longer calls `snprintf`.
 - The audit file is written by a thread of the audit trail; `record()` no
   longer writes to disk on the caller's thread (the main loop for console

@@ -34,6 +34,33 @@ pre-production security work: forgecpp is used in the lab for now.
 | No C++ API stability rules | docs/API.md; `tools/api-check.py`: exported symbols and configuration keys of a minor series are kept (CI). |
 | Docs drifted from the code | A sweep of README, the examples' and Yocto READMEs, header comments, configuration comments and the scaffolder: REP -> ROUTER, `streams()`/`BufferPool` examples, the generated project tree, `[hub]` restart wording, the Yocto application example (generated unit), build paths. Found one bug: spectrum-analyzer's `settle_buffers` default depends on the backend and is now `.computed()`. The defaults check also covers the scaffolder's template. |
 
+## Done: the design review of 0.4.0
+
+A review of the whole repository (C++ core, developer experience, build and
+Yocto, tests, protocol and runtime; 68 findings) was worked through before
+the release. In short: the timer cancel race, the HTTP alarm acknowledgement
+that skipped roles and the audit trail, the serial line that never came back,
+fsync on the main loop, `Status` messages that could dangle, two
+`Subscription` types, metric callbacks under the registry lock, a stop handler
+that skipped the others; bounded queues (bytes, per stream, the main loop's)
+and no idle polling; protocol guarantees written down and the nanopb bound
+rule corrected; labelled metrics for the links and streams; `setup_controls`,
+`Group::action`, `/forge/api/commands`, `[serial]` and `[loop]`; the smallest
+scaffold, a `Component` in an example, pip for the Python clients, field
+notes; the Yocto layer on the distribution's libraries with ptest and
+nativesdk tools; toml++, the pool and the channel out of the application
+header. The CHANGELOG lists every item.
+
+Left for after 0.4.0, with the reason:
+
+| Item | Why later |
+|---|---|
+| Hidden symbol visibility with an export macro | The header-only libraries in the public headers keep state in templates (quill's frontend, moodycamel's thread registry); hidden visibility would give the application and the library each their own copy. First the facades (pool, channel), then visibility and `abidiff` ([API.md](API.md)). |
+| `Application` data members behind an `Impl` | The services in `src/app/` reach a few private members through `friend`; the header lost its heavy includes and the `invoke()` machinery in this round, which was the compile-time part. The layout move is a 0.5 item. |
+| `forge::Remote` finding a program through forge-hub | Needs a hub command that lists registrations with their endpoints; the port plan in field-notes.md covers today's need. |
+| A CMake superbuild (or vcpkg/conan) replacing `install.sh`'s dependency build | The Yocto layer no longer needs it; a host install still uses `install.sh`, which works. |
+| Running `yocto-check-layer` and a bitbake build of the new recipes | The recipes were written against the scarthgap classes and reviewed, not built here; the nightly kas job is the place. |
+
 ## Plan
 
 Ordered by risk to the running system. Each step lands on its own with tests,
