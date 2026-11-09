@@ -79,8 +79,14 @@ class Client(Calls):
             raise TimeoutError(f"{self.endpoint}: no answer to command 0x{cmd_id:04x}")
         answers = []
         for frame in self._sock.recv_multipart():
-            _, flags, cid, seq, length = _HEADER.unpack_from(frame)
-            body = frame[_HEADER.size:_HEADER.size + length]
+            if len(frame) < _HEADER.size:
+                raise ValueError(f"{self.endpoint}: a frame of {len(frame)} bytes, shorter than the header")
+            version, flags, cid, seq, length = _HEADER.unpack_from(frame)
+            if version != VERSION:
+                raise ValueError(f"{self.endpoint}: protocol version {version}, this client speaks {VERSION}")
+            if len(frame) != _HEADER.size + length:
+                raise ValueError(f"{self.endpoint}: a frame of {len(frame)} bytes says {length} bytes of payload")
+            body = frame[_HEADER.size:]
             if cid != cmd_id or seq != self._seq:
                 raise ValueError(f"answer to 0x{cid:04x}/{seq}, asked 0x{cmd_id:04x}/{self._seq}")
             if flags & NACK:

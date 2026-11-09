@@ -9,6 +9,7 @@
 //   enabled = true
 //   dir = "/var/lib/<app>"   # default: $STATE_DIRECTORY (systemd) or /tmp
 
+#include <cstddef>
 #include <optional>
 #include <string>
 
@@ -20,5 +21,9 @@ void install(const std::string& app, const std::string& dir);
 std::optional<std::string> previous_report(const std::string& app, const std::string& dir);
 /// Keep the last log lines in a buffer the handler can write without allocating.
 void remember_log_line(const char* data, std::size_t size);
+/// Give the calling thread a stack for the handler, so that a stack overflow
+/// on it is reported too. install() does it for its thread; forge::Worker and
+/// Application::configure_thread() for theirs. Call it on threads of your own.
+void use_alternate_stack();
 
 }  // namespace forge::crash

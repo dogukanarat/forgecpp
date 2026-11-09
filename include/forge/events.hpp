@@ -8,52 +8,30 @@
 // Subscriptions are RAII handles: the handler is removed when the handle is
 // destroyed (or reset()). Keep it as a member of the subscribing object.
 
-#include <cstdint>
+#include "forge/subscription.hpp"
+
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
 #include <typeindex>
 #include <unordered_map>
 #include <utility>
-#include <vector>
 
 namespace forge {
 
 class EventBus {
-    struct Impl;
-
 public:
-    class Subscription {
-    public:
-        Subscription() = default;
-        Subscription(Subscription&& other) noexcept { *this = std::move(other); }
-        Subscription& operator=(Subscription&& other) noexcept;
-        Subscription(const Subscription&) = delete;
-        Subscription& operator=(const Subscription&) = delete;
-        ~Subscription() { reset(); }
-
-        void reset();
-        bool active() const { return !impl_.expired() && id_ != 0; }
-
-    private:
-        friend class EventBus;
-        Subscription(std::weak_ptr<Impl> impl, std::type_index type, std::uint64_t id)
-            : impl_(std::move(impl)), type_(type), id_(id) {}
-
-        std::weak_ptr<Impl> impl_;
-        std::type_index type_{typeid(void)};
-        std::uint64_t id_ = 0;
-    };
+    /// The same RAII handle as every other listener in forgecpp: reset() (or
+    /// the destructor) returns once the handler is not running anywhere.
+    using Subscription = forge::Subscription;
 
     EventBus();
 
     template <class Event, class Fn>
     [[nodiscard]] Subscription subscribe(Fn&& fn) {
-        auto handler =
-            std::make_shared<Handler>([f = std::forward<Fn>(fn)](const void* e) { f(*static_cast<const Event*>(e)); });
-        const auto type = std::type_index(typeid(Event));
-        return Subscription(impl_, type, add(type, std::move(handler)));
+        return add(std::type_index(typeid(Event)),
+                   [f = std::forward<Fn>(fn)](const void* e) { f(*static_cast<const Event*>(e)); });
     }
 
     /// Deliver `event` to every subscriber, synchronously in the calling thread.
@@ -70,12 +48,14 @@ public:
 
 private:
     using Handler = std::function<void(const void*)>;
+    using Handlers = Listeners<const void*>;
 
-    std::uint64_t add(std::type_index type, std::shared_ptr<Handler> handler);
+    Subscription add(std::type_index type, Handler handler);
     void dispatch(std::type_index type, const void* event) const;
     std::size_t count(std::type_index type) const;
 
-    std::shared_ptr<Impl> impl_;
+    mutable std::mutex mutex_;
+    std::unordered_map<std::type_index, std::shared_ptr<Handlers>> handlers_;
 };
 
 }  // namespace forge

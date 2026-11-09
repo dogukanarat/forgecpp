@@ -166,6 +166,9 @@ void Application::declare_framework_config(config::Schema& s) {
     s.string("state.file", "", "Controls marked persist() are saved here (empty = not saved)");
 
     s.section("health", "Health and watchdog");
+    s.integer("health.stall_ms", 5000, "/health says \"stalled\" when the main loop's heartbeat is older than this")
+        .range(1000, 600000)
+        .unit("ms");
     s.number("health.watchdog_grace_s", 0,
              "Stop systemd watchdog pings after a critical component failed this long (0 = never)")
         .range(0, 86400)

@@ -56,6 +56,8 @@
 #include "forge/tmtc.hpp"
 #include "forge/worker.hpp"
 
+#include <csignal>
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -595,6 +597,8 @@ private:
     bool hub_registration_ = true;
     std::atomic<int> stop_signal_{0};                 ///< signal that asked us to stop (0 = none)
     std::atomic<int> request_timeout_ms_{2000};       ///< [forge].request_timeout_ms
+    std::atomic<double> watchdog_grace_s_{0};         ///< [health].watchdog_grace_s
+    sigset_t saved_signal_mask_{};                    ///< the caller's mask, put back by shutdown()
     std::atomic<std::int64_t> loop_tick_ms_{0};       ///< last main loop heartbeat (steady clock)
     std::atomic<bool> state_event_pending_{false};
 

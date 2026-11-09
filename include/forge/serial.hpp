@@ -116,7 +116,9 @@ public:
 
     int fd() const { return fd_; }
     /// Writes all of `bytes`.
-    Status write(std::span<const std::uint8_t> bytes);
+    /// Write everything, waiting at most `timeout` for a line that takes no
+    /// bytes (ETIMEDOUT). The port is non-blocking.
+    Status write(std::span<const std::uint8_t> bytes, std::chrono::milliseconds timeout = std::chrono::seconds(1));
     /// What is there, waiting at most `timeout`: 0 bytes after the timeout.
     /// EIO when the line is gone (unplugged).
     Status read(std::span<std::uint8_t> buffer, std::chrono::milliseconds timeout, std::size_t& got);

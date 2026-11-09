@@ -184,6 +184,11 @@ std::string_view level_color(Level level);
 
 /// Wait until everything logged so far is written.
 void flush();
+/// Close and open the log file again (after logrotate moved it; SIGHUP does this).
+void reopen();
+/// Create the calling thread's queue now, before it runs with a real-time
+/// priority (the first log call on a thread would allocate it).
+void preallocate();
 /// Flush and stop the background thread (logging after this is dropped).
 void shutdown();
 

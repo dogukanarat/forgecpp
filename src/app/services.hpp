@@ -120,7 +120,10 @@ private:
 class Messaging {
 public:
     explicit Messaging(Application& app) : app_(app) {}
+    /// Events and streams (before on_start(): it may publish).
     void start(const Config& cfg);
+    /// The command endpoint and the serial line (after on_start(): everything is ready).
+    void start_control(const Config& cfg);
     /// Stop the command endpoint (may wait for commands on the main loop).
     void stop_control();
     void stop();
@@ -228,6 +231,7 @@ private:
     LayoutStore layouts_;
     std::string pages_root_;  // [web].root with live_reload
     std::size_t pages_signature_ = 0;
+    int stall_ms_ = 5000;  // [health].stall_ms
 };
 
 }  // namespace forge::detail

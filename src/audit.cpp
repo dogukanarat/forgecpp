@@ -9,18 +9,26 @@ namespace forge {
 
 Audit::Audit(std::size_t history) : max_(std::max<std::size_t>(history, 1)) {}
 
-void Audit::configure(std::size_t history, const std::string& file) {
-    std::lock_guard lock(mutex_);
-    max_ = std::max<std::size_t>(history, 1);
-    while (records_.size() > max_) records_.pop_front();
-    if (file != file_path_) {
-        file_.close();
-        file_path_ = file;
-        if (!file.empty()) {
-            file_.open(file, std::ios::app);
-            if (!file_) log::error("audit: cannot open {}", file);
-        }
+Audit::~Audit() {
+    if (writer_.joinable()) {
+        writer_.request_stop();
+        file_ready_.notify_all();
+        writer_.join();
     }
+}
+
+void Audit::configure(std::size_t history, const std::string& file) {
+    {
+        std::lock_guard lock(mutex_);
+        max_ = std::max<std::size_t>(history, 1);
+        while (records_.size() > max_) records_.pop_front();
+    }
+    std::lock_guard lock(file_mutex_);
+    if (file == file_path_) return;
+    file_path_ = file;
+    open_pending_ = true;
+    if (!writer_.joinable()) writer_ = std::jthread([this](std::stop_token stop) { write_loop(stop); });
+    file_ready_.notify_all();
 }
 
 void Audit::record(Record r) {
@@ -33,16 +41,54 @@ void Audit::record(Record r) {
         std::lock_guard lock(mutex_);
         records_.push_back(r);
         while (records_.size() > max_) records_.pop_front();
-        if (file_.is_open()) {
-            file_ << to_json(r).dump(-1, ' ', false, json::error_handler_t::replace) << '\n';
-            file_.flush();
-            if (!file_) {
-                log::error("audit: cannot write {}; the file is closed", file_path_);
-                file_.close();
-            }
+    }
+    {
+        std::lock_guard lock(file_mutex_);
+        if (!file_path_.empty()) {
+            lines_.push_back(to_json(r).dump(-1, ' ', false, json::error_handler_t::replace));
+            ++queued_;
+            file_ready_.notify_all();
         }
     }
     listeners_.notify(r);
+}
+
+void Audit::flush() {
+    std::unique_lock lock(file_mutex_);
+    file_ready_.wait(lock, [&] { return lines_.empty() || !writer_.joinable(); });
+}
+
+void Audit::write_loop(const std::stop_token& stop) {
+    std::unique_lock lock(file_mutex_);
+    for (;;) {
+        if (!file_ready_.wait(lock, stop, [&] { return open_pending_ || !lines_.empty(); })) {
+            if (lines_.empty()) break;  // stopped: write what is left, then go
+        }
+        if (open_pending_) {
+            open_pending_ = false;
+            file_.close();
+            if (!file_path_.empty()) {
+                file_.open(file_path_, std::ios::app);
+                if (!file_) log::error("audit: cannot open {}", file_path_);
+            }
+        }
+        std::deque<std::string> batch;
+        batch.swap(lines_);
+        const auto path = file_path_;
+        lock.unlock();
+        if (file_.is_open()) {
+            for (const auto& line : batch) file_ << line << '\n';
+            file_.flush();
+            if (!file_) {
+                log::error("audit: cannot write {}; the file is closed", path);
+                file_.close();
+            }
+        }
+        lock.lock();
+        written_ += batch.size();
+        file_ready_.notify_all();  // flush() waits for an empty queue
+        if (stop.stop_requested() && lines_.empty()) break;
+    }
 }
 
 std::vector<Audit::Record> Audit::list(std::size_t limit) const {

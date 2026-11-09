@@ -7,7 +7,10 @@
 namespace forge::c2 {
 namespace {
 
-Status fail(int errno_code, const char* message) { return Status::error(module_id::c2, errno_code, message); }
+template <std::size_t N>
+Status fail(int errno_code, const char (&message)[N]) {
+    return Status::error(module_id::c2, errno_code, message);
+}
 
 void put_u16(std::uint8_t* out, std::uint16_t v) {
     out[0] = static_cast<std::uint8_t>(v >> 8);

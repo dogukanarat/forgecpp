@@ -29,7 +29,10 @@ constexpr std::uint8_t code_max = 0xFF;  // 254 bytes without a zero
 constexpr std::size_t code_block = 254;
 constexpr std::size_t encode_cost = 5;  // two delimiters, the first code byte, the CRC
 
-Status error(int code, const char* what) { return Status::error(module_id::serial, code, what); }
+template <std::size_t N>
+Status error(int code, const char (&what)[N]) {
+    return Status::error(module_id::serial, code, what);
+}
 
 // The largest encoded frame for `payload` bytes (the worst case: no zeros).
 std::size_t frame_bytes(std::size_t payload) {
@@ -245,7 +248,9 @@ void Framing::frame_done(const std::function<void(std::span<const std::uint8_t>)
 Port::Port(const std::string& device, int baud) {
     const auto speed = speed_of(baud);
     if (speed == B0) throw std::runtime_error("serial: " + std::to_string(baud) + " is not a standard baud rate");
-    fd_ = ::open(device.c_str(), O_RDWR | O_NOCTTY | O_CLOEXEC);
+    // Non-blocking: a peer that stops taking bytes (a USB CDC device whose
+    // program hung) cannot block the writer, and with it the reader.
+    fd_ = ::open(device.c_str(), O_RDWR | O_NOCTTY | O_CLOEXEC | O_NONBLOCK);
     if (fd_ < 0) throw std::runtime_error("serial: cannot open " + device + ": " + std::strerror(errno));
     termios t{};
     if (::tcgetattr(fd_, &t) != 0) {
@@ -269,20 +274,28 @@ Port::Port(const std::string& device, int baud) {
     ::tcflush(fd_, TCIOFLUSH);  // what came before is not ours
 }
 
-Port::Port(int fd) : fd_(fd) {}
+Port::Port(int fd) : fd_(fd) {
+    const int flags = ::fcntl(fd_, F_GETFL);
+    if (flags >= 0) ::fcntl(fd_, F_SETFL, flags | O_NONBLOCK);
+}
 
 Port::~Port() {
     if (fd_ >= 0) ::close(fd_);
 }
 
-Status Port::write(std::span<const std::uint8_t> bytes) {
+Status Port::write(std::span<const std::uint8_t> bytes, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (!bytes.empty()) {
         const auto n = ::write(fd_, bytes.data(), bytes.size());
         if (n < 0) {
             if (errno == EINTR) continue;
             if (errno == EAGAIN) {
+                // The driver's buffer is full: wait for room, up to the deadline.
+                const auto left =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+                if (left <= std::chrono::milliseconds::zero()) return error(ETIMEDOUT, "the line does not take bytes");
                 pollfd p{fd_, POLLOUT, 0};
-                ::poll(&p, 1, 100);
+                ::poll(&p, 1, static_cast<int>(std::min<std::int64_t>(left.count(), 100)));
                 continue;
             }
             return Status::error(module_id::serial, errno, "write");

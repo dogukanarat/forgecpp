@@ -169,8 +169,12 @@ class Client(c2.Calls):
             if left <= 0 or not select.select([self.fd], [], [], left)[0]:
                 raise TimeoutError(f"{self.device}: no answer to command 0x{cmd_id:04x}")
             for message in self._framing.receive(os.read(self.fd, 4096)):
-                _, flags, cid, seq, length = _HEADER.unpack_from(message)
-                body = message[_HEADER.size:_HEADER.size + length]
+                if len(message) < _HEADER.size:
+                    continue  # not a c2 frame
+                version, flags, cid, seq, length = _HEADER.unpack_from(message)
+                if version != c2.VERSION or len(message) != _HEADER.size + length:
+                    continue  # another protocol version, or a frame that does not add up: dropped
+                body = message[_HEADER.size:]
                 if flags & c2.PUSH and not flags & (c2.RSP | c2.ACK | c2.NACK):
                     self.pushes.append((cid, body))
                     continue

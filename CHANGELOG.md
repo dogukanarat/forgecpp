@@ -234,6 +234,57 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 
 ### Fixed
 
+- `forge::Status` is `[[nodiscard]]`, and its message can no longer dangle: a
+  string literal is kept by pointer as before, any other text (a `std::string`,
+  a `std::format()` result) is copied into a table the process keeps
+  (`forge::intern_message()`). `Status::error(module, code, text.c_str())` no
+  longer compiles; pass the `std::string`, or `Status::error_static()` for a
+  pointer that is known to be static. (`Status::error(uint16_t, int, const
+  char*)` is replaced before the 0.4.0 release; `api/forgecpp-0.4.json` was
+  recorded again.)
+- `EventBus::Subscription` is `forge::Subscription`: `reset()` and the
+  destructor return once a handler running on another thread is done. Before,
+  a handler could still be called after its owner was destroyed.
+- The callbacks of `metrics::gauge_fn()` run outside the registry's lock: one
+  that read another metric deadlocked, a slow one held every thread that
+  created a metric.
+- `tmtc::Registry::close()`: the application closes its command registry
+  when the links start; `add()` and `remove()` throw after that instead of
+  racing with the link threads.
+- A `worker()` whose body throws is a failed, critical component of health
+  (`worker.<name>`) in addition to the alarm, so the watchdog lets systemd
+  restart a program whose thread is gone. While it runs it is `ok`.
+- The command endpoint ([forge].control) and the serial line start after
+  `on_start()`, with HTTP: a request can no longer reach a half-started
+  component.
+- The crash handler runs on an alternate stack (`SA_ONSTACK`): a stack
+  overflow is reported too. `forge::Worker` and `configure_thread()` give
+  their threads one; `crash::use_alternate_stack()` for threads of your own.
+  The handler no longer calls `snprintf`.
+- The audit file is written by a thread of the audit trail; `record()` no
+  longer writes to disk on the caller's thread (the main loop for console
+  commands).
+- `serial::Port` is non-blocking and `write()` gives up after a timeout
+  (`ETIMEDOUT`, 1 s): a peer that stops taking bytes no longer blocks the
+  link's reader through its writer.
+- `zmq::SocketOptions::max_message_bytes`: the command endpoint refuses
+  parts larger than a c2 frame, senders and receivers larger than 64 MiB
+  (before: no limit). A receiver follows at most 1024 sources for gap
+  counting.
+- `pb::encode()` answers `EINVAL` for a wrong value in the struct (a count
+  above its bound, text without its terminator) and `EMSGSIZE` only when the
+  buffer is too small.
+- The Python clients check the protocol version and the length of every
+  frame; a frame of another version is refused instead of misread.
+- `[health].stall_ms` (5000): when `/health` says "stalled"; it was fixed.
+- `SIGHUP` opens the log file again (logrotate's `postrotate kill -HUP`
+  works) and applies `[health].watchdog_grace_s` again; `log::reopen()`.
+- `[http].threads` is raised to `[web].max_clients + 4` with a warning when
+  it is lower: every open page holds a thread, and the JSON API and `/health`
+  need some left.
+- Real-time threads: `configure_thread()` logs and preallocates the log
+  queue (`log::preallocate()`) before the priority goes up, not after.
+- `run()` puts the signal mask back as it found it when the application stops.
 - `Scheduler::cancel()` (`Application::cancel()`) also stops a timer task that
   was already handed to the main loop but has not run yet; before, such a
   task still ran after `cancel()` returned true, typically on an object that

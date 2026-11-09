@@ -6,17 +6,21 @@
 //
 // Kept in memory ([audit].history, default 500), optionally appended to a
 // JSON-lines file ([audit].file) and published on the "audit" event topic.
+// The file is written by a thread of its own: record() never waits for a disk.
 
 #include "forge/json.hpp"
 #include "forge/subscription.hpp"
 #include "forge/trace.hpp"
 
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <fstream>
 #include <mutex>
+#include <stop_token>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace forge {
@@ -48,13 +52,28 @@ public:
         return listeners_.add(std::move(listener));
     }
 
+    ~Audit();
+
+    /// Wait until every record so far is in the file (tests, shutdown).
+    void flush();
+
 private:
+    void write_loop(const std::stop_token& stop);
+
     mutable std::mutex mutex_;
     std::size_t max_;
     std::deque<Record> records_;
+    Listeners<Record> listeners_;
+
+    // The writer thread: lines queued by record(), written and flushed by write_loop().
+    std::mutex file_mutex_;
+    std::condition_variable_any file_ready_;
+    std::deque<std::string> lines_;
     std::ofstream file_;
     std::string file_path_;
-    Listeners<Record> listeners_;
+    bool open_pending_ = false;  // file_path_ changed: open it on the writer
+    std::uint64_t queued_ = 0, written_ = 0;
+    std::jthread writer_;
 };
 
 json to_json(const Audit::Record& r);

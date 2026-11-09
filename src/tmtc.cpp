@@ -27,6 +27,8 @@ Status guarded(std::uint16_t module, const std::function<Status()>& handler) {
 Status guarded(const std::function<Status()>& handler) { return guarded(module_id::tmtc, handler); }
 
 void Registry::insert(Command c) {
+    if (closed_)
+        throw std::logic_error("tmtc: '" + c.name + "': the registry is closed (add commands before the start)");
     if (c.id == 0) throw std::logic_error("tmtc: command number 0 is not a command");
     if (by_id_.contains(c.id)) {
         throw std::logic_error(std::format("tmtc: number 0x{:04x} is already '{}'", c.id, by_id_[c.id]->name));
@@ -38,6 +40,7 @@ void Registry::insert(Command c) {
 }
 
 void Registry::remove(std::uint16_t id) {
+    if (closed_) throw std::logic_error("tmtc: the registry is closed (the links are running)");
     const auto it = by_id_.find(id);
     if (it == by_id_.end()) return;
     by_name_.erase(it->second->name);

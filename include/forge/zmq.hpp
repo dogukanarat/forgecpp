@@ -122,6 +122,10 @@ struct SocketOptions {
     int send_hwm = 1000;   ///< messages queued per peer before dropping / blocking
     int recv_hwm = 1000;
     int linger_ms = 0;     ///< how long unsent messages are kept after close
+    /// Largest message part accepted from a peer (bytes); -1 = no limit. A
+    /// peer that sends more is disconnected by ZeroMQ. Server: a c2 frame
+    /// (header and 64 KiB of payload). Receiver, Sender: 64 MiB.
+    std::int64_t max_message_bytes = -1;
 };
 
 /// Keeps blob memory alive until ZeroMQ has sent it (zero copy).

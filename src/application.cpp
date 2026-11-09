@@ -4,6 +4,7 @@
 
 #include "forge/console.hpp"
 #include "forge/control.hpp"
+#include "forge/crash.hpp"
 #include "forge/http.hpp"
 #include "forge/hub.hpp"
 #include "forge/rt.hpp"
@@ -318,7 +319,7 @@ int Application::run(int argc, char** argv) {
     // Block the handled signals before any thread is created so that every
     // thread inherits the mask and only the signal thread receives them.
     const sigset_t set = handled_signal_set();
-    pthread_sigmask(SIG_BLOCK, &set, nullptr);
+    pthread_sigmask(SIG_BLOCK, &set, &saved_signal_mask_);  // shutdown() puts it back
     std::signal(SIGPIPE, SIG_IGN);
 
     if (int rc = parse_command_line(argc, argv); rc >= 0) return rc;
@@ -403,23 +404,26 @@ int Application::run(int argc, char** argv) {
         state_->restore(*dashboard_, cfg.value<std::string>("state.file"), logger_);
 
         commands_closed_ = true;
+        commands_.close();  // the links read it from their threads from here on
         http_->create(cfg);
         console_->create(cfg);
-        messaging_->start(cfg);
-        console_->start_telnet(cfg);
+        messaging_->start(cfg);  // events and streams: on_start() may publish
 
         on_start();
         for (auto& c : components_) c->on_start();
         for (auto& h : hooks_.start) h(*this);
 
+        // Commands come in once everything is started: before, a request would
+        // reach a half-started component (or wait for the main loop in vain).
+        messaging_->start_control(cfg);
+        console_->start_telnet(cfg);
         http_->start(cfg);
         if (cfg.value<bool>("console.enabled")) console_->start_repl();
 
+        watchdog_grace_s_ = cfg.value<double>("health.watchdog_grace_s");
         if (auto wd = systemd::watchdog_interval()) {
             every(*wd / 2, [this] {
-                if (watchdog_->tick(health_, config().value<double>("health.watchdog_grace_s"), logger_)) {
-                    systemd::notify("WATCHDOG=1");
-                }
+                if (watchdog_->tick(health_, watchdog_grace_s_.load(), logger_)) systemd::notify("WATCHDOG=1");
             }, true);
             logger_->debug("systemd watchdog enabled ({} ms)",
                            std::chrono::duration_cast<std::chrono::milliseconds>(*wd).count());
@@ -560,8 +564,12 @@ void Application::do_reload() {
         std::lock_guard lock(config_mutex_);
         config_ = fresh;
     }
+    // What is applied again (docs/application.md "Reloading"): the main loop
+    // settings, the log level, the watchdog grace time, and the log file is
+    // opened again (logrotate: `postrotate kill -HUP`).
     request_timeout_ms_ = fresh.value<int>("forge.request_timeout_ms");
     slow_task_ms_ = fresh.value<int>("forge.slow_task_ms");
+    watchdog_grace_s_ = fresh.value<double>("health.watchdog_grace_s");
     if (auto level = fresh.get<std::string>("log.level")) {
         try {
             log::set_level(*level);
@@ -569,6 +577,7 @@ void Application::do_reload() {
             logger_->error("{}", e.what());
         }
     }
+    log::reopen();
     try {
         on_reload(fresh);
         for (auto& c : components_) c->on_reload(fresh);
@@ -625,6 +634,7 @@ void Application::shutdown() {
 
     if (logger_) logger_->info("{} stopped", info_.name);
     log::flush();
+    pthread_sigmask(SIG_SETMASK, &saved_signal_mask_, nullptr);  // as run() found it
 
     hub_->reset();
     console_->reset();
@@ -673,11 +683,17 @@ std::map<std::string, std::string> Application::endpoints() const {
 }
 
 Worker& Application::worker(const std::string& name, Worker::Body body) {
+    // A worker is a component of health: while it runs, ok; when its body
+    // throws, failed and critical, so that the watchdog lets systemd restart a
+    // program whose thread is gone (and /health, the hub and the panel say so).
+    const auto component = "worker." + name;
+    health_.set(component, HealthState::ok, "running", true);
     auto w = std::make_unique<Worker>(name, [this, name, body = std::move(body)](std::stop_token stop) {
         configure_thread(name);
         body(std::move(stop));
-    }, [this, name](const std::string& why) {
-        alarms().raise("worker." + name, Severity::error, "thread " + name + " ended: " + why);
+    }, [this, name, component](const std::string& why) {
+        alarms().raise(component, Severity::error, "thread " + name + " ended: " + why);
+        health_.set(component, HealthState::failed, "ended: " + why, true);
     });
     std::lock_guard lock(workers_mutex_);
     workers_.push_back(std::move(w));
@@ -686,8 +702,14 @@ Worker& Application::worker(const std::string& name, Worker::Body body) {
 
 std::string Application::configure_thread(const std::string& name) {
     trace::set_thread_name(name);
+    crash::use_alternate_stack();
     const auto settings = rt::thread_settings(config(), name);
     if (!settings) return {};
+    // Everything that allocates happens before the priority goes up: the
+    // log call (the first one on a thread creates its queue) and the queue's
+    // preallocation. After rt::apply() the thread only logs.
+    logger_->info("thread {}: applying [threads.{}]", name, name);
+    log::preallocate();
     const auto err = rt::apply(*settings);
     if (err.empty()) {
         logger_->info("thread {}: {}", name, rt::describe_current_thread());

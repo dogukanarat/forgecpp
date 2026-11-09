@@ -1,5 +1,6 @@
 #include "forge/worker.hpp"
 
+#include "forge/crash.hpp"
 #include "forge/log.hpp"
 #include "forge/trace.hpp"
 
@@ -8,6 +9,7 @@ namespace forge {
 Worker::Worker(std::string name, Body body, OnError on_error) : name_(std::move(name)) {
     thread_ = std::jthread([this, body = std::move(body), on_error = std::move(on_error)](std::stop_token stop) {
         trace::set_thread_name(name_);
+        crash::use_alternate_stack();
         try {
             body(stop);
         } catch (const std::exception& e) {

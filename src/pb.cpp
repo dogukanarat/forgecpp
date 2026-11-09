@@ -9,6 +9,7 @@
 
 #include <cerrno>
 #include <cmath>
+#include <cstring>
 #include <format>
 #include <limits>
 #include <string>
@@ -306,7 +307,14 @@ void fill(const Type& type, const json& j, void* msg, const std::string& prefix)
 
 Status encode(const Type& type, const void* msg, std::span<std::uint8_t> out, std::size_t& written) {
     pb_ostream_t s = pb_ostream_from_buffer(out.data(), out.size());
-    if (!pb_encode(&s, type.desc, msg)) return Status::error(module_id::pb, EMSGSIZE, PB_GET_ERROR(&s));
+    if (!pb_encode(&s, type.desc, msg)) {
+        // nanopb's messages are static strings. "stream full": the buffer is too
+        // small; anything else is a wrong value in the struct (a count above its
+        // bound, text without its terminator).
+        const char* why = PB_GET_ERROR(&s);
+        const bool full = std::strcmp(why, "stream full") == 0;
+        return Status::error_static(module_id::pb, full ? EMSGSIZE : EINVAL, why);
+    }
     written = s.bytes_written;
     return {};
 }
@@ -319,7 +327,7 @@ std::size_t encoded_size(const Type& type, const void* msg) {
 Status decode(const Type& type, std::span<const std::uint8_t> in, void* msg) {
     std::memset(msg, 0, type.size);
     pb_istream_t s = pb_istream_from_buffer(in.data(), in.size());
-    if (!pb_decode(&s, type.desc, msg)) return Status::error(module_id::pb, EBADMSG, PB_GET_ERROR(&s));
+    if (!pb_decode(&s, type.desc, msg)) return Status::error_static(module_id::pb, EBADMSG, PB_GET_ERROR(&s));
     return {};
 }
 

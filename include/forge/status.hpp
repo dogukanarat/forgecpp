@@ -23,9 +23,13 @@
 //   auto s = forge::Status::from_wire(on_the_wire);   // s.errno_code() == ERANGE
 //
 // The message is for logs and the web: it does not travel in a binary reply
-// (a NACK carries the four bytes of wire() only). It must be a string literal
-// or otherwise outlive the Status: it is not copied.
+// (a NACK carries the four bytes of wire() only). A string literal is kept by
+// pointer (no allocation: the binary command path stays allocation-free); any
+// other text is copied once into a table of messages the process keeps, so a
+// Status never points at memory that is gone. A function that returns a
+// Status must not have its result ignored ([[nodiscard]]).
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -49,21 +53,45 @@ inline constexpr std::uint16_t raw = 0x7FFF;         ///< reserved: a sign-exten
 inline constexpr std::uint16_t max = nrf - 1;        ///< largest id that can be assigned
 }  // namespace module_id
 
-class Status {
+class [[nodiscard]] Status {
 public:
     /// Success.
     constexpr Status() = default;
 
     /// An error of `module` (0 .. module_id::max) with a host errno code
-    /// (EINVAL and -EINVAL are the same). `message`: see the file comment.
-    static Status error(std::uint16_t module, int errno_code, const char* message = nullptr);
+    /// (EINVAL and -EINVAL are the same), without a message.
+    static Status error(std::uint16_t module, int errno_code);
+    /// The same with a string literal as the message (kept by pointer).
+    template <std::size_t N>
+    static Status error(std::uint16_t module, int errno_code, const char (&message)[N]) {
+        return error_static(module, errno_code, message);
+    }
+    /// The same with any other text (a std::string, a std::format() result):
+    /// copied into the process's table of messages.
+    static Status error(std::uint16_t module, int errno_code, std::string_view message);
+    /// The same with a pointer the caller knows is static (a C library's
+    /// table of messages). Not for a c_str() of a temporary.
+    static Status error_static(std::uint16_t module, int errno_code, const char* static_message);
+
     /// An error whose code is already in wire (Zephyr) numbering, or is not an
     /// errno at all (module_id::nrf).
-    static constexpr Status wire_error(std::uint16_t module, std::uint16_t wire_code, const char* message = nullptr) {
+    static constexpr Status wire_error(std::uint16_t module, std::uint16_t wire_code) {
         Status s;
         s.value_ = static_cast<std::int32_t>(0x80000000U | ((static_cast<std::uint32_t>(module) << 16) & 0x7FFF0000U) |
                                              wire_code);
+        return s;
+    }
+    template <std::size_t N>
+    static constexpr Status wire_error(std::uint16_t module, std::uint16_t wire_code, const char (&message)[N]) {
+        Status s = wire_error(module, wire_code);
         s.message_ = message;
+        return s;
+    }
+    static Status wire_error(std::uint16_t module, std::uint16_t wire_code, std::string_view message);
+    static constexpr Status wire_error_static(std::uint16_t module, std::uint16_t wire_code,
+                                              const char* static_message) {
+        Status s = wire_error(module, wire_code);
+        s.message_ = static_message;
         return s;
     }
     /// The int32_t of zephyrus, as a function returns it or a NACK carries it.
@@ -118,6 +146,11 @@ private:
 /// The name shown for a module id in Status::to_string() (forgecpp's own are
 /// known already). Call it once at start-up for each module of yours.
 void name_module(std::uint16_t id, std::string_view name);
+
+/// A copy of `text` that lives as long as the process (the table Status keeps
+/// its dynamic messages in; the same text is stored once). The table holds a
+/// few thousand distinct texts; beyond that a fixed text comes back.
+const char* intern_message(std::string_view text);
 
 /// The errno that stands for an HTTP status (400 -> EINVAL, 404 -> ENOENT, ...).
 int errno_for_http(int http_status);

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <set>
 
 namespace forge {
 namespace {
@@ -91,8 +92,31 @@ int errno_from_wire(std::uint16_t wire_code) {
     return e ? e->host : EIO;
 }
 
-Status Status::error(std::uint16_t module, int errno_code, const char* message) {
-    return wire_error(module, errno_to_wire(errno_code == 0 ? EIO : errno_code), message);
+Status Status::error(std::uint16_t module, int errno_code) {
+    return wire_error(module, errno_to_wire(errno_code == 0 ? EIO : errno_code));
+}
+
+Status Status::error_static(std::uint16_t module, int errno_code, const char* static_message) {
+    return wire_error_static(module, errno_to_wire(errno_code == 0 ? EIO : errno_code), static_message);
+}
+
+Status Status::error(std::uint16_t module, int errno_code, std::string_view message) {
+    return error_static(module, errno_code, intern_message(message));
+}
+
+Status Status::wire_error(std::uint16_t module, std::uint16_t wire_code, std::string_view message) {
+    return wire_error_static(module, wire_code, intern_message(message));
+}
+
+const char* intern_message(std::string_view text) {
+    // A set of std::string: its nodes do not move, so the pointers stay valid.
+    static std::mutex mutex;
+    static std::set<std::string, std::less<>> texts;
+    constexpr std::size_t kMaxTexts = 4096;
+    std::lock_guard lock(mutex);
+    if (auto it = texts.find(text); it != texts.end()) return it->c_str();
+    if (texts.size() >= kMaxTexts) return "(message not kept: too many distinct messages)";
+    return texts.emplace(text).first->c_str();
 }
 
 int Status::errno_code() const {

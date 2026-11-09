@@ -328,6 +328,15 @@ public:
         if (file_) std::fflush(file_);
     }
 
+    /// Close and open the file again (logrotate moved it away).
+    void reopen() {
+        std::lock_guard lock(mutex_);
+        if (!file_) return;
+        std::fclose(file_);
+        file_ = nullptr;
+        open_file();
+    }
+
 private:
     void open_file() {
         const std::filesystem::path path(config_.file);
@@ -612,5 +621,13 @@ void flush() {
 }
 
 void shutdown() { flush(); }
+
+void reopen() {
+    auto& s = state();
+    std::lock_guard lock(s.mutex);
+    if (s.sink) s.sink->reopen();
+}
+
+void preallocate() { Frontend::preallocate(); }
 
 }  // namespace forge::log

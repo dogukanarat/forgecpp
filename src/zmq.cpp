@@ -20,6 +20,17 @@ void apply(::zmq::socket_t& s, const SocketOptions& o) {
     s.set(::zmq::sockopt::sndhwm, o.send_hwm);
     s.set(::zmq::sockopt::rcvhwm, o.recv_hwm);
     s.set(::zmq::sockopt::linger, o.linger_ms);
+    s.set(::zmq::sockopt::maxmsgsize, o.max_message_bytes);
+}
+
+constexpr std::int64_t kFrameLimit = 8 + 65535;             // a c2 frame
+constexpr std::int64_t kBlobLimit = 64LL * 1024 * 1024;     // a stream message
+constexpr std::size_t kSequenceTableLimit = 1024;           // sources a Receiver follows
+
+// What is used when the caller left the default (-1).
+SocketOptions with_limit(SocketOptions o, std::int64_t limit) {
+    if (o.max_message_bytes < 0) o.max_message_bytes = limit;
+    return o;
 }
 
 std::string resolved_endpoint(::zmq::socket_t& s, const std::string& fallback) {
@@ -430,7 +441,7 @@ bool Publisher::enqueue(Stream& s, Outgoing out) {
 
 Sender::Sender(Kind kind, const std::string& endpoint, bool bind, SocketOptions options)
     : kind_(kind), socket_(context(), kind == Kind::pub ? ::zmq::socket_type::xpub : ::zmq::socket_type::push) {
-    apply(socket_, options);
+    apply(socket_, with_limit(options, kBlobLimit));
     if (kind_ == Kind::pub) {
         // Report every (un)subscription so subscriptions() is accurate.
         socket_.set(::zmq::sockopt::xpub_verbose, 1);
@@ -504,7 +515,7 @@ Receiver::Receiver(Kind kind, const std::string& endpoint, Handler handler)
 Receiver::Receiver(Kind kind, const std::string& endpoint, Handler handler, const Options& options)
     : socket_(context(), kind == Kind::sub ? ::zmq::socket_type::sub : ::zmq::socket_type::pull),
       handler_(std::move(handler)) {
-    apply(socket_, options.socket);
+    apply(socket_, with_limit(options.socket, kBlobLimit));
     if (kind == Kind::sub) {
         for (const auto& t : options.topics) socket_.set(::zmq::sockopt::subscribe, t);
     }
@@ -530,6 +541,7 @@ void Receiver::run() {
                 ++received_;
                 // Gaps in the sender's sequence = messages dropped on the way.
                 if (m.header.seq > 0) {
+                    if (last_seq_.size() >= kSequenceTableLimit) last_seq_.clear();  // peers come and go
                     auto& last = last_seq_[std::string(pb::view(m.header.source)) + "/" + std::to_string(m.header.pid) +
                                            "/" + m.topic];
                     if (last > 0 && m.header.seq > last + 1) lost_ += m.header.seq - last - 1;
@@ -562,7 +574,7 @@ Server::Server(const std::string& endpoint, Handler handler, ServerOptions serve
       server_options_(std::move(server)),
       replies_(context(), ::zmq::socket_type::pull) {
     static std::atomic<std::uint64_t> instances{0};
-    apply(socket_, options);
+    apply(socket_, with_limit(options, kFrameLimit));
     socket_.bind(endpoint);
     endpoint_ = resolved_endpoint(socket_, endpoint);
     replies_endpoint_ = "inproc://forge-server-" + std::to_string(++instances);

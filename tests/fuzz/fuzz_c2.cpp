@@ -41,9 +41,9 @@ const tmtc::Registry& commands() {
 std::string frame(std::uint8_t flags, std::uint16_t id, std::uint16_t seq, std::string payload) {
     std::string out(c2::header_size + payload.size(), '\0');
     std::size_t n = 0;
-    c2::encode_message(c2::make_header(flags, id, seq, static_cast<std::uint16_t>(payload.size())),
-                       {reinterpret_cast<const std::uint8_t*>(payload.data()), payload.size()},
-                       {reinterpret_cast<std::uint8_t*>(out.data()), out.size()}, n);
+    (void)c2::encode_message(c2::make_header(flags, id, seq, static_cast<std::uint16_t>(payload.size())),
+                             {reinterpret_cast<const std::uint8_t*>(payload.data()), payload.size()},
+                             {reinterpret_cast<std::uint8_t*>(out.data()), out.size()}, n);
     return out;
 }
 

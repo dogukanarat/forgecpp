@@ -26,8 +26,9 @@ std::vector<std::string> refuse_busy(std::string_view request) {
     const auto nack = c2::nack_payload(Status::error(module_id::tmtc, EAGAIN, "busy"));
     std::string out(c2::header_size + nack.size(), '\0');
     std::size_t n = 0;
-    c2::encode_message(c2::make_header(c2::flag::nack, m.header.cmd_id, m.header.seq, nack.size()), nack,
-                       {reinterpret_cast<std::uint8_t*>(out.data()), out.size()}, n);
+    const auto s = c2::encode_message(c2::make_header(c2::flag::nack, m.header.cmd_id, m.header.seq, nack.size()), nack,
+                                      {reinterpret_cast<std::uint8_t*>(out.data()), out.size()}, n);
+    if (!s.ok()) return {};
     return {out};
 }
 
@@ -100,6 +101,10 @@ void Messaging::start(const Config& cfg) {
         data_pub_ = std::make_unique<zmq::Publisher>(data);
         logger->info("forge: streams on {}", data_pub_->endpoint());
     }
+}
+
+void Messaging::start_control(const Config& cfg) {
+    auto logger = app_.logger();
     const auto control = cfg.value<std::string>("forge.control");
     if (!control.empty()) {
         zmq::ServerOptions options;

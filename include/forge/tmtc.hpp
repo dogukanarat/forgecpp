@@ -100,6 +100,11 @@ public:
 
     void remove(std::uint16_t id);
 
+    /// No more changes: the links read the registry from their own threads
+    /// from now on. add(), add_push() and remove() throw std::logic_error.
+    void close() { closed_ = true; }
+    bool closed() const { return closed_; }
+
     const Command* find(std::uint16_t id) const;
     const Command* find(std::string_view name) const;
     /// Sorted by number.
@@ -110,6 +115,7 @@ private:
 
     std::map<std::uint16_t, std::unique_ptr<Command>> by_id_;
     std::map<std::string, Command*, std::less<>> by_name_;
+    bool closed_ = false;
 };
 
 /// Answers c2 requests from a Registry. Thread-safe: each call uses its own

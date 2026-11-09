@@ -9,6 +9,7 @@
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace c2 = forge::c2;
@@ -288,4 +289,21 @@ TEST_CASE("status: text and HTTP status") {
     CHECK(Status::error(1, ENOMEM).http_status() == 503);
     CHECK(Status::error(1, ETIMEDOUT).http_status() == 504);
     CHECK(Status::error(1, EIO).http_status() == 500);
+}
+
+TEST_CASE("status: a message that is not a literal is copied and kept") {
+    using forge::Status;
+    const char* kept = nullptr;
+    {
+        const std::string text = "frequency " + std::to_string(2400) + " MHz is too high";
+        const auto s = Status::error(forge::module_id::app, ERANGE, text);  // a std::string: copied
+        kept = s.message();
+        CHECK(kept != text.c_str());
+    }
+    CHECK(std::string(kept) == "frequency 2400 MHz is too high");  // the std::string is gone, the message is not
+    CHECK(Status::error(forge::module_id::app, ERANGE, "too high").message() == std::string("too high"));
+    // The same text is stored once.
+    CHECK(Status::error(1, EINVAL, std::string("same")).message() ==
+          Status::error(2, EIO, std::string("same")).message());
+    CHECK(forge::intern_message("x") == forge::intern_message(std::string("x")));
 }

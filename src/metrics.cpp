@@ -146,32 +146,50 @@ Snapshot Registry::snapshot(const std::string& prefix) const {
     s.time_unix_ns =
         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
             .count();
-    std::lock_guard lock(mutex_);
-    for (const auto& [name, e] : entries_) {
-        if (!prefix.empty() && name.compare(0, prefix.size(), prefix) != 0) continue;
-        Sample m;
-        m.name = name;
-        m.help = e.help;
-        m.unit = e.unit;
-        m.type = e.type;
-        m.labels = labels_;
-        if (e.counter) m.value = static_cast<double>(e.counter->value());
-        if (e.gauge) m.value = e.gauge->value();
-        if (e.fn) {
-            try {
-                m.value = e.fn();
-                e.fn_failed = false;
-            } catch (const std::exception& ex) {
-                m.value = std::nan("");  // shown as NaN
-                if (!e.fn_failed) log::warn("metrics: gauge {} failed: {}", name, ex.what());
-                e.fn_failed = true;
+    // The callbacks of the gauges run after the lock is released: one that
+    // reads another metric would otherwise deadlock, and a slow one would
+    // hold every thread that creates a metric.
+    struct Deferred {
+        std::size_t index;
+        std::function<double()> fn;
+    };
+    std::vector<Deferred> deferred;
+    {
+        std::lock_guard lock(mutex_);
+        for (const auto& [name, e] : entries_) {
+            if (!prefix.empty() && name.compare(0, prefix.size(), prefix) != 0) continue;
+            Sample m;
+            m.name = name;
+            m.help = e.help;
+            m.unit = e.unit;
+            m.type = e.type;
+            m.labels = labels_;
+            if (e.counter) m.value = static_cast<double>(e.counter->value());
+            if (e.gauge) m.value = e.gauge->value();
+            if (e.fn) deferred.push_back({s.metrics.size(), e.fn});
+            if (e.histogram) {
+                e.histogram->snapshot(m.buckets, m.count, m.sum);
+                m.bounds = e.histogram->bounds();
             }
+            s.metrics.push_back(std::move(m));
         }
-        if (e.histogram) {
-            e.histogram->snapshot(m.buckets, m.count, m.sum);
-            m.bounds = e.histogram->bounds();
+    }
+    for (const auto& d : deferred) {
+        auto& m = s.metrics[d.index];
+        bool failed = false;
+        try {
+            m.value = d.fn();
+        } catch (const std::exception& ex) {
+            m.value = std::nan("");  // shown as NaN
+            failed = true;
+            std::lock_guard lock(mutex_);
+            auto it = entries_.find(m.name);
+            if (it != entries_.end() && !it->second.fn_failed)
+                log::warn("metrics: gauge {} failed: {}", m.name, ex.what());
         }
-        s.metrics.push_back(std::move(m));
+        std::lock_guard lock(mutex_);
+        auto it = entries_.find(m.name);
+        if (it != entries_.end()) it->second.fn_failed = failed;
     }
     return s;
 }

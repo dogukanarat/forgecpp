@@ -8,6 +8,7 @@
 //
 //   sub_ = health.on_change([this](const Health::Report& r) { ... });  // in the one that listens
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -87,6 +88,10 @@ public:
     bool empty() const {
         std::lock_guard lock(impl_->mutex);
         return impl_->callbacks.empty();
+    }
+    std::size_t size() const {
+        std::lock_guard lock(impl_->mutex);
+        return impl_->callbacks.size();
     }
 
 private:

@@ -65,7 +65,17 @@ void HttpFrontend::create(const Config& cfg) {
     auto& auth = app_.auth();
     auto logger = app_.logger();
     http_ = std::make_unique<http::Server>();
-    http_->threads(static_cast<std::size_t>(std::max(cfg.value<int>("http.threads"), 2)));
+    // Every open page holds a thread for its live updates (and a watched
+    // stream four more): the JSON API and /health need threads left over.
+    const int pages = cfg.value<int>("web.max_clients");
+    int threads = cfg.value<int>("http.threads");
+    if (threads < pages + 4) {
+        logger->warn("[http].threads = {} is not enough for [web].max_clients = {} open pages: using {}", threads,
+                     pages, pages + 4);
+        threads = pages + 4;
+    }
+    http_->threads(static_cast<std::size_t>(std::max(threads, 2)));
+    stall_ms_ = cfg.value<int>("health.stall_ms");
 
     // Credentials: [auth] users (roles are checked per request by ControlService).
     // Anonymous callers get [auth].default_role, unless [auth].anonymous = false.
@@ -90,7 +100,7 @@ void HttpFrontend::create(const Config& cfg) {
         const auto overall = health.overall();
         const auto loop_age = app_.loop_age_ms();
         // The 1 s heartbeat runs on the main loop: an old one means the loop is stuck.
-        const char* status = app_.stopping() ? "stopping" : (loop_age > 5000 ? "stalled" : "ok");
+        const char* status = app_.stopping() ? "stopping" : (loop_age > stall_ms_ ? "stalled" : "ok");
         json j{{"status", status},
                {"pid", ::getpid()},
                {"loop_age_ms", loop_age},

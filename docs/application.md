@@ -180,6 +180,22 @@ them), so declared keys are read with `cfg.value<T>("key")`, never with
 that). `get_or` is for keys nobody declared. A default that depends on the
 environment is marked `.computed()` and not filled in.
 
+### Reloading
+
+`SIGHUP`, the console's `reload` and `Application::reload()` read the file
+again, validate it (a wrong value keeps the current configuration and logs
+why) and apply:
+
+| Applied again | Not applied until a restart |
+|---|---|
+| `[log].level`; the log file is opened again (logrotate: `postrotate kill -HUP`) | the other `[log]` keys, `[log].file` itself |
+| `[forge].request_timeout_ms`, `[forge].slow_task_ms` | the endpoints (`[forge].control`, `events`, `data`, `serial`), `[forge].control_workers` |
+| `[health].watchdog_grace_s` | `[http]`, `[web]`, `[console]`, `[auth]`, `[threads]`, `[crash]`, `[state]`, `[hub]`, `[audit]`, `[metrics]`, `[trace]` |
+| the application's own keys: `on_reload(config)` and the components' | |
+
+`--help-config` lists every key; a key that is only read at start-up says so
+in its description where it matters.
+
 ## `forge::Config` (toml++ + nlohmann/json)
 
 ```cpp
