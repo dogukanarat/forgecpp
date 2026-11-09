@@ -967,6 +967,24 @@ so it is off by default. Include only the headers you need
 (`<forge/application.hpp>`, `<forge/web.hpp>`, ...) in files that do not need
 everything.
 
+## Working on forgecpp
+
+```sh
+export FORGECPP_DEPS=$HOME/forgecpp-deps     # once: ./install.sh --deps-only --prefix $FORGECPP_DEPS
+cmake --workflow --preset dev                # configure, build and test (Debug, build/dev)
+tools/check.sh                               # what CI checks: format, layers, build, tests, fuzz, API records
+tools/check.sh --quick                       # the same without fuzz and the compatibility records
+tools/check.sh --fix                         # apply .clang-format
+tools/check.sh --asan                        # also AddressSanitizer + UBSan
+tools/check.sh --tidy                        # clang-tidy on what changed since origin/master
+tools/check.sh --install-hook                # quick checks before every commit, blame skips formatting commits
+```
+
+Presets: `dev`, `release`, `asan`, `tsan`, `fuzz` (libFuzzer, clang),
+`armhf` (`cmake --list-presets`). The fuzz targets (`tests/fuzz`) also run
+as short tests; a failing input is saved as `fuzz-failure.bin` and can be
+replayed: `./tests/fuzz_pb fuzz-failure.bin`.
+
 ## Versions
 
 Semantic versions, changes in [CHANGELOG.md](CHANGELOG.md). Until 1.0 a minor
