@@ -172,6 +172,11 @@ TEST_CASE("zmq: publisher streams - subscribers per topic, rate limit, latest-on
     CHECK(list[0].type == "forge.log_record");
 }
 
+TEST_CASE("zmq: an endpoint already in use is an error, not a crash") {
+    fz::Publisher first("tcp://127.0.0.1:*");
+    CHECK_THROWS_AS(fz::Publisher(first.endpoint()), ::zmq::error_t);
+}
+
 TEST_CASE("zmq: a stream can be watched from inside, a few messages a second") {
     fz::Publisher pub("tcp://127.0.0.1:*");
     auto& s = pub.add<forge_log_record>("watched");

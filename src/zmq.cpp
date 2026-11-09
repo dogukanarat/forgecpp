@@ -337,7 +337,12 @@ Publisher::Publisher(const std::string& endpoint, SocketOptions options) : optio
         }
         socket.close();
     });
-    endpoint_ = bound.get();  // rethrows bind errors
+    try {
+        endpoint_ = bound.get();  // rethrows bind errors
+    } catch (...) {
+        thread_.join();  // it has returned: a joinable thread must not be destroyed
+        throw;
+    }
 }
 
 Publisher::~Publisher() { stop(); }

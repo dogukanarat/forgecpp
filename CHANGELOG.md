@@ -197,6 +197,9 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   refused it and no command compiled. forge-proto.py also writes
   `pb::is_message<T>`; regenerate with the new forge-proto.py.
 - `tools/check.sh` reports a failed build instead of stopping with SIGPIPE.
+- A program whose `[forge].data` or `[forge].events` port is already taken
+  stops with "Address already in use" instead of aborting (`zmq::Publisher`
+  threw with its thread still running).
 
 - A log listener is removed only once it is no longer running: the web
   panel's log view and the log events could be destroyed while the logging
