@@ -66,6 +66,22 @@ foreach(target c2 pb)
     endif()
 endforeach()
 
+# Browser tests of the panel (tests/web): when node and Playwright are installed.
+add_executable(forgecpp_panel_app web/panel_app.cpp)
+target_link_libraries(forgecpp_panel_app PRIVATE forgecpp)
+find_program(FORGE_NODE node)
+if(FORGE_NODE)
+    execute_process(COMMAND "${FORGE_NODE}" -e "require('playwright')" RESULT_VARIABLE _forge_no_playwright
+                    OUTPUT_QUIET ERROR_QUIET)
+endif()
+if(FORGE_NODE AND _forge_no_playwright EQUAL 0)
+    add_test(NAME forgecpp_panel
+             COMMAND "${FORGE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/web/panel.test.js" $<TARGET_FILE:forgecpp_panel_app>)
+    set_tests_properties(forgecpp_panel PROPERTIES LABELS web TIMEOUT 120)
+else()
+    message(STATUS "forgecpp: no node with Playwright, the panel's browser tests are not run")
+endif()
+
 forge_add_test(forgecpp_zmq_tests SOURCES test_zmq.cpp)
 forge_add_test(forgecpp_framework_tests SOURCES test_framework.cpp test_services.cpp)
 # The services are internal (src/app/services.hpp).

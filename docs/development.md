@@ -13,6 +13,10 @@ tools/check.sh --tidy                        # clang-tidy on what changed since 
 tools/check.sh --install-hook                # quick checks before every commit, blame skips formatting commits
 ```
 
+The panel has browser tests (`tests/web/panel.test.js`, against
+`tests/web/panel_app.cpp`); ctest runs them when `node` can load Playwright
+(`npm install -g playwright && npx playwright install chromium`).
+
 Presets: `dev`, `release`, `asan`, `tsan`, `fuzz` (libFuzzer, clang),
 `armhf` (`cmake --list-presets`). The fuzz targets (`tests/fuzz`) also run
 as short tests; a failing input is saved as `fuzz-failure.bin` and can be

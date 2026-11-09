@@ -72,6 +72,9 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 - `pb::schema(type)`: a message's fields as JSON (kind, bits, bounds, enum
   names, nested messages). `zmq::Stream::watch()`: see a stream's messages
   from inside the program; costs one atomic read while nobody watches.
+- Browser tests of the panel (`tests/web`, Playwright): controls, buttons,
+  alarms, the Commands page and the stream inspector, against a small test
+  application. ctest runs them when node and Playwright are installed.
 - Fuzz targets for c2 frames, the dispatcher, protobuf bytes and JSON
   (`tests/fuzz`): a short ctest by default, libFuzzer with
   `-DFORGECPP_FUZZ=ON`.
