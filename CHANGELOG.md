@@ -192,6 +192,11 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 ### Fixed
 
 - `ENAMETOOLONG` (a text longer than its field) answers HTTP 400 instead of 500.
+- `pb::Message` no longer compares an object's address with null in a
+  concept: GCC with `-fsanitize=undefined` (or `-fno-delete-null-pointer-checks`)
+  refused it and no command compiled. forge-proto.py also writes
+  `pb::is_message<T>`; regenerate with the new forge-proto.py.
+- `tools/check.sh` reports a failed build instead of stopping with SIGPIPE.
 
 - A log listener is removed only once it is no longer running: the web
   panel's log view and the log events could be destroyed while the logging

@@ -97,7 +97,8 @@ def write_header(path, fdesc, messages, enums, deps):
             field_ref, count = "nullptr", 0
         out.append(f'inline constexpr Type {n}_pb_type{{"{full.lstrip(".")}", &{n}_msg, sizeof({n}), '
                    f"{field_ref}, {count}}};\n"
-                   f"template <>\ninline constexpr const Type* type_of<{n}> = &{n}_pb_type;\n")
+                   f"template <>\ninline constexpr const Type* type_of<{n}> = &{n}_pb_type;\n"
+                   f"template <>\ninline constexpr bool is_message<{n}> = true;\n")
     out.append("\n}  // namespace forge::pb\n")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as fh:

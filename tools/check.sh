@@ -63,7 +63,7 @@ if [[ ${do_format} == 1 ]]; then
     if ! command -v clang-format >/dev/null; then
         echo "clang-format not found: skipped"
     elif ! cpp_files | xargs clang-format --dry-run --Werror 2>/tmp/forge-format.$$; then
-        grep -o '^[^:]*' /tmp/forge-format.$$ | sort -u | sed 's/^/  /'
+        grep -o '^[^:]*' /tmp/forge-format.$$ | sort -u | sed 's/^/  /' || true
         fail "format: tools/check.sh --fix formats these files"
     fi
     rm -f /tmp/forge-format.$$
@@ -83,7 +83,8 @@ configure_and_test() {
         tail -20 "${dir}.configure.log"; fail "configure (${label})"; return 1
     fi
     if ! cmake --build "${dir}" -j "${JOBS}" >"${dir}.build.log" 2>&1; then
-        grep -E 'error|FAILED' -A3 "${dir}.build.log" | head -40; fail "build (${label})"; return 1
+        grep -E 'error|FAILED' -A3 "${dir}.build.log" | head -40 || true  # only shown: pipefail must not stop us
+        fail "build (${label})"; return 1
     fi
     step "tests: ${label}"
     local exclude=()

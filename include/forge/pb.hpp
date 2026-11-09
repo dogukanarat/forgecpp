@@ -70,8 +70,15 @@ struct Type {
 template <class T>
 inline constexpr const Type* type_of = nullptr;
 
+/// True for a generated message (forge-proto.py specialises it too). Not
+/// `type_of<T> != nullptr`: comparing an object's address with null is not a
+/// constant expression for GCC with -fsanitize=undefined or
+/// -fno-delete-null-pointer-checks.
 template <class T>
-concept Message = type_of<T> != nullptr;
+inline constexpr bool is_message = false;
+
+template <class T>
+concept Message = is_message<T>;
 
 // --- binary --------------------------------------------------------------------------
 /// EMSGSIZE when `out` is too small.
