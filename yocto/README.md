@@ -23,17 +23,19 @@ local.conf:     IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub
 | `recipes-connectivity/*` | `radio-controller`, `spectrum-analyzer`, `qam-modem`, `channel-emulator` (+ `-clients`) | the example applications, from `recipes-connectivity/forgecpp-app.inc` |
 
 The source and the commit are in one place, `recipes-support/forgecpp/forgecpp-src.inc`:
-`FORGECPP_SRCREV` is the commit of the release the layer ships (`tools/release.sh`
-sets it). For a development build:
+`tools/release.sh` writes the release's commit into `FORGECPP_SRCREV`, so a
+released layer builds exactly that commit. Between releases it is
+`${AUTOREV}` (the head of `FORGECPP_BRANCH`); pin it in local.conf for a
+reproducible build of a development commit, or build a checkout with
+`externalsrc`, as `kas/qemuarm64.yml` does.
 
-```
-FORGECPP_SRCREV = "${AUTOREV}"          # local.conf: the head of FORGECPP_BRANCH
-```
-
-or build a checkout with `externalsrc`, as `kas/qemuarm64.yml` does.
-
-`S` is `${UNPACKDIR}/git`: scarthgap, styhead and walnascar
-(`LAYERSERIES_COMPAT`). `yocto-check-layer` has not been run on it yet.
+`LAYERSERIES_COMPAT` is scarthgap, the release the kas file builds. The
+recipes take the unpack directory from `FORGECPP_UNPACKDIR` (`conf/layer.conf`:
+`${WORKDIR}` on scarthgap, `${UNPACKDIR}` from styhead on), so they are
+written for styhead and walnascar too; add a series to `LAYERSERIES_COMPAT`
+once a build of it has passed. The recipes of this change were read against
+the scarthgap classes; they have not been through a bitbake build or
+`yocto-check-layer` yet.
 
 ## Try it in QEMU (kas)
 
@@ -81,7 +83,7 @@ LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=..."
 SRC_URI = "git://...;protocol=https;branch=main"
 SRCREV = "..."
-S = "${UNPACKDIR}/git"
+S = "${WORKDIR}/git"          # styhead and later: ${UNPACKDIR}/git
 DEPENDS = "forgecpp protobuf-native python3-protobuf-native"   # the last two: own .proto files
 inherit cmake systemd python3-dir python3native
 EXTRA_OECMAKE = "-DBUILD_TESTING=OFF -DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/protoc \

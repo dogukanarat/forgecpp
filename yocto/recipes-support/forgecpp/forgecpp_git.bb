@@ -13,10 +13,10 @@ PV = "${FORGECPP_PV}"
 LICENSE = "MIT & Zlib & BSD-2-Clause"
 LIC_FILES_CHKSUM = " \
     ${FORGECPP_LICENSE_CHKSUM} \
-    file://${UNPACKDIR}/git/third_party/nanopb/LICENSE.txt;md5=9db4b73a55a3994384112efcdb37c01f \
-    file://${UNPACKDIR}/git/third_party/linenoise/LICENSE;md5=faa55ac8cbebebcb4a84fe1ea2879578 \
-    file://${UNPACKDIR}/git/third_party/thread-pool/LICENSE.txt;md5=47ca9b80e8129537a2b9e401c5d9f3fe \
-    file://${UNPACKDIR}/git/src/web/vendor/gridstack/LICENSE;md5=edb97b6dc3fdc07939ff20bd634870d5 \
+    file://third_party/nanopb/LICENSE.txt;md5=9db4b73a55a3994384112efcdb37c01f \
+    file://third_party/linenoise/LICENSE;md5=faa55ac8cbebebcb4a84fe1ea2879578 \
+    file://third_party/thread-pool/LICENSE.txt;md5=47ca9b80e8129537a2b9e401c5d9f3fe \
+    file://src/web/vendor/gridstack/LICENSE;md5=edb97b6dc3fdc07939ff20bd634870d5 \
 "
 CVE_PRODUCT = "forgecpp"
 

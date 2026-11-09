@@ -888,3 +888,35 @@ TEST_CASE("systemd: notify() writes to $NOTIFY_SOCKET, watchdog_interval() reads
     ::unsetenv("WATCHDOG_USEC");
     ::unsetenv("WATCHDOG_PID");
 }
+
+TEST_CASE("audit: the file gets every record, from its own thread; flush() waits for it") {
+    forge::testing::TempDir dir;
+    const auto first = (dir / "audit.jsonl").string(), second = (dir / "audit2.jsonl").string();
+    const auto lines = [](const std::string& path) {
+        std::ifstream in(path);
+        std::vector<std::string> out;
+        for (std::string line; std::getline(in, line);) out.push_back(line);
+        return out;
+    };
+    {
+        forge::Audit audit(10);
+        audit.record({.action = "set", .target = "before-the-file"});  // no file yet: memory only
+        audit.configure(10, first);
+        for (int i = 0; i < 200; ++i)
+            audit.record({.channel = "test", .action = "set", .target = "t" + std::to_string(i)});
+        audit.flush();
+        const auto written = lines(first);
+        REQUIRE(written.size() == 200);  // all of them, as soon as flush() returns
+        CHECK(json::parse(written.front())["target"] == "t0");
+        CHECK(json::parse(written.back())["target"] == "t199");
+        CHECK(audit.list().size() == 10);  // the memory keeps the newest
+
+        audit.configure(10, second);  // another file from here on
+        audit.record({.action = "ack", .target = "moved"});
+        audit.record({.action = "ack", .target = "last"});
+    }  // the destructor writes what is still queued
+    CHECK(lines(first).size() == 200);
+    const auto moved = lines(second);
+    REQUIRE(moved.size() == 2);
+    CHECK(json::parse(moved[1])["target"] == "last");
+}

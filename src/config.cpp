@@ -51,20 +51,34 @@ void merge_tables(toml::table& dst, const toml::table& src) {
     }
 }
 
+// Straight from the parsed nodes (no text in between): a scalar read costs a
+// few instructions. Dates and times, which JSON does not have, become text.
 nlohmann::json toml_to_json(const toml::node& node) {
-    std::ostringstream os;
-    if (auto t = node.as_table()) {
-        os << toml::json_formatter{*t};
-    } else if (auto a = node.as_array()) {
-        os << toml::json_formatter{*a};
-    } else {
-        // Wrap scalars in a table so the formatter accepts them.
-        toml::table wrapper;
-        wrapper.insert_or_assign("v", node);
-        os << toml::json_formatter{wrapper};
-        return nlohmann::json::parse(os.str()).at("v");
+    const auto text = [](const auto& value) {
+        std::ostringstream os;
+        os << value;
+        return os.str();
+    };
+    switch (node.type()) {
+        case toml::node_type::table: {
+            auto out = nlohmann::json::object();
+            for (const auto& [key, value] : *node.as_table()) out[std::string(key.str())] = toml_to_json(value);
+            return out;
+        }
+        case toml::node_type::array: {
+            auto out = nlohmann::json::array();
+            for (const auto& value : *node.as_array()) out.push_back(toml_to_json(value));
+            return out;
+        }
+        case toml::node_type::string: return node.as_string()->get();
+        case toml::node_type::integer: return node.as_integer()->get();
+        case toml::node_type::floating_point: return node.as_floating_point()->get();
+        case toml::node_type::boolean: return node.as_boolean()->get();
+        case toml::node_type::date: return text(node.as_date()->get());
+        case toml::node_type::time: return text(node.as_time()->get());
+        case toml::node_type::date_time: return text(node.as_date_time()->get());
+        default: return nullptr;
     }
-    return nlohmann::json::parse(os.str());
 }
 
 // A JSON value as TOML text (an inline table for an object): toml++ parses
@@ -147,6 +161,18 @@ std::optional<nlohmann::json> Config::node(std::string_view path) const {
     auto view = impl_->table.at_path(path);
     if (!view) return std::nullopt;
     return toml_to_json(*view.node());
+}
+
+std::string Config::location(std::string_view path) const {
+    auto view = impl_->table.at_path(path);
+    if (!view) return {};
+    const auto& src = view.node()->source();
+    if (!src.begin.line) return {};  // set from code or an override, not read from a file
+    std::ostringstream os;
+    os << " at ";
+    if (src.path) os << *src.path << ":";
+    os << src.begin.line << ":" << src.begin.column;
+    return os.str();
 }
 
 Config Config::section(std::string_view path) const {

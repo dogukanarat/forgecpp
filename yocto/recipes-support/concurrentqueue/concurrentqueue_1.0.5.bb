@@ -6,7 +6,7 @@ LIC_FILES_CHKSUM = "file://LICENSE.md;md5=3e3bd5d3367ca1cdb53ff11ab44322ea"
 
 SRC_URI = "git://github.com/cameron314/concurrentqueue.git;protocol=https;branch=master"
 SRCREV = "9afb99746f0f5fc94ac8aef737053ae0481ba8d1"
-S = "${UNPACKDIR}/git"
+S = "${FORGECPP_UNPACKDIR}/git"
 
 inherit cmake
 

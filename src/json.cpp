@@ -2,6 +2,7 @@
 
 #include <fcntl.h>
 #include <unistd.h>
+#include <atomic>
 #include <cerrno>
 #include <cstring>
 #include <fstream>
@@ -23,7 +24,10 @@ void save_json(const std::filesystem::path& path, const json& value, int indent)
 void write_file_atomic(const std::filesystem::path& path, std::string_view content) {
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
 
-    const auto tmp = path.string() + ".tmp." + std::to_string(::getpid());
+    // A name of its own for every call: two writers of one file (two threads,
+    // two processes) never share a temporary file.
+    static std::atomic<std::uint64_t> counter{0};
+    const auto tmp = path.string() + ".tmp." + std::to_string(::getpid()) + "." + std::to_string(++counter);
     const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) throw std::runtime_error("cannot create " + tmp + ": " + std::strerror(errno));
 

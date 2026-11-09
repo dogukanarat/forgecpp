@@ -146,3 +146,27 @@ TEST_CASE("config schema: sources do not repeat the default of a declared key") 
         CHECK((!keys.count(key) || computed.count(key)));
     }
 }
+
+TEST_CASE("config: a wrong value names its place in the file; values convert without loss") {
+    forge::testing::TempDir dir;
+    const auto path = dir / "app.toml";
+    std::ofstream(path)
+        << "[http]\nport = \"eighty\"\nratio = 0.1\nbig = 9007199254740993\nwhen = 2026-01-02T03:04:05Z\n";
+    const auto cfg = Config::load_file(path);
+    try {
+        (void)cfg.get<int>("http.port");
+        FAIL("a string was read as an integer");
+    } catch (const ConfigError& e) {
+        const std::string what = e.what();
+        CHECK(what.find("'http.port' must be integer") != std::string::npos);
+        CHECK(what.find("app.toml:2:8") != std::string::npos);  // line 2, where the value starts
+    }
+    CHECK(cfg.value<double>("http.ratio") == 0.1);                       // exactly, not through text
+    CHECK(cfg.value<std::int64_t>("http.big") == 9007199254740993LL);    // beyond a double's integers
+    CHECK(cfg.value<std::string>("http.when").find("2026-01-02") == 0);  // a date and time is text
+    CHECK(cfg.to_json()["http"]["ratio"] == 0.1);
+
+    auto set = Config::parse("");
+    set.set("a.b", 5);
+    CHECK_THROWS_AS((void)set.get<std::string>("a.b"), ConfigError);  // no file: no place, still an error
+}

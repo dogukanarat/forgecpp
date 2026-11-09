@@ -50,6 +50,21 @@ TEST_CASE("services: StateStore restores persistent controls and saves only when
     CHECK(forge::load_json(file)["gain"] == 9);
     async.save(d, logger, false, &pool);  // not dirty: nothing queued
     pool.wait();
+
+    // A forced save (shutdown) while writes of the pool are on their way: the
+    // file ends with the newest values, whichever thread wrote last.
+    for (int round = 0; round < 50; ++round) {
+        d.set("gain", 100 + round);
+        async.mark_dirty();
+        async.save(d, logger, false, &pool);  // on a pool thread
+        d.set("gain", 1000 + round);
+        async.save(d, logger, true);  // here, at once
+        pool.wait();
+        REQUIRE(forge::load_json(file)["gain"] == 1000 + round);
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(file).parent_path())) {
+        CHECK(entry.path().filename().string().find(".tmp.") == std::string::npos);  // no temporary file left
+    }
 }
 
 TEST_CASE("services: LayoutStore keeps page layouts in a file, or only in memory with \"-\"") {

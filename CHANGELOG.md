@@ -232,6 +232,27 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   the armhf build, the systemd job and the API reference run on pull
   requests, weekly and by hand.
 
+### Fixed (after the review of the release candidate)
+
+- The Yocto recipes used `${UNPACKDIR}`, which scarthgap does not define:
+  they now take the unpack directory from `FORGECPP_UNPACKDIR`
+  (`conf/layer.conf`: `${WORKDIR}` on scarthgap, `${UNPACKDIR}` later).
+  `LAYERSERIES_COMPAT` names scarthgap only, the release the kas file builds.
+  `S` is the repository root for every recipe (the applications set
+  `OECMAKE_SOURCEPATH`), so the license checksums are plain relative paths.
+  `FORGECPP_SRCREV` is `${AUTOREV}` until `tools/release.sh` writes the
+  release's commit (it was a placeholder that could not be fetched).
+- The persistent controls: the forced save at shutdown could meet a write of
+  the pool in the same temporary file, or be overwritten by an older snapshot
+  written late. Writes are one at a time and carry a generation; an older one
+  never replaces a newer one. `write_file_atomic()` uses a temporary name of
+  its own for every call.
+- `Audit::flush()` returned while the writer still held the last batch; it
+  waits for the lines to be in the file. The file writer has a test.
+- `Config`: a wrong value says where it is in the file again
+  (`... must be integer (got string "eighty") at app.toml:2:8`), and a value
+  is converted straight from the parsed node instead of through JSON text.
+
 ### Changed (headers)
 
 - `forge/config.hpp` no longer includes toml++: the parser is behind

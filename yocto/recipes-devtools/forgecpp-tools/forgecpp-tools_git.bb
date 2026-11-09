@@ -9,7 +9,7 @@ PV = "${FORGECPP_PV}"
 LICENSE = "MIT & Zlib"
 LIC_FILES_CHKSUM = " \
     ${FORGECPP_LICENSE_CHKSUM} \
-    file://${UNPACKDIR}/git/third_party/nanopb/LICENSE.txt;md5=9db4b73a55a3994384112efcdb37c01f \
+    file://third_party/nanopb/LICENSE.txt;md5=9db4b73a55a3994384112efcdb37c01f \
 "
 
 inherit allarch

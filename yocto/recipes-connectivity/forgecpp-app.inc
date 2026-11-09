@@ -8,7 +8,8 @@ LICENSE = "MIT"
 LIC_FILES_CHKSUM = "${FORGECPP_LICENSE_CHKSUM}"
 PV = "1.0.0"
 
-S = "${UNPACKDIR}/git/examples/${FORGECPP_APP}"
+# S is the repository root (forgecpp-src.inc); the application is one directory of it.
+OECMAKE_SOURCEPATH = "${S}/examples/${FORGECPP_APP}"
 
 # forgecpp (and through it ZeroMQ, nanopb); protoc and nanopb's generator on
 # the build machine for the application's own messages.

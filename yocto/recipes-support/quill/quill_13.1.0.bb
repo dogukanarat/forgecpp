@@ -7,7 +7,7 @@ LIC_FILES_CHKSUM = "file://LICENSE;md5=b6da680e78b545725b930cedf82789d3"
 # The version forgecpp is built and tested with (third_party/quill).
 SRC_URI = "git://github.com/odygrd/quill.git;protocol=https;branch=master"
 SRCREV = "78c0696c5be589488d882c280796dfa06bdcd492"
-S = "${UNPACKDIR}/git"
+S = "${FORGECPP_UNPACKDIR}/git"
 
 inherit cmake
 

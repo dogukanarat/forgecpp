@@ -54,11 +54,14 @@ public:
     const std::string& file() const { return file_; }
 
 private:
-    void write(const json& values, const Logger& logger);
+    void write(std::uint64_t generation, const json& values, const Logger& logger);
 
     std::string file_;
     std::atomic<bool> dirty_{false};
     std::atomic<bool> writing_{false};
+    std::uint64_t generation_ = 0;  // of the snapshots, counted on the main loop
+    std::mutex write_mutex_;        // one write at a time (the pool's, or the forced one at shutdown)
+    std::uint64_t written_ = 0;     // the newest snapshot in the file (write_mutex_)
 };
 
 /// Card layouts of the web pages (forge.layout in forge.js). Thread-safe.

@@ -55,7 +55,10 @@ void Audit::record(Record r) {
 
 void Audit::flush() {
     std::unique_lock lock(file_mutex_);
-    file_ready_.wait(lock, [&] { return lines_.empty() || !writer_.joinable(); });
+    // Until every line queued so far is in the file (the queue is empty while
+    // the writer still holds the last batch: count what was written).
+    const auto upto = queued_;
+    file_ready_.wait(lock, [&] { return written_ >= upto || !writer_.joinable(); });
 }
 
 void Audit::write_loop(const std::stop_token& stop) {
@@ -86,7 +89,7 @@ void Audit::write_loop(const std::stop_token& stop) {
         }
         lock.lock();
         written_ += batch.size();
-        file_ready_.notify_all();  // flush() waits for an empty queue
+        file_ready_.notify_all();  // flush() waits for written_
         if (stop.stop_requested() && lines_.empty()) break;
     }
 }

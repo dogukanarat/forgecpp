@@ -60,18 +60,24 @@ void StateStore::save(web::Dashboard& dashboard, const Logger& logger, bool forc
     dirty_ = false;
     json j = json::object();
     for (const auto& id : dashboard.persistent_ids()) j[id] = dashboard.get(id);
+    const auto generation = ++generation_;
     if (!pool) {
-        write(j, logger);
+        write(generation, j, logger);
         return;
     }
     writing_ = true;
-    pool->detach_task([this, j = std::move(j), logger] {
-        write(j, logger);
+    pool->detach_task([this, generation, j = std::move(j), logger] {
+        write(generation, j, logger);
         writing_ = false;
     });
 }
 
-void StateStore::write(const json& values, const Logger& logger) {
+void StateStore::write(std::uint64_t generation, const json& values, const Logger& logger) {
+    // The forced save at shutdown may meet a write of the pool: one at a time,
+    // and an older snapshot never replaces a newer one.
+    std::lock_guard lock(write_mutex_);
+    if (generation <= written_) return;
+    written_ = generation;
     try {
         save_json(file_, values);
     } catch (const std::exception& e) {

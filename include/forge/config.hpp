@@ -61,7 +61,12 @@ public:
     [[nodiscard]] std::optional<T> get(std::string_view path) const {
         auto v = node(path);
         if (!v) return std::nullopt;
-        return convert<T>(path, *v);
+        try {
+            return convert<T>(path, *v);
+        } catch (const ConfigError& e) {
+            // A wrong value: say where in the file it is.
+            throw ConfigError(e.what() + location(path));
+        }
     }
 
     /// Value at path or `fallback` when missing.
@@ -114,6 +119,8 @@ private:
 
     /// The value at `path` as JSON (nullopt: no such key).
     std::optional<nlohmann::json> node(std::string_view path) const;
+    /// " at file:line:column" of the value at `path` ("" when it did not come from a file).
+    std::string location(std::string_view path) const;
     [[noreturn]] static void type_error(std::string_view path, std::string_view expected, const nlohmann::json& got);
 
     template <class T>
