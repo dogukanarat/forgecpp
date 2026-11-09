@@ -194,6 +194,7 @@ private:
     /// The live messages of a stream for the panel (created on demand).
     std::shared_ptr<http::EventStream> watch_stream(const std::string& name);
     void drop_unwatched_streams();
+    static std::size_t pages_signature(const std::string& root);
 
     struct StreamWatch {
         std::shared_ptr<http::EventStream> events;
@@ -210,6 +211,8 @@ private:
     std::vector<Subscription> subscriptions_;
     std::atomic<bool> alarms_dirty_{true};
     LayoutStore layouts_;
+    std::string pages_root_;  // [web].root with live_reload
+    std::size_t pages_signature_ = 0;
 };
 
 }  // namespace forge::detail

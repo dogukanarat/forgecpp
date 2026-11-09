@@ -77,7 +77,9 @@ From JavaScript: `forge.on('state', changed => ...)`, `await forge.set('speed', 
 `await forge.press('start')`, `forge.on('alarm', d => ...)` (server side:
 `publish_web("alarm", {...})`), `forge.toast(...)`, `await forge.api('/api/...')`,
 `forge.alarms`, `forge.on('alarms', list => ...)`, `forge.ack(id)`, `forge.ackAll()`.
-While developing, `-D web.root=web` serves the pages from disk: save, reload the browser.
+While developing, `-D web.root=web` serves the pages from disk; a page with
+`forge.js` reloads itself when a file there changes (`[web].live_reload`, on by
+default; the built-in `/forge/` panel does not).
 
 **3. JSON API — for scripts and other systems:**
 

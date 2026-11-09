@@ -133,6 +133,10 @@
     source.addEventListener('state', function (e) { applyState(JSON.parse(e.data)); });
     source.addEventListener('log', function (e) { emit('log', JSON.parse(e.data)); });
     source.addEventListener('alarms', function (e) { setAlarms(JSON.parse(e.data)); });
+    // [web].root changed on disk (developing): reload the application's pages.
+    source.addEventListener('reload', function () {
+      if (!/\/forge\/(index\.html)?$/.test(global.location.pathname)) global.location.reload();
+    });
     source.addEventListener('app', function (e) {
       const msg = JSON.parse(e.data);
       emit(msg.event, msg.data);

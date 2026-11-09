@@ -107,6 +107,10 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 - `.github/dependabot.yml`: monthly updates of the actions and the bundled
   libraries (not protobuf, libzmq, libiio).
 - `forge::Error::module()`: the module a refusal goes out with on a link.
+- Panel: the log card filters by level and by text ("12 of 300").
+- `[web].live_reload` (on): with `web.root`, a saved file reloads the open
+  pages of the application (not `/forge/`).
+- `forgecpp-new --minimal [--with-command] [--with-stream]`.
 - `get` and `set` carry the value in a typed member too (`number`, `flag`,
   `text`; `oneof typed`), so a microcontroller needs no JSON parser.
 

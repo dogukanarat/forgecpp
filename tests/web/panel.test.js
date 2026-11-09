@@ -1,5 +1,6 @@
-// Browser tests of the control panel (/forge/): controls, buttons, alarms, the
-// Commands page and the stream inspector, against panel_app.cpp.
+// Browser tests of the control panel (/forge/): controls, buttons, the log
+// filter, alarms, the Commands page, the stream inspector and the live reload
+// of pages from web.root, against panel_app.cpp.
 //
 //   node tests/web/panel.test.js build/tests/forgecpp_panel_app
 //
@@ -8,6 +9,9 @@
 const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const app = process.argv[2];
 const port = 20000 + Math.floor(Math.random() * 20000);
@@ -24,7 +28,11 @@ async function waitFor(fn, what, ms = 5000) {
 const state = async () => (await fetch(`${base}/forge/api/state`)).json();
 
 async function main() {
-  const proc = spawn(app, ['-D', 'http.enabled=true', '-D', 'http.host=127.0.0.1', '-D', `http.port=${port}`,
+  // web.root on disk: a page that reloads itself when a file changes.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-panel-'));
+  const page1 = '<!doctype html><title>v1</title><script src="forge/forge.js"></script><p id="v">one</p>';
+  fs.writeFileSync(path.join(root, 'index.html'), page1);
+  const proc = spawn(app, ['-D', `web.root=${root}`, '-D', 'http.enabled=true', '-D', 'http.host=127.0.0.1', '-D', `http.port=${port}`,
                            '-D', 'log.console=false', '-D', 'hub.register=false', '-D', 'console.telnet=',
                            '-D', 'forge.data=tcp://127.0.0.1:*'], { stdio: 'inherit' });
   const browser = await chromium.launch();
@@ -53,6 +61,18 @@ async function main() {
     await waitFor(async () => (await page.locator('[data-forge-value="count"]').first().textContent()).trim() === '2',
                   'count shown');
 
+    // The log card: the lines of the button, then filtered by text and level.
+    const shown = () => page.locator('#forge-log-lines .forge-log:visible').count();
+    await waitFor(async () => (await page.textContent('#forge-log-lines')).includes('bumped to 2'), 'the log lines');
+    await page.fill('#forge-log-filter', 'BUMPED TO 2');
+    await waitFor(async () => (await shown()) === 1, 'one line with the text');
+    await page.fill('#forge-log-filter', '');
+    await page.selectOption('#forge-log-level', 'error');
+    await waitFor(async () => (await shown()) === 0, 'no error lines');
+    await page.selectOption('#forge-log-level', 'warning');
+    await waitFor(async () => (await shown()) >= 2, 'the warnings again');
+    assert.match(await page.textContent('#forge-log-count'), /^\d+ of \d+$/);
+
     // The alarm the application raised is on the page.
     await waitFor(async () => (await page.content()).includes('raised by the test app'), 'the alarm on the page');
 
@@ -68,11 +88,21 @@ async function main() {
     await page.click('#forge-streams-rows tr:has-text("ticks") .forge-watch-btn');
     await waitFor(async () => (await page.textContent('#forge-watch-lines')).includes('tick '), 'stream messages');
 
+    // Live reload of the application's own page.
+    const own = await browser.newPage();
+    own.on('pageerror', e => errors.push(e.message));
+    await own.goto(`${base}/`);
+    await waitFor(async () => (await own.textContent('#v')) === 'one', 'the page from web.root');
+    await waitFor(async () => own.evaluate(() => window.forge && window.forge.connected), 'its event stream');
+    fs.writeFileSync(path.join(root, 'index.html'), page1.replace('one', 'two!'));
+    await waitFor(async () => (await own.textContent('#v').catch(() => '')) === 'two!', 'reloaded after the save');
+
     assert.deepStrictEqual(errors, [], 'errors in the page');
-    console.log('panel: controls, button, alarm, commands, stream inspector: ok');
+    console.log('panel: controls, button, log filter, alarm, commands, stream inspector, live reload: ok');
   } finally {
     await browser.close();
     proc.kill('SIGTERM');
+    fs.rmSync(root, { recursive: true, force: true });
   }
 }
 

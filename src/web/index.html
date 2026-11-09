@@ -161,6 +161,15 @@
       <header>
         <h2>Logs</h2>
         <span>
+          <input type="search" id="forge-log-filter" placeholder="Search" aria-label="show the lines with this text">
+          <select id="forge-log-level" aria-label="lowest level shown">
+            <option value="trace">all</option>
+            <option value="debug">debug +</option>
+            <option value="info">info +</option>
+            <option value="warning">warning +</option>
+            <option value="error">error +</option>
+          </select>
+          <span class="forge-muted" id="forge-log-count"></span>
           <label class="forge-muted"><input type="checkbox" id="forge-follow" checked> follow</label>
           <button class="forge-btn" id="forge-clear" type="button">Clear</button>
         </span>

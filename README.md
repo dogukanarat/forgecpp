@@ -121,6 +121,10 @@ ctest --test-dir build
 sudo cmake --install build     # binary (web/ embedded) + /etc/my-daemon/my-daemon.toml + systemd unit
 ```
 
+`forgecpp-new --minimal my-daemon` makes only the application, its controls,
+configuration and tests (no messages, web page or Python client);
+`--with-command` and `--with-stream` add a command or a stream back.
+
 Generated project:
 
 ```

@@ -8,7 +8,7 @@ set -euo pipefail
 
 usage() {
     cat <<EOF
-Usage: forgecpp-new <name> [-d DIR] [--description TEXT] [--force]
+Usage: forgecpp-new <name> [-d DIR] [--description TEXT] [--minimal [--with-command] [--with-stream]] [--force]
 
 <name> is the daemon name: lowercase words separated by '-' (e.g. pump-controller);
 other spellings are converted (Pump_Controller -> pump-controller).
@@ -22,6 +22,10 @@ Creates a new forgecpp application in DIR/<name> with:
 Options:
   -d, --dir DIR          Parent directory (default: current directory)
   --description TEXT     One line description
+  --minimal              Only the application, its controls, config and tests:
+                         no messages (proto/), web page or Python client
+  --with-command         With --minimal: also the "status" command (proto/)
+  --with-stream          With --minimal: also the "ticks" stream (proto/, clients/)
   -f, --force            Write into an existing, non-empty directory
   -h, --help             Show this help
 EOF
@@ -31,11 +35,15 @@ NAME=""
 PARENT="."
 DESCRIPTION=""
 FORCE=0
+WITH_COMMAND=1 WITH_STREAM=1 WITH_WEB=1
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -d|--dir)        PARENT="${2:?missing value for $1}"; shift 2 ;;
         --description)   DESCRIPTION="${2:?missing value for $1}"; shift 2 ;;
         -f|--force)      FORCE=1; shift ;;
+        --minimal)       WITH_COMMAND=0; WITH_STREAM=0; WITH_WEB=0; MINIMAL=1; shift ;;
+        --with-command)  ADD_COMMAND=1; shift ;;
+        --with-stream)   ADD_STREAM=1; shift ;;
         -h|--help)       usage; exit 0 ;;
         -*)              echo "unknown option: $1" >&2; usage >&2; exit 1 ;;
         *)               [[ -z "${NAME}" ]] || { echo "only one name allowed" >&2; exit 1; }
@@ -44,6 +52,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "${NAME}" ]] || { usage >&2; exit 1; }
+[[ -n "${ADD_COMMAND:-}" ]] && WITH_COMMAND=1
+[[ -n "${ADD_STREAM:-}" ]] && WITH_STREAM=1
+WITH_PROTO=$(( WITH_COMMAND || WITH_STREAM ))
 if [[ ! "${NAME}" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
     echo "invalid name '${NAME}': use letters, digits, '-' and '_' (start with a letter)" >&2
     exit 1
@@ -68,7 +79,10 @@ CLASS="$(echo "${NAME}" | sed -E 's/(^|[-_])([a-z])/\U\2/g; s/[-_]//g')"
 IDENT="$(echo "${NAME}" | tr '-' '_')"
 PKG="$(echo "${IDENT}" | tr '[:upper:]' '[:lower:]')"   # proto package (C names: <pkg>_<message>)
 
-mkdir -p "${DIR}/src" "${DIR}/web" "${DIR}/config" "${DIR}/tests" "${DIR}/proto/${PKG}" "${DIR}/clients"
+mkdir -p "${DIR}/src" "${DIR}/config" "${DIR}/tests"
+[[ ${WITH_WEB} == 1 ]] && mkdir -p "${DIR}/web"
+[[ ${WITH_PROTO} == 1 ]] && mkdir -p "${DIR}/proto/${PKG}"
+[[ ${WITH_STREAM} == 1 ]] && mkdir -p "${DIR}/clients"
 
 # ---------------------------------------------------------------------------
 cat > "${DIR}/CMakeLists.txt" <<EOF
@@ -78,30 +92,35 @@ project(${IDENT} VERSION 0.1.0 DESCRIPTION "${DESCRIPTION}" LANGUAGES CXX)
 include(GNUInstallDirs)
 find_package(forgecpp 0.4 REQUIRED)
 
+# {proto
 # The application's messages (see proto/): nanopb structs for the app and its
 # tests, Python modules for clients.
 add_library(${IDENT}_messages STATIC)
 forge_add_proto(${IDENT}_messages ROOT proto PROTOS ${PKG}/${PKG}.proto
                 PYTHON "\${CMAKE_CURRENT_BINARY_DIR}/python")
 target_link_libraries(${IDENT}_messages PUBLIC forgecpp::forgecpp)
+# }proto
 
 forge_add_app(${NAME}
     SOURCES src/main.cpp
-    LIBS    ${IDENT}_messages
+    LIBS    ${IDENT}_messages  # [proto]
     CONFIG  config/${NAME}.toml
-    WEB     web
+    WEB     web  # [web]
     # systemd unit with the restart policy: a crash or a hung main loop (watchdog)
     # is restarted, at most 3 times in 10 minutes; then the unit fails.
     DESCRIPTION "${DESCRIPTION}"
     RESTART on-failure MAX_RESTARTS 3 RESTART_WINDOW 600 RESTART_DELAY 2 WATCHDOG 30)
 target_compile_definitions(${NAME} PRIVATE APP_VERSION="\${PROJECT_VERSION}")
+# {proto
 install(FILES proto/${PKG}/${PKG}.proto DESTINATION \${CMAKE_INSTALL_DATADIR}/${NAME}/proto/${PKG})
 forge_install_python(DIRECTORY "\${CMAKE_CURRENT_BINARY_DIR}/python")  # ${PKG} in site-packages
-install(PROGRAMS clients/watch.py DESTINATION \${CMAKE_INSTALL_DATADIR}/${NAME}/clients)
+# }proto
+install(PROGRAMS clients/watch.py DESTINATION \${CMAKE_INSTALL_DATADIR}/${NAME}/clients)  # [stream]
 
 include(CTest)
 if(BUILD_TESTING)
-    forge_add_test(${IDENT}_tests SOURCES tests/test_${IDENT}.cpp LIBS ${IDENT}_messages)
+    forge_add_test(${IDENT}_tests SOURCES tests/test_${IDENT}.cpp)
+    target_link_libraries(${IDENT}_tests PRIVATE ${IDENT}_messages)  # [proto]
     target_include_directories(${IDENT}_tests PRIVATE src)
     target_compile_definitions(${IDENT}_tests PRIVATE
         APP_CONFIG_FILE="\${CMAKE_CURRENT_SOURCE_DIR}/config/${NAME}.toml")
@@ -109,7 +128,7 @@ endif()
 EOF
 
 # ---------------------------------------------------------------------------
-cat > "${DIR}/proto/${PKG}/${PKG}.proto" <<EOF
+[[ ${WITH_PROTO} == 1 ]] && cat > "${DIR}/proto/${PKG}/${PKG}.proto" <<EOF
 // ${NAME} messages: its commands (a request and a reply each, with a number)
 // and its streams. Every string, bytes and repeated field needs a bound, so a
 // message never allocates.
@@ -120,6 +139,7 @@ import "nanopb.proto";
 
 package ${PKG};
 
+// {command
 // Command numbers: 0x0001..0x00FF are forgecpp's own (ping, info, get, set, ...).
 enum msg_id {
     none = 0;
@@ -133,12 +153,15 @@ message status_reply {
     bool paused = 2;
     string message = 3 [(nanopb).max_size = 64];
 }
+// }command
 
+// {stream
 // Stream "ticks" on [forge].data: [topic][forge.stream_header][tick].
 message tick {
     uint64 count = 1;
     int64 interval_ms = 2;
 }
+// }stream
 EOF
 
 # ---------------------------------------------------------------------------
@@ -152,13 +175,13 @@ cat > "${DIR}/src/${IDENT}.hpp" <<EOF
 //              controls, commands, health, metrics, audit, leases, trace)
 //   link       [forge].control  commands (c2 frames): forgectl -e tcp://<host>:5557 controls|set|call|logs|watch ...
 //              [forge].events   state, alarms, logs, audit, health, metrics (PUB)
-//              [forge].data     this application's streams (PUB, "ticks")
+//              [forge].data     this application's streams (PUB, "ticks")  // [stream]
 //   console    -i (local) or telnet <host> 2323 ([console].telnet)
 
 #include <forge/forge.hpp>
 #include <forge/zmq.hpp>
 
-#include "${PKG}/${PKG}.forge.hpp"
+#include "${PKG}/${PKG}.forge.hpp"  // [proto]
 
 #ifndef APP_VERSION
 #define APP_VERSION "0.0.0"
@@ -167,6 +190,7 @@ cat > "${DIR}/src/${IDENT}.hpp" <<EOF
 class ${CLASS} : public forge::Application {
 public:
     ${CLASS}() : Application({"${NAME}", APP_VERSION, "${DESCRIPTION}"}) {
+        // {command
         // A command of its own (proto/${PKG}/${PKG}.proto). Links send it in
         // binary; the web as JSON: POST /forge/api/tmtc/status {}. The handler
         // runs on the main loop.
@@ -177,6 +201,7 @@ public:
                                                                 return forge::pb::assign(rsp.message, message_);
                                                             },
                                                             forge::Role::viewer);  // a query: nothing to audit
+        // }command
     }
 
     std::uint64_t ticks() const { return ticks_; }
@@ -199,7 +224,7 @@ protected:
     // and telnet all use these (with roles, leases and the audit trail).
     void setup_web(forge::web::Dashboard& ui) override {
         apply(config());
-        ui.link("Home", "/");
+        ui.link("Home", "/");  // [web]
         auto& g = ui.group("${CLASS}");
         g.value("ticks", "Ticks", ticks_);
         g.toggle("paused", "Paused", paused_).persist();  // kept in [state].file
@@ -235,7 +260,7 @@ protected:
     }
 
     void on_start() override {
-        ticks_stream_ = &stream<${PKG}_tick>("ticks");
+        ticks_stream_ = &stream<${PKG}_tick>("ticks");  // [stream]
         set_interval(interval_);
     }
 
@@ -269,9 +294,11 @@ private:
         counter.inc();
         ++ticks_;
         logger()->debug("{} #{}{}", message_, ticks_, dry_run_ ? " (dry run)" : "");
+        // {stream
         if (ticks_stream_ && ticks_stream_->wanted()) {  // only when someone listens
             ticks_stream_->publish(${PKG}_tick{ticks_, interval_.count()});
         }
+        // }stream
         // Offload heavy work to the thread pool, report back on the main loop:
         // pool().detach_task([this] { auto r = work(); post([this, r] { use(r); }); });
     }
@@ -282,7 +309,7 @@ private:
     std::string message_ = "tick";
     std::uint64_t ticks_ = 0;
     forge::Scheduler::Id timer_ = 0;
-    forge::zmq::Stream* ticks_stream_ = nullptr;
+    forge::zmq::Stream* ticks_stream_ = nullptr;  // [stream]
 };
 EOF
 
@@ -365,7 +392,7 @@ critical = false          # its unit failing is a critical alarm on the hub
 EOF
 
 # ---------------------------------------------------------------------------
-cat > "${DIR}/clients/watch.py" <<EOF
+[[ ${WITH_STREAM} == 1 ]] && cat > "${DIR}/clients/watch.py" <<EOF
 #!/usr/bin/env python3
 """Print ${NAME}'s "ticks" stream: [b"ticks"][forge.stream_header][${PKG}.tick].
 
@@ -386,7 +413,7 @@ while True:
     topic, h, t, _ = framing.parse(sock.recv_multipart(), ${PKG}_pb2.tick)
     print(f"{h.source}@{h.host} seq {h.seq}: tick {t.count} (every {t.interval_ms} ms)")
 EOF
-chmod +x "${DIR}/clients/watch.py"
+[[ ${WITH_STREAM} == 1 ]] && chmod +x "${DIR}/clients/watch.py"
 
 # ---------------------------------------------------------------------------
 cat > "${DIR}/tests/test_${IDENT}.cpp" <<EOF
@@ -411,6 +438,7 @@ TEST_CASE("${NAME}: controls, commands and the ticks stream over ZeroMQ") {
                                           "-D", "http.enabled=false", "-D", "${IDENT}.interval_ms=10"});
     const auto ep = r->endpoints();
 
+    // {stream
     std::atomic<int> got{0};
     forge::zmq::Receiver::Options o;
     o.topics = {"ticks"};
@@ -418,6 +446,7 @@ TEST_CASE("${NAME}: controls, commands and the ticks stream over ZeroMQ") {
         if (m.as<${PKG}_tick>().count > 0) ++got;
     }, o);
     CHECK(forge::testing::wait_until([&] { return got > 2; }, 5s));
+    // }stream
 
     forge::Remote app(ep.at("control"));
     app.set("paused", true);
@@ -425,11 +454,13 @@ TEST_CASE("${NAME}: controls, commands and the ticks stream over ZeroMQ") {
     CHECK(app.call("burst", {{"count", 5}})["ticks"] == before + 5);
     CHECK(app.get("paused") == true);
 
+    // {command
     // Its own command, in binary.
     ${PKG}_status_reply status{};
     REQUIRE(app.client().call(${PKG}_msg_id_status, ${PKG}_status_request{}, status).ok());
     CHECK(status.ticks == before + 5);
     CHECK(status.paused);
+    // }command
 }
 
 // Timer logic without sleeping: the test drives the clock.
@@ -468,14 +499,14 @@ The same ways in as every forgecpp application:
 |---|---|
 | Web | \`http://<host>:8080/\` your page, \`/forge/\` control panel (controls, commands, health, metrics, audit, leases, trace) |
 | Link | \`forgectl -e tcp://<host>:5557 info / controls / set interval_ms 500 / call burst count=5 / logs -n 50 / watch\` |
-| Commands | \`status\` (0x0100, \`proto/${PKG}/${PKG}.proto\`): binary on the link, JSON on \`POST /forge/api/tmtc/status\` |
-| Streams | \`[forge].data\` topic \`ticks\` (\`${PKG}.tick\`); \`clients/watch.py\` |
+| Commands | \`status\` (0x0100, \`proto/${PKG}/${PKG}.proto\`): binary on the link, JSON on \`POST /forge/api/tmtc/status\` | [command]
+| Streams | \`[forge].data\` topic \`ticks\` (\`${PKG}.tick\`); \`clients/watch.py\` | [stream]
 | Console | \`-i\` locally, \`telnet <host> 2323\` remotely |
 | Config | \`${NAME} --help-config\`, \`${NAME} -c file --check-config\` |
 EOF
 
 # ---------------------------------------------------------------------------
-cat > "${DIR}/web/index.html" <<EOF
+[[ ${WITH_WEB} == 1 ]] && cat > "${DIR}/web/index.html" <<EOF
 <!doctype html>
 <html lang="en">
 <head>
@@ -525,6 +556,22 @@ cat > "${DIR}/web/index.html" <<EOF
 </body>
 </html>
 EOF
+
+# Keep or drop the marked parts: "{part" ... "}part" blocks and lines ending in "[part]".
+keep() {  # keep <part> <0|1>
+    local part="$1" on="$2" f
+    while IFS= read -r -d '' f; do
+        if [[ ${on} == 1 ]]; then
+            sed -i -E "/^ *(\/\/|#) [{}]${part}\$/d; s/ *(\/\/ |# )?\[${part}\]\$//" "${f}"
+        else
+            sed -i -E "/^ *(\/\/|#) \{${part}\$/,/^ *(\/\/|#) \}${part}\$/d; /\[${part}\]\$/d" "${f}"
+        fi
+    done < <(find "${DIR}" -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.proto' -o -name 'CMakeLists.txt' -o -name '*.md' \) -print0)
+}
+keep command "${WITH_COMMAND}"
+keep stream "${WITH_STREAM}"
+keep proto "${WITH_PROTO}"
+keep web "${WITH_WEB}"
 
 cat > "${DIR}/.gitignore" <<EOF
 /build*/

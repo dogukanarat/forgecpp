@@ -18,7 +18,7 @@ protected:
         g.number("gain", "Gain", gain_).range(0, 70).unit("dB");
         g.toggle("enabled", "Enabled", enabled_);
         g.value("count", "Count", count_);
-        g.button("bump", "Bump", [this] { ++count_; });
+        g.button("bump", "Bump", [this] { logger()->warn("bumped to {}", ++count_); });
     }
 
     void on_start() override {

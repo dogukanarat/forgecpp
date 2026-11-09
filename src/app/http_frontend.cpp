@@ -144,6 +144,7 @@ void HttpFrontend::create_web(const Config& cfg) {
     if (!root.empty()) {
         if (!http_->mount("/", root)) throw ConfigError("web.root '" + root + "' is not a directory");
         logger->info("web: serving pages from {}", root);
+        if (cfg.value<bool>("web.live_reload")) pages_root_ = root;
     } else {
         http_->assets(web::registered_assets());
     }
@@ -356,6 +357,32 @@ void HttpFrontend::start(const Config& cfg) {
                             http_->port());
     }
     app_.every(std::chrono::seconds(5), [this] { drop_unwatched_streams(); });
+    if (events_ && !pages_root_.empty()) {
+        // Developing pages: a saved file reloads the open pages (not /forge/).
+        pages_signature_ = pages_signature(pages_root_);
+        app_.every(std::chrono::milliseconds(500), [this] {
+            const auto now = pages_signature(pages_root_);
+            if (now == pages_signature_) return;
+            pages_signature_ = now;
+            events_->publish("reload", json::object());
+        });
+        app_.logger()->info("web: pages reload when a file under {} changes", pages_root_);
+    }
+}
+
+std::size_t HttpFrontend::pages_signature(const std::string& root) {
+    // Names, sizes and times of the files: cheap enough for a page directory.
+    std::size_t h = 0;
+    std::error_code ec;
+    std::size_t n = 0;
+    for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator() && n < 5000; it.increment(ec), ++n) {
+        if (!it->is_regular_file(ec)) continue;
+        const auto t = it->last_write_time(ec).time_since_epoch().count();
+        const auto size = it->file_size(ec);
+        h = h * 1000003U ^ std::hash<std::string>{}(it->path().string()) ^ static_cast<std::size_t>(t) ^ size;
+    }
+    return h;
 }
 
 void HttpFrontend::stop() {

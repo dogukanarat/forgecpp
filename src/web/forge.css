@@ -155,6 +155,10 @@ body.forge {
 .forge-logs > header > span { display: inline-flex; align-items: center; gap: 12px; }
 .forge-logs > header label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .forge-logs > header .forge-btn { padding: 5px 12px; font-size: 13px; }
+.forge .forge-logs > header input[type="search"] { width: 180px; padding: 5px 10px; font-size: 13px; }
+.forge .forge-logs > header select { padding: 5px 8px; font-size: 13px; }
+.forge-logs > header > span { flex-wrap: wrap; justify-content: flex-end; }
+.forge-log[hidden] { display: none; }
 .forge-wide { grid-column: 1 / -1; }
 
 .forge-row {

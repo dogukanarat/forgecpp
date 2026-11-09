@@ -103,6 +103,7 @@ void Application::declare_framework_config(config::Schema& s) {
     s.boolean("web.enabled", true, "Serve the control panel at /forge/");
     s.string("web.title", info_.name, "Title");
     s.string("web.root", "", "Serve pages from this directory instead of the embedded ones");
+    s.boolean("web.live_reload", true, "With web.root: reload the open pages when a file there changes");
     s.integer("web.refresh_ms", 500, "Live update interval").range(50, 60000).unit("ms");
     s.integer("web.max_clients", 8, "Open pages at once").range(1, 1000);
     s.boolean("web.logs", true, "Show the log in the panel");
