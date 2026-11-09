@@ -28,6 +28,7 @@
 #include "forge/remote.hpp"
 #include "forge/rt.hpp"
 #include "forge/scheduler.hpp"
+#include "forge/serial.hpp"
 #include "forge/status.hpp"
 #include "forge/subscription.hpp"
 #include "forge/systemd.hpp"

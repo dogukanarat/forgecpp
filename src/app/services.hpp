@@ -15,6 +15,7 @@
 #include "forge/console.hpp"
 #include "forge/http.hpp"
 #include "forge/hub.hpp"
+#include "forge/serial.hpp"
 #include "forge/telnet.hpp"
 #include "forge/zmq.hpp"
 
@@ -134,6 +135,7 @@ private:
     mutable std::mutex data_mutex_;
     std::unique_ptr<zmq::Publisher> data_pub_;
     std::unique_ptr<zmq::Server> control_server_;
+    std::unique_ptr<serial::Link> serial_;
     std::vector<Subscription> subscriptions_;
     json last_state_ = json::object();
 };

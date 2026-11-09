@@ -12,13 +12,12 @@ gateway that passes them on.
     for page in link.call_parts(m.alarms, m.alarms_request(), m.alarms_reply):
         ...
 
-A refused command raises c2.Refused with the status the program sent.
+A refused command raises c2.Refused with the status the program sent. The
+same calls on a serial line: forge.serial.Client.
 """
 import struct
 
-import zmq
-
-__all__ = ["Client", "Refused", "VERSION", "REQ", "RSP", "PUSH", "ACK", "NACK", "PROTO", "MORE"]
+__all__ = ["Client", "Calls", "Refused", "VERSION", "REQ", "RSP", "PUSH", "ACK", "NACK", "PROTO", "MORE"]
 
 VERSION = 1
 REQ, RSP, PUSH, ACK, NACK, PROTO, MORE = 1, 2, 4, 8, 16, 32, 64
@@ -34,12 +33,8 @@ class Refused(Exception):
         super().__init__(f"command 0x{cmd_id:04x} refused: module {self.module}, code {self.code}")
 
 
-class Client:
-    def __init__(self, endpoint, timeout_ms=2000, context=None):
-        self.endpoint, self.timeout_ms = endpoint, timeout_ms
-        self._ctx = context or zmq.Context.instance()
-        self._seq = 0
-        self._sock = None
+class Calls:
+    """call() and call_parts() on top of _request(cmd_id, payload) -> [(flags, payload)]."""
 
     def call(self, cmd_id, request, reply_type):
         """One reply (an ACK gives an empty reply)."""
@@ -50,14 +45,28 @@ class Client:
         """Every part of a reply that comes in pages."""
         out = []
         for flags, payload in self._request(cmd_id, request.SerializeToString()):
-            if flags & ACK:
-                return [reply_type()]
+            if flags & ACK:  # success without data; ends a list in parts
+                if not out:
+                    out.append(reply_type())
+                continue
             msg = reply_type()
             msg.ParseFromString(payload)
             out.append(msg)
         return out
 
+
+class Client(Calls):
+    def __init__(self, endpoint, timeout_ms=2000, context=None):
+        import zmq  # only here: forge.serial works without pyzmq
+
+        self._zmq = zmq
+        self.endpoint, self.timeout_ms = endpoint, timeout_ms
+        self._ctx = context or zmq.Context.instance()
+        self._seq = 0
+        self._sock = None
+
     def _request(self, cmd_id, payload):
+        zmq = self._zmq
         if self._sock is None:
             self._sock = self._ctx.socket(zmq.REQ)
             self._sock.setsockopt(zmq.LINGER, 0)

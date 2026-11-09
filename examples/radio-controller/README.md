@@ -149,6 +149,23 @@ the transceiver cannot do),
 `radio.rx_overflow`, `radio.tx_underflow` (both from the AXI core status
 register), `radio.temperature` (above `temperature_alarm_c`).
 
+Two typed commands (`radio.proto`) for programs and microcontrollers: `tune`
+(changes the RX LO, rate or bandwidth, 0 keeps one; needs the operator role
+and is audited) and `status` (a query). They answer the same on ZeroMQ, on a
+serial line (`[forge].serial = "/dev/ttyS1"`, e.g. from a zephyrus board) and
+as JSON:
+
+```sh
+curl -X POST http://board:8080/forge/api/tmtc/tune -d '{"rx_lo_hz": 915.5e6}'
+```
+
+```python
+from forge import serial
+import radio.radio_pb2 as r
+link = serial.Client("/dev/ttyUSB0")
+print(link.call(r.tune, r.tune_request(rx_lo_hz=915.5e6), r.status_reply).rx_lo_hz)
+```
+
 ## Client tools
 
 `clients/` (installed to `share/radio-controller/clients`, need `pyzmq`,

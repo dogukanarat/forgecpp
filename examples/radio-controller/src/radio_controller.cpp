@@ -72,7 +72,71 @@ const char* to_string(int mode) {
 }  // namespace
 
 RadioController::RadioController()
-    : Application({"radio-controller", RADIO_VERSION, "AD9364 radio control and IQ streaming over ZeroMQ"}) {}
+    : Application({"radio-controller", RADIO_VERSION, "AD9364 radio control and IQ streaming over ZeroMQ"}) {
+    // Typed commands for programs and microcontrollers (c2 on [forge].control
+    // or [forge].serial; JSON at /forge/api/tmtc/tune). Same checks as the controls.
+    command<radio_tune_request, radio_status_reply>(radio_msg_id_tune, "tune", [this](const auto& req, auto& rsp) {
+        if (req.rx_lo_hz != 0) set_rx_lo(req.rx_lo_hz);
+        if (req.sample_rate_hz != 0) set_sample_rate(req.sample_rate_hz);
+        if (req.rx_bandwidth_hz != 0) set_rx_bandwidth(req.rx_bandwidth_hz);
+        fill_status(rsp);
+        return forge::Status();
+    });
+    command<radio_status_request, radio_status_reply>(radio_msg_id_status, "status", [this](const auto&, auto& rsp) {
+        fill_status(rsp);
+        return forge::Status();
+    }, forge::Role::viewer);
+}
+
+namespace {
+void check_range(const char* what, double v, double lo, double hi) {
+    if (!(v >= lo && v <= hi)) {
+        throw HttpError(400, std::format("{} {} Hz is outside {} .. {} Hz", what, v, lo, hi));
+    }
+}
+}  // namespace
+
+void RadioController::set_rx_lo(double hz) {
+    hz = round_to(hz, 1);
+    check_range("RX LO", hz, Limits::lo_min_hz, Limits::lo_max_hz);
+    control("RX LO", [&] { backend_->set_rx_lo(hz); });
+    settings_.rx_lo_hz = hz;
+    rx_lo_hz_ = hz;
+    ++tuning_version_;
+}
+
+void RadioController::set_sample_rate(double hz) {
+    hz = round_to(hz, 1);
+    check_range("sample rate", hz, Limits::rate_min_hz, Limits::rate_max_hz);
+    control("sample rate", [&] { backend_->set_sample_rate(hz); });
+    settings_.sample_rate_hz = hz;
+    rate_hz_ = hz;
+    ++tuning_version_;
+}
+
+void RadioController::set_rx_bandwidth(double hz) {
+    hz = round_to(hz, 1);
+    check_range("RX bandwidth", hz, Limits::bw_min_hz, Limits::bw_max_hz);
+    control("RX bandwidth", [&] { backend_->set_rx_bandwidth(hz); });
+    settings_.rx_bandwidth_hz = hz;
+    ++tuning_version_;
+}
+
+void RadioController::fill_status(radio_status_reply& r) const {
+    r.connected = connected_;
+    r.rx_lo_hz = settings_.rx_lo_hz;
+    r.tx_lo_hz = settings_.tx_lo_hz;
+    r.sample_rate_hz = settings_.sample_rate_hz;
+    r.rx_bandwidth_hz = settings_.rx_bandwidth_hz;
+    r.rx_gain_db = rx_gain_actual_[0].load();
+    r.rx_enabled = rx_enabled_.load();
+    r.tx_enabled = tx_enabled_.load();
+    r.rx_power_dbfs = rx_power_dbfs_;
+    r.rx_rate_msps = rx_rate_msps_;
+    r.rx_overflows = rx_overflows_.load();
+    r.tx_underflows = tx_underflows_.load();
+    r.temperature_c = temperature_.value_or(std::nan(""));
+}
 
 std::string RadioController::tx_endpoint() const { return tx_receiver_ ? tx_receiver_->endpoint() : ""; }
 std::string RadioController::control_endpoint() const {
@@ -160,34 +224,17 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
         mark_dirty();
     });
     rx.number("rx_lo_mhz", "RX LO", [this] { return settings_.rx_lo_hz / 1e6; },
-              [this](double mhz) {
-        const double hz = round_to(mhz * 1e6, 1);
-        control("RX LO", [&] { backend_->set_rx_lo(hz); });
-        settings_.rx_lo_hz = hz;
-        rx_lo_hz_ = hz;
-        ++tuning_version_;
-    })
+              [this](double mhz) { set_rx_lo(mhz * 1e6); })
         .range(Limits::lo_min_hz / 1e6, Limits::lo_max_hz / 1e6, 0.001)
         .unit("MHz")
         .precision(3);
     rx.number("sample_rate_msps", "Sample rate", [this] { return settings_.sample_rate_hz / 1e6; },
-              [this](double msps) {
-        const double hz = round_to(msps * 1e6, 1);
-        control("sample rate", [&] { backend_->set_sample_rate(hz); });
-        settings_.sample_rate_hz = hz;
-        rate_hz_ = hz;
-        ++tuning_version_;
-    })
+              [this](double msps) { set_sample_rate(msps * 1e6); })
         .range(Limits::rate_min_hz / 1e6, Limits::rate_max_hz / 1e6, 0.001)
         .unit("MSPS")
         .precision(3);
     rx.number("rx_bw_mhz", "RX bandwidth", [this] { return settings_.rx_bandwidth_hz / 1e6; },
-              [this](double mhz) {
-        const double hz = round_to(mhz * 1e6, 1);
-        control("RX bandwidth", [&] { backend_->set_rx_bandwidth(hz); });
-        settings_.rx_bandwidth_hz = hz;
-        ++tuning_version_;
-    })
+              [this](double mhz) { set_rx_bandwidth(mhz * 1e6); })
         .range(Limits::bw_min_hz / 1e6, Limits::bw_max_hz / 1e6, 0.001)
         .unit("MHz")
         .precision(3);
@@ -212,8 +259,8 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
     rx.value("peak", "Strongest signal",
              [this] { return std::format("{:+.1f} kHz @ {:.1f} dBFS", peak_offset_khz_, peak_dbfs_); });
     rx.value("rx_rate_msps", "Measured rate", rx_rate_msps_).unit("MSPS").precision(3);
-    rx.value("rx_overflows", "Overflows", [this] { return rx_overflows_.load(); });
-    rx.value("subscriptions", "IQ subscribers", [this] { return subscriptions_.load(); });
+    rx.value("rx_overflows", "Overflows", rx_overflows_);
+    rx.value("subscriptions", "IQ subscribers", subscriptions_);
 
     auto& rx2 = ui.group("RX2");
     rx2.select("rx2_gain_mode", "RX2 gain control", gain_modes(), [this] { return settings_.rx2_gain_mode; },
@@ -240,8 +287,8 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
     roles.value("rx_channels", "Listens to (IQ stream)", [this] { return channel_array(rx_mask_); });
     roles.value("tx_channel", "Drives", [this] { return std::format("TX{}", tx_channel_ + 1); });
     roles.value("tap_channels", "Shares (tap)", [this] { return channel_array(tap_mask_); });
-    roles.value("tap_blocks", "Tap blocks sent", [this] { return tap_blocks_.load(); });
-    roles.value("tap_subscriptions", "Tap subscribers", [this] { return tap_subscriptions_.load(); });
+    roles.value("tap_blocks", "Tap blocks sent", tap_blocks_);
+    roles.value("tap_subscriptions", "Tap subscribers", tap_subscriptions_);
 
     auto& tx = ui.group("Transmitter");
     tx.toggle("tx_enabled", "TX enabled", [this] { return tx_enabled_.load(); }, [this](bool on) {
@@ -280,15 +327,15 @@ void RadioController::setup_web(forge::web::Dashboard& ui) {
         .unit("dB")
         .precision(2);
     tx.value("tx_mode", "Output", [this] { return to_string(static_cast<int>(tx_mode_.load())); });
-    tx.value("tx_frames", "Frames", [this] { return tx_frames_.load(); });
-    tx.value("tx_underflows", "Underflows", [this] { return tx_underflows_.load(); });
-    tx.value("tx_dropped", "Dropped (TX disabled)", [this] { return tx_dropped_.load(); });
+    tx.value("tx_frames", "Frames", tx_frames_);
+    tx.value("tx_underflows", "Underflows", tx_underflows_);
+    tx.value("tx_dropped", "Dropped (TX disabled)", tx_dropped_);
     tx.number("tx_max_age_ms", "Drop TX blocks older than", [this] { return double(tx_max_age_ms_.load()); },
               [this](double ms) { tx_max_age_ms_ = static_cast<int>(ms); })
         .range(0, 60000, 1)
         .unit("ms")
         .help("0 = play everything. Bounds the TX latency: a backlog after a stall is dropped, not played late.");
-    tx.value("tx_late", "Dropped (late)", [this] { return tx_late_.load(); });
+    tx.value("tx_late", "Dropped (late)", tx_late_);
     tx.button("tx_stop", "Stop output", [this] {
         if (backend_) backend_->stop_tx();
         tx_mode_ = TxMode::idle;

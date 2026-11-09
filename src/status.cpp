@@ -67,9 +67,10 @@ std::mutex& names_mutex() {
     return m;
 }
 std::map<std::uint16_t, std::string>& names() {
-    static std::map<std::uint16_t, std::string> n{
-        {module_id::app, "app"}, {module_id::c2, "c2"},   {module_id::tmtc, "tmtc"},    {module_id::pb, "pb"},
-        {module_id::zmq, "zmq"}, {module_id::nrf, "nrf"}, {module_id::zephyr, "zephyr"}};
+    static std::map<std::uint16_t, std::string> n{{module_id::app, "app"},   {module_id::c2, "c2"},
+                                                  {module_id::tmtc, "tmtc"}, {module_id::pb, "pb"},
+                                                  {module_id::zmq, "zmq"},   {module_id::serial, "serial"},
+                                                  {module_id::nrf, "nrf"},   {module_id::zephyr, "zephyr"}};
     return n;
 }
 

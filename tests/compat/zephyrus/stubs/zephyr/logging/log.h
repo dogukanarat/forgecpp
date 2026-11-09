@@ -7,4 +7,5 @@
 #define LOG_WRN(...) ((void)0)
 #define LOG_INF(...) ((void)0)
 #define LOG_DBG(...) ((void)0)
+#define LOG_HEXDUMP_DBG(...) ((void)0)
 #endif

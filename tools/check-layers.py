@@ -19,8 +19,8 @@ LEVELS = {
     0: ("core", ["status", "error", "base64", "json", "pb", "trace", "crash", "subscription", "config", "config_schema",
                  "channel", "thread_pool", "buffer_pool", "rt", "systemd", "version"]),
     1: ("services", ["log", "log_rt", "metrics", "events", "scheduler", "health", "alarms", "audit", "auth",
-                     "assets"]),
-    2: ("link", ["c2", "tmtc", "zmq", "remote", "http", "hub"]),
+                     "assets", "worker"]),
+    2: ("link", ["c2", "tmtc", "zmq", "serial", "remote", "http", "hub"]),
     3: ("front ends", ["console", "telnet", "web"]),
     4: ("application", ["component", "control", "application"]),
 }

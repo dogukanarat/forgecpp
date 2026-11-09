@@ -24,3 +24,36 @@ message tx_block {
     string format = 1 [(nanopb).max_size = 8];  // "cs16"
     bool cyclic = 2;                            // repeat this frame until stopped (test tones, beacons)
 }
+
+// Commands (c2 frames on [forge].control or [forge].serial; JSON at
+// /forge/api/tmtc/<name>). 0x0001..0x00FF are forgecpp's.
+enum msg_id {
+    none = 0;
+    tune = 0x0100;    // tune_request -> status_reply: change the RX tuning, answer the result
+    status = 0x0101;  // status_request -> status_reply
+}
+
+message tune_request {
+    double rx_lo_hz = 1;         // 0: keep
+    double sample_rate_hz = 2;   // 0: keep
+    double rx_bandwidth_hz = 3;  // 0: keep
+}
+
+message status_request {
+}
+
+message status_reply {
+    bool connected = 1;
+    double rx_lo_hz = 2;
+    double tx_lo_hz = 3;
+    double sample_rate_hz = 4;
+    double rx_bandwidth_hz = 5;
+    double rx_gain_db = 6;       // RX1, as the AGC or the operator set it
+    bool rx_enabled = 7;
+    bool tx_enabled = 8;
+    double rx_power_dbfs = 9;
+    double rx_rate_msps = 10;    // measured
+    uint64 rx_overflows = 11;
+    uint64 tx_underflows = 12;
+    double temperature_c = 13;   // NaN when the device has no sensor
+}

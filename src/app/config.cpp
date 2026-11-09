@@ -135,6 +135,13 @@ void Application::declare_framework_config(config::Schema& s) {
               "How long a request (a command, HTTP) waits for a busy main loop before it is refused")
         .range(10, 600000)
         .unit("ms");
+    s.string("forge.serial", "",
+             "Commands on a serial line too (c2 frames, zephyrus framing), e.g. \"/dev/ttyUSB0\" (empty = off)");
+    s.integer("forge.serial_baud", 115200, "Baud rate of [forge].serial").range(9600, 4000000);
+    s.integer("forge.serial_frame_size", 244,
+              "Largest frame sent on [forge].serial; the peer's CONFIG_ZEPHYRUS_COBS_FRAME_SIZE")
+        .range(16, 4096)
+        .unit("B");
 
     s.section("auth", "Users and roles");
     s.boolean("auth.enabled", false, "Require credentials for changes (roles)");

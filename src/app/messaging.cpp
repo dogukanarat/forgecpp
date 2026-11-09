@@ -1,6 +1,6 @@
 // Messaging on ZeroMQ: [forge].events, [forge].data (streams) and the
-// [forge].control command endpoint (c2 frames, answered by the application's
-// command registry).
+// [forge].control command endpoint and the [forge].serial line (c2 frames,
+// answered by the application's command registry).
 #include "services.hpp"
 
 #include "forge/control.hpp"
@@ -112,10 +112,25 @@ void Messaging::start(const Config& cfg) {
         }, options);
         logger->info("forge: commands on {}", control_server_->endpoint());
     }
+    const auto device = cfg.value<std::string>("forge.serial");
+    if (!device.empty()) {
+        serial::LinkOptions o;
+        o.device = device;
+        o.baud = cfg.value<int>("forge.serial_baud");
+        o.framing.frame_size = static_cast<std::size_t>(cfg.value<int>("forge.serial_frame_size"));
+        o.thread_name = "forge-serial";
+        o.on_request = [this](std::span<const std::uint8_t> frame, const auto& send) {
+            CallerScope caller(app_.control().identify("link", "serial", {}));
+            tmtc::Dispatcher(app_.commands()).handle(frame, send);
+        };
+        serial_ = std::make_unique<serial::Link>(std::move(o));
+        logger->info("forge: commands on {} at {} baud", device, cfg.value<int>("forge.serial_baud"));
+    }
 }
 
 void Messaging::stop_control() {
     if (control_server_) control_server_->stop();
+    serial_.reset();
 }
 
 void Messaging::stop() {
@@ -128,6 +143,7 @@ void Messaging::stop() {
 }
 
 void Messaging::reset() {
+    serial_.reset();
     control_server_.reset();
     {
         std::lock_guard lock(data_mutex_);
@@ -159,6 +175,7 @@ std::vector<zmq::StreamInfo> Messaging::stream_list() const {
 
 void Messaging::add_endpoints(std::map<std::string, std::string>& e) const {
     if (control_server_) e["control"] = control_server_->endpoint();
+    if (serial_) e["serial"] = serial_->device();
     if (events_pub_) e["events"] = events_pub_->endpoint();
     std::lock_guard lock(data_mutex_);
     if (data_pub_) e["data"] = data_pub_->endpoint();

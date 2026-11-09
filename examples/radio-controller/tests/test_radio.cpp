@@ -648,3 +648,31 @@ TEST_CASE("radio-controller: keeps running and raises an alarm when the radio is
     runner.join();
 }
 #endif
+
+TEST_CASE("radio-controller: typed tune and status commands on the link") {
+    RunningRadio r({});
+    fz::Client link(r.app.control_endpoint(), 5s);
+    radio_status_reply st{};
+    REQUIRE(link.call(radio_msg_id_status, radio_status_request{}, st).ok());
+    CHECK(st.connected);
+    const double before = st.rx_lo_hz;
+
+    radio_tune_request tune{};
+    tune.rx_lo_hz = 915.5e6;  // only the LO; the rate and bandwidth stay
+    REQUIRE(link.call(radio_msg_id_tune, tune, st).ok());
+    CHECK(st.rx_lo_hz == 915.5e6);
+    CHECK(st.rx_lo_hz != before);
+    forge::Remote ctl(r.app.control_endpoint(), 5s);
+    CHECK(ctl.get("rx_lo_mhz") == 915.5);
+
+    tune.rx_lo_hz = 10e9;  // above the AD9364
+    const auto refused = link.call(radio_msg_id_tune, tune, st);
+    CHECK(refused.errno_code() == EINVAL);
+    REQUIRE(link.call(radio_msg_id_status, radio_status_request{}, st).ok());
+    CHECK(st.rx_lo_hz == 915.5e6);
+
+    // Tuning changes the radio: it is audited, a status query is not.
+    const auto audit = r.app.audit().list();
+    CHECK(std::count_if(audit.begin(), audit.end(), [](const auto& a) { return a.target == "tune"; }) == 2);
+    CHECK(std::none_of(audit.begin(), audit.end(), [](const auto& a) { return a.target == "status"; }));
+}

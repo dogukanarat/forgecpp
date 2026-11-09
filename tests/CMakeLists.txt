@@ -17,7 +17,7 @@ forge_add_test(forgecpp_tests
 # The source tree, for the check that defaults are written only in the schema.
 target_compile_definitions(forgecpp_tests PRIVATE FORGE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
-forge_add_test(forgecpp_pb_tests SOURCES test_pb.cpp test_tmtc.cpp)
+forge_add_test(forgecpp_pb_tests SOURCES test_pb.cpp test_tmtc.cpp test_serial.cpp)
 forge_add_proto(forgecpp_pb_tests ROOT proto PROTOS forge_test/all_types.proto forge_test/commands.proto
     PYTHON "${CMAKE_CURRENT_BINARY_DIR}/pb_python")
 # Golden data from Google's protobuf for Python (the generator needs it anyway).
@@ -91,6 +91,11 @@ target_include_directories(forgecpp_framework_tests PRIVATE "${PROJECT_SOURCE_DI
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(NAME forgecpp_layers COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tools/check-layers.py")
+    # The Python serial client against a program with [forge].serial.
+    add_test(NAME forgecpp_python_serial
+             COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/serial_client.py" "${PROJECT_BINARY_DIR}/python"
+                     $<TARGET_FILE:forgecpp_panel_app>)
+    set_tests_properties(forgecpp_python_serial PROPERTIES TIMEOUT 60)
 endif()
 
 # Wire compatibility with zephyrus (the microcontroller side of forgecpp):
@@ -114,6 +119,17 @@ if(FORGE_ZEPHYRUS_DIR)
     target_compile_definitions(zephyrus_compat PUBLIC
         CONFIG_ZEPHYRUS_C2_MODULE_ID=22 CONFIG_ZEPHYRUS_C2_LOG_LEVEL=0)
     set_target_properties(zephyrus_compat PROPERTIES C_STANDARD 11)
-    forge_add_test(forgecpp_zephyrus_compat_tests SOURCES compat/zephyrus/test_zephyrus_compat.cpp)
-    target_link_libraries(forgecpp_zephyrus_compat_tests PRIVATE zephyrus_compat)
+    # The serial framing (modules/lib/cobs), with small frames so messages
+    # take many fragments.
+    set(_zcobs "${_zmods}/lib/cobs")
+    add_library(zephyrus_cobs_compat STATIC "${_zcobs}/src/cobs.c" "${_zcobs}/src/cobs_framing.c")
+    target_include_directories(zephyrus_cobs_compat PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/compat/zephyrus/stubs" "${_zcobs}/include" "${_zmods}/core/common/include")
+    target_compile_definitions(zephyrus_cobs_compat PUBLIC
+        CONFIG_ZEPHYRUS_COBS_FRAME_SIZE=64 CONFIG_ZEPHYRUS_COBS_MAX_MESSAGE_SIZE=4096
+        CONFIG_ZEPHYRUS_COBS_MAX_INSTANCES=1 CONFIG_ZEPHYRUS_COBS_MODULE_ID=23 CONFIG_ZEPHYRUS_COBS_LOG_LEVEL=0)
+    set_target_properties(zephyrus_cobs_compat PROPERTIES C_STANDARD 11)
+    forge_add_test(forgecpp_zephyrus_compat_tests
+        SOURCES compat/zephyrus/test_zephyrus_compat.cpp compat/zephyrus/test_zephyrus_serial.cpp)
+    target_link_libraries(forgecpp_zephyrus_compat_tests PRIVATE zephyrus_compat zephyrus_cobs_compat)
 endif()

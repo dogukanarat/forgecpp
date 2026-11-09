@@ -13,7 +13,7 @@ engineer moving between applications finds the same tools everywhere:
 
 - **One message standard, binary and JSON.** Every command is a request and a
   reply with a number, defined in a `.proto` file with fixed bounds (nanopb: no
-  allocation). Links (ZeroMQ, later UART or CAN) carry them as c2 frames, byte
+  allocation). Links (ZeroMQ, a serial line, later CAN) carry them as c2 frames, byte
   for byte like [zephyrus](https://github.com/embedded-aviation/zephyrus) on
   the microcontrollers; the web sends the same commands as JSON. One handler
   answers both. Streams carry a header with source, sequence number, time and

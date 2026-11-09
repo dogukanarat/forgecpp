@@ -8,12 +8,14 @@
 //                          topics "rx1"/"rx2": blocks of the channels it shares
 //                          ([radio].tap_rx), rate limited: e.g. the spectrum analyzer
 //     [zmq].tx       PULL  tx_block + samples for [radio].tx_channel
-//     [forge].control REP  c2 commands (forgectl, other programs)
+//     [forge].control REP  c2 commands (forgectl, other programs): forgecpp's and
+//                          "tune", "status" (radio.proto); also on [forge].serial
 //     [forge].events PUB   state, alarms, log, audit, health, metrics
 //   Web UI: /  (spectrum, waterfall, controls)   /forge/  (control panel)
 //   Console: -i  (controls / set / press / alarms)
 
 #include "backend.hpp"
+#include "radio/radio.pb.h"
 
 #include <forge/forge.hpp>
 #include <forge/zmq.hpp>
@@ -54,6 +56,11 @@ private:
     void device_lost(const std::string& why);
     template <class F>
     void control(const char* what, F&& fn);
+    // RX tuning, for the controls and the "tune" command (main loop)
+    void set_rx_lo(double hz);
+    void set_sample_rate(double hz);
+    void set_rx_bandwidth(double hz);
+    void fill_status(radio_status_reply& r) const;
 
     // threads
     void rx_loop();
