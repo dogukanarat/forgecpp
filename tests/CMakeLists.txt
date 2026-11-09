@@ -44,6 +44,9 @@ add_test(NAME forge_proto_refuses_unbounded
             -I "${CMAKE_CURRENT_SOURCE_DIR}/proto/bad" unbounded.proto)
 set_tests_properties(forge_proto_refuses_unbounded PROPERTIES
     PASS_REGULAR_EXPRESSION "unbounded.text: give it a bound")
+# The compatibility rules of the messages (what may change between releases).
+add_test(NAME forge_proto_compat_rules
+    COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tools/proto-compat.py" --self-test)
 
 # Fuzz targets for what arrives on a link (c2 frames, protobuf bytes, JSON).
 # By default each is a short, repeatable ctest that mutates its seeds

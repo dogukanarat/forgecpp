@@ -75,8 +75,11 @@ Scheduler::Id Scheduler::schedule(Clock::time_point due, Clock::duration period,
     Id id;
     {
         std::lock_guard lock(mutex_);
+        sweep_fired();
         id = next_id_++;
-        entries_.emplace(id, Entry{due, period, std::make_shared<Task>(std::move(task))});
+        auto state = std::make_shared<State>();
+        state->task = std::move(task);
+        entries_.emplace(id, Entry{due, period, std::move(state)});
         queue_.emplace(due, id);
     }
     cv_.notify_one();
@@ -85,36 +88,61 @@ Scheduler::Id Scheduler::schedule(Clock::time_point due, Clock::duration period,
 
 bool Scheduler::cancel(Id id) {
     std::lock_guard lock(mutex_);
+    sweep_fired();
     auto it = entries_.find(id);
     if (it == entries_.end()) return false;
-    auto range = queue_.equal_range(it->second.due);
-    for (auto q = range.first; q != range.second; ++q) {
-        if (q->second == id) {
-            queue_.erase(q);
-            break;
+    it->second.state->alive = false;  // a task already handed to the executor does nothing
+    if (!it->second.fired) {
+        auto range = queue_.equal_range(it->second.due);
+        for (auto q = range.first; q != range.second; ++q) {
+            if (q->second == id) {
+                queue_.erase(q);
+                break;
+            }
         }
     }
     entries_.erase(it);
     return true;
 }
 
-void Scheduler::cancel_all() {
-    std::lock_guard lock(mutex_);
+void Scheduler::sweep_fired() {
+    if (fired_.empty()) return;
+    std::erase_if(fired_, [this](Id id) {
+        auto it = entries_.find(id);
+        if (it == entries_.end()) return true;
+        if (!it->second.state->done) return false;
+        entries_.erase(it);
+        return true;
+    });
+}
+
+void Scheduler::clear_entries() {
+    for (auto& [id, e] : entries_) e.state->alive = false;
     entries_.clear();
     queue_.clear();
+    fired_.clear();
+}
+
+void Scheduler::cancel_all() {
+    std::lock_guard lock(mutex_);
+    clear_entries();
 }
 
 std::size_t Scheduler::pending() const {
     std::lock_guard lock(mutex_);
-    return entries_.size();
+    std::size_t n = entries_.size();
+    for (const auto id : fired_) {  // handed over and already run: not pending
+        auto it = entries_.find(id);
+        if (it != entries_.end() && it->second.state->done) --n;
+    }
+    return n;
 }
 
 void Scheduler::stop() {
     {
         std::lock_guard lock(mutex_);
         stopping_ = true;
-        entries_.clear();
-        queue_.clear();
+        clear_entries();
     }
     cv_.notify_all();
     std::lock_guard join_lock(join_mutex_);
@@ -136,7 +164,10 @@ bool Scheduler::take_due(Clock::time_point now, Task& task, Id& id, Clock::time_
         if (it == entries_.end()) continue;
         if (it->second.period > Clock::duration::zero()) {
             // Share one task instance between ticks so mutable state persists.
-            task = [shared = it->second.task] { (*shared)(); };
+            // cancel() clears `alive`: a tick already handed over does nothing.
+            task = [s = it->second.state] {
+                if (s->alive) s->task();
+            };
             auto next = it->second.due + it->second.period;
             // Real clock: if we fell behind, skip missed ticks instead of bursting.
             // Manual clock: every tick runs (time jumps are deliberate).
@@ -147,8 +178,18 @@ bool Scheduler::take_due(Clock::time_point now, Task& task, Id& id, Clock::time_
             it->second.due = next;
             queue_.emplace(next, id);
         } else {
-            task = [shared = std::move(it->second.task)] { (*shared)(); };
-            entries_.erase(it);
+            // The entry stays until the task ran, so cancel() still finds it
+            // while the task waits in the executor's queue.
+            it->second.fired = true;
+            fired_.push_back(id);
+            task = [s = it->second.state] {
+                if (!s->alive) return;
+                struct Done {  // also when the task throws
+                    const std::shared_ptr<State>& s;
+                    ~Done() { s->done = true; }
+                } done{s};
+                s->task();
+            };
         }
         return true;
     }

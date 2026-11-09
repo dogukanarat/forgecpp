@@ -61,7 +61,7 @@ link.call(m.set, m.set_request(id="rx_lo_mhz", value="2412"), m.set_reply)
 | Endpoint (`[forge]`) | Socket | Carries |
 |---|---|---|
 | `control` | ROUTER (REQ clients) | c2 commands (forgecpp's and the application's) |
-| `serial` | a tty (`/dev/ttyUSB0`) | the same commands on a UART, framed as zephyrus does ([protocol.md](protocol.md#on-a-serial-line)) |
+| `serial` | a tty (`/dev/ttyUSB0`) | the same commands on a UART, framed as zephyrus does ([protocol.md](protocol.md#on-a-serial-line)); a line that is missing or goes away (an unplugged adapter) is reported under health as `serial` and opened again every second |
 | `events` | PUB | topics `state`, `alarms`, `log`, `audit`, `health`, `metrics` |
 | `data` | PUB | the application's own streams (its messages, e.g. `radio.iq_block`) |
 

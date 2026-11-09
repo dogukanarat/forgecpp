@@ -45,6 +45,26 @@ private:
     forge::EventBus::Subscription sub_;
 };
 
+/// A component whose on_stop() fails; the one added after it must still stop.
+class Faulty : public forge::Component {
+public:
+    Faulty() : Component("faulty") {}
+
+protected:
+    void on_stop() override { throw std::runtime_error("device gone"); }
+};
+
+class Tidy : public forge::Component {
+public:
+    Tidy(int& stopped) : Component("tidy"), stopped_(stopped) {}
+
+protected:
+    void on_stop() override { ++stopped_; }
+
+private:
+    int& stopped_;
+};
+
 std::vector<char*> make_argv(std::vector<std::string>& args) {
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
@@ -119,4 +139,19 @@ TEST_CASE("application: bad config file is reported") {
     auto argv = make_argv(args);
     forge::Application app({"bad"});
     CHECK(app.run(static_cast<int>(args.size()), argv.data()) == 1);
+}
+
+TEST_CASE("application: a stop handler that throws does not skip the others") {
+    int tidy_stopped = 0;
+    auto app = std::make_unique<TestApp>();
+    app->add_component<Tidy>(tidy_stopped);  // stopped after Faulty (reverse order)
+    app->add_component<Faulty>();
+    int hook_stopped = 0;
+    app->hook_stop([&](forge::Application&) { ++hook_stopped; });
+    TestApp* raw = app.get();
+    forge::testing::AppRunner<TestApp> r({"-D", "http.enabled=false"}, std::move(app));
+    r.stop();
+    CHECK(raw->stopped == 1);
+    CHECK(tidy_stopped == 1);
+    CHECK(hook_stopped == 1);
 }

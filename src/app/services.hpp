@@ -44,13 +44,19 @@ public:
     /// Restore the persistent controls of `dashboard` from `file` ("" = off).
     void restore(web::Dashboard& dashboard, const std::string& file, const Logger& logger);
     void mark_dirty() { dirty_ = true; }
-    /// Save if something changed (`force`: also when nothing did).
-    void save(web::Dashboard& dashboard, const Logger& logger, bool force = false);
+    /// Save if something changed (`force`: also when nothing did). The values
+    /// are read on the calling thread (the main loop); with `pool` the file is
+    /// written on a pool thread (fsync on flash takes long), else here. A
+    /// write that is still running is not started again: the next call does.
+    void save(web::Dashboard& dashboard, const Logger& logger, bool force = false, ThreadPool* pool = nullptr);
     const std::string& file() const { return file_; }
 
 private:
+    void write(const json& values, const Logger& logger);
+
     std::string file_;
     std::atomic<bool> dirty_{false};
+    std::atomic<bool> writing_{false};
 };
 
 /// Card layouts of the web pages (forge.layout in forge.js). Thread-safe.
@@ -108,7 +114,9 @@ private:
     std::unique_ptr<hub::Client> client_;
 };
 
-/// ZeroMQ: [forge].events, [forge].data (streams), [forge].control (commands).
+/// ZeroMQ: [forge].events, [forge].data (streams), [forge].control (commands),
+/// and the [forge].serial line. The line is opened again when it goes away
+/// (an unplugged USB adapter) and reported under health as "serial".
 class Messaging {
 public:
     explicit Messaging(Application& app) : app_(app) {}
@@ -129,6 +137,10 @@ public:
 private:
     template <pb::Message T>
     void publish_event(const char* topic, const T& body);
+    /// Open [forge].serial (main loop); false and health "serial" failed when it cannot be.
+    bool open_serial();
+    /// Every second: notice a line that went away, open it again.
+    void check_serial();
 
     Application& app_;
     std::unique_ptr<zmq::Publisher> events_pub_;
@@ -136,6 +148,9 @@ private:
     std::unique_ptr<zmq::Publisher> data_pub_;
     std::unique_ptr<zmq::Server> control_server_;
     std::unique_ptr<serial::Link> serial_;
+    serial::LinkOptions serial_options_;  // of [forge].serial, to open it again
+    std::string serial_error_;            // the last reason it could not be opened
+    bool serial_stopped_ = false;
     std::vector<Subscription> subscriptions_;
     json last_state_ = json::object();
 };

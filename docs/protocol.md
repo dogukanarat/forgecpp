@@ -150,6 +150,27 @@ the command: **app** (64) for the application's commands, tmtc for forgecpp's
 module. forgecpp's own checks before a handler runs (the caller's role, a busy
 main loop) are module tmtc.
 
+## Changing the messages
+
+`proto/forge/API.json` records the messages of the last release;
+`tools/proto-compat.py` (CI, `tools/check.sh`) refuses a change an old peer
+would not understand:
+
+- A field or an enum value keeps its number, name, type and label. A removed
+  one leaves its number `reserved`. New fields, messages and commands are
+  always fine.
+- The nanopb bounds (`max_size`, `max_count`) are part of the wire contract:
+  a peer decodes a message into a struct of the old size and refuses the whole
+  message when a field carries more. So a bound may grow only in a message
+  forgecpp receives (a `*_request`): old senders send less, and the new bound
+  holds it. In a message a peer receives (a reply, a report, a stream header
+  or body) a bound does not change: a zephyrus device built against the old
+  bound would stop understanding forgecpp's answers. For more room, add a
+  field or a command.
+
+The same rule applies to an application's own messages when a device on a
+link decodes them.
+
 ## On a serial line
 
 `[forge].serial = "/dev/ttyUSB0"` answers the same commands on a UART (or USB

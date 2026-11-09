@@ -234,6 +234,36 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 
 ### Fixed
 
+- `Scheduler::cancel()` (`Application::cancel()`) also stops a timer task that
+  was already handed to the main loop but has not run yet; before, such a
+  task still ran after `cancel()` returned true, typically on an object that
+  was being destroyed. A one-shot task stays known until it ran, so cancelling
+  it from the main loop is exact.
+- `Group::value(id, label, ref)` refuses a temporary (`value("t", "T", read())`)
+  at compile time: it bound a reference to a dead object. Use the callable
+  overload for a computed value.
+- The persistent controls are written to their file on a pool thread; the
+  write (with `fsync`, slow on flash) blocked the main loop every second.
+- Acknowledging alarms over HTTP (`/forge/api/alarms/ack`,
+  `/forge/api/alarms/<id>/ack`) goes through the control service, like the
+  `ack` command and the console: the caller needs the operator role and the
+  acknowledgement is in the audit trail. Before, HTTP skipped both.
+- A `[forge].serial` line that is missing at start or goes away (an unplugged
+  USB adapter) no longer ends the command path for good: health reports it
+  as `serial` (not critical) and the line is opened again every second.
+  Before, a missing device stopped the program at start and a lost one was
+  never noticed.
+- A component whose `on_stop()` throws no longer skips the `on_stop()` of the
+  other components, of the application and of the stop hooks.
+- `tools/proto-compat.py` refuses a larger nanopb bound in a message a peer
+  receives (a reply, a report, a stream header): a device built against the
+  old bound refuses the whole message. Bounds may grow in requests only
+  ([protocol.md](docs/protocol.md#changing-the-messages)). `--self-test`
+  checks the rules (test `forge_proto_compat_rules`).
+- `tools/check.sh` builds and runs the zephyrus compatibility tests when
+  `ZEPHYRUS_DIR` (or `../zephyrus`) names a checkout; they were only run by hand.
+- `forge.c2.Client` (Python, ZeroMQ) sent every request with the `proto`
+  flag; it sends a plain request, as the serial client and protocol.md say.
 - `ENAMETOOLONG` (a text longer than its field) answers HTTP 400 instead of 500.
 - `pb::Message` no longer compares an object's address with null in a
   concept: GCC with `-fsanitize=undefined` (or `-fno-delete-null-pointer-checks`)

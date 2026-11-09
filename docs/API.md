@@ -29,9 +29,12 @@ forgecpp uses semantic versions (`CHANGELOG.md`).
 - **From 1.0.** Breaks only in a new major version; deprecated APIs stay at
   least one minor version (`[[deprecated("use X")]]`) before they go.
 - **The messages** never break: new fields, messages and commands only,
-  removed numbers are reserved, bounds only grow (a peer built with the old
-  bound must still fit). A device with old and new applications keeps
-  working, and so does a zephyrus device on the same link.
+  removed numbers are reserved, a bound grows only in a request (what
+  forgecpp receives) and never changes in a reply or a report (what a peer
+  decodes into a struct of the old size; see
+  [protocol.md](protocol.md#changing-the-messages)). A device with old and
+  new applications keeps working, and so does a zephyrus device on the same
+  link.
 
 ## Changing the API
 

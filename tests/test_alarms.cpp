@@ -140,6 +140,14 @@ TEST_CASE("application: alarm API and health summary") {
     CHECK(client.post_json("/forge/api/alarms/ack", forge::json::object())["acknowledged"] == 2);
     CHECK(client.get_json("/health")["alarms"]["pending"] == 0);
 
+    // Through the control service: the same audit records as the `ack` command.
+    std::vector<std::string> acked_targets;
+    for (const auto& r : app.audit().list()) {
+        if (r.action == "ack") acked_targets.push_back(r.target + (r.ok ? "" : "!"));
+    }
+    CHECK(acked_targets == std::vector<std::string>{"pump.dry", "nope!", "all"});
+    CHECK(app.audit().list().back().channel == "web");
+
     app.stop();
     runner.join();
 }

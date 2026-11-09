@@ -72,7 +72,7 @@ class Client(Calls):
             self._sock.setsockopt(zmq.LINGER, 0)
             self._sock.connect(self.endpoint)
         self._seq = (self._seq + 1) & 0xFFFF
-        self._sock.send(_HEADER.pack(VERSION, REQ | PROTO, cmd_id, self._seq, len(payload)) + payload)
+        self._sock.send(_HEADER.pack(VERSION, REQ, cmd_id, self._seq, len(payload)) + payload)
         if not self._sock.poll(self.timeout_ms):
             self._sock.close()  # a REQ socket without its answer cannot send again
             self._sock = None

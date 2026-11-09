@@ -360,8 +360,8 @@ Run a whole application in a test, on free ports, and talk to it like a client w
 
 ```cpp
 forge::testing::AppRunner<Pump> r({"-D", "forge.control=tcp://127.0.0.1:*"});
-forge::zmq::Client c(r->endpoints().at("control"));
-CHECK(c.set("speed", 1500) == 1500);
+forge::Remote pump(r->endpoints().at("control"));
+CHECK(pump.set("speed", 1500) == 1500);
 ```
 
 Timer-driven logic without sleeping (alarms with hysteresis, rate limits,

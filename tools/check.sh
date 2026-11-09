@@ -14,13 +14,17 @@
 #   tools/check.sh --install-hook  run the quick checks before every commit (tools/git-hooks)
 #
 # The libraries come from FORGECPP_DEPS (a prefix of install.sh --deps-only, or
-# CMAKE_PREFIX_PATH); build directories go to build/check-*.
+# CMAKE_PREFIX_PATH); build directories go to build/check-*. The wire
+# compatibility tests against zephyrus's C code are built when ZEPHYRUS_DIR
+# names its checkout (default: ../zephyrus next to this repository, if there).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 DEPS="${FORGECPP_DEPS:-${CMAKE_PREFIX_PATH:-}}"
 JOBS="$(nproc 2>/dev/null || echo 4)"
+ZEPHYRUS="${ZEPHYRUS_DIR:-}"
+[[ -z "${ZEPHYRUS}" && -f "${ROOT}/../zephyrus/modules/lib/cobs/cobs.c" ]] && ZEPHYRUS="$(cd "${ROOT}/../zephyrus" && pwd)"
 
 do_format=1 do_layers=1 do_build=1 do_fuzz=1 do_compat=1
 do_tidy="" do_asan=0 tsan_prefix="" fix=0
@@ -78,8 +82,15 @@ fi
 configure_and_test() {
     local dir="$1" label="$2"; shift 2
     step "build: ${label}"
+    local compat=()
+    if [[ -n "${ZEPHYRUS}" ]]; then
+        compat=(-DFORGE_ZEPHYRUS_DIR="${ZEPHYRUS}")
+        echo "with the zephyrus compatibility tests (${ZEPHYRUS})"
+    else
+        echo "without the zephyrus compatibility tests (set ZEPHYRUS_DIR)"
+    fi
     if ! cmake -S . -B "${dir}" -G Ninja -DCMAKE_PREFIX_PATH="${DEPS}" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DFORGECPP_BUILD_TESTS=ON -DFORGECPP_BUILD_EXAMPLES=ON "$@" >"${dir}.configure.log" 2>&1; then
+            -DFORGECPP_BUILD_TESTS=ON -DFORGECPP_BUILD_EXAMPLES=ON "${compat[@]}" "$@" >"${dir}.configure.log" 2>&1; then
         tail -20 "${dir}.configure.log"; fail "configure (${label})"; return 1
     fi
     if ! cmake --build "${dir}" -j "${JOBS}" >"${dir}.build.log" 2>&1; then

@@ -5,9 +5,16 @@ proto/forge/API.json records every message, field and enum value of the
 last release (number, name, type, label, bound). A change is compatible when
 nothing recorded there changes: no field or enum value is renumbered,
 retyped, renamed (the JSON side uses names) or removed without reserving its
-number, and no bound gets smaller (a peer built with the old bound would send
-what the new one cannot hold). Adding messages, fields and values, and making
-bounds larger, is fine. The command ids are the values of the msg_id enums.
+number. Adding messages, fields and values is fine.
+
+The nanopb bounds (max_size, max_count) are part of the wire contract: a
+peer built with the old bound refuses a whole message that carries more.
+So a bound may only grow in a message that forgecpp *receives* (a
+`*_request`): old senders send less, which the new bound still holds. In a
+message a peer receives (a reply, a report, a stream header or body) it may
+not change at all: a zephyrus device built against the old bound would stop
+understanding forgecpp's answers. For more room, add a field or a command
+number. The command ids are the values of the msg_id enums.
 
     tools/proto-compat.py --protoc build/protoc            # check (CI)
     tools/proto-compat.py --protoc build/protoc --update   # at a release: record the API
@@ -105,6 +112,12 @@ def reserved(number, ranges):
     return any(lo <= number <= hi for lo, hi in ranges)
 
 
+def received_by_forgecpp(message):
+    """A request (or a message nested in one) is decoded by forgecpp; everything
+    else (replies, reports, stream headers and bodies) by a peer."""
+    return any(part.endswith("_request") for part in message.split("."))
+
+
 def check(old, new):
     problems = []
     for name, m in old["messages"].items():
@@ -128,8 +141,13 @@ def check(old, new):
             if now.get("oneof") != f.get("oneof"):
                 problems.append(f"{where}: moved into or out of a oneof")
             for key in ("max_size", "max_count"):
-                if key in f and now.get(key, 0) < f[key]:
+                if key not in f or now.get(key) == f[key]:
+                    continue
+                if now.get(key, 0) < f[key]:
                     problems.append(f"{where}: {key} went down from {f[key]} to {now.get(key)}")
+                elif not received_by_forgecpp(name):
+                    problems.append(f"{where}: {key} went up from {f[key]} to {now.get(key)} in a message a peer "
+                                    "receives (its buffer has the old size); add a field or a command instead")
     for name, e in old["enums"].items():
         cur = new["enums"].get(name)
         if cur is None:
@@ -144,11 +162,44 @@ def check(old, new):
     return problems
 
 
+def self_test():
+    """The rules on a made-up API (tests/CMakeLists.txt runs this)."""
+    def api(fields, values=None):
+        return {"messages": {"forge.x_request": {"fields": fields["req"], "reserved": [], "reserved_names": []},
+                             "forge.x_reply": {"fields": fields["rsp"], "reserved": [], "reserved_names": []}},
+                "enums": {"forge.msg_id": {"values": values or {"0": "none", "256": "x"},
+                                           "reserved": [], "reserved_names": []}}}
+    def field(name, size):
+        return {"name": name, "type": "string", "label": "optional", "max_size": size}
+    old = api({"req": {"1": field("name", 32)}, "rsp": {"1": field("text", 32)}})
+    same = check(old, old)
+    bigger_request = check(old, api({"req": {"1": field("name", 64)}, "rsp": {"1": field("text", 32)}}))
+    bigger_reply = check(old, api({"req": {"1": field("name", 32)}, "rsp": {"1": field("text", 64)}}))
+    smaller_request = check(old, api({"req": {"1": field("name", 16)}, "rsp": {"1": field("text", 32)}}))
+    renamed = check(old, api({"req": {"1": field("id", 32)}, "rsp": {"1": field("text", 32)}}))
+    renumbered = check(old, api({"req": {"2": field("name", 32)}, "rsp": {"1": field("text", 32)}}))
+    added = check(old, api({"req": {"1": field("name", 32), "2": field("unit", 8)}, "rsp": {"1": field("text", 32)}}))
+    value_gone = check(old, api({"req": {"1": field("name", 32)}, "rsp": {"1": field("text", 32)}}, {"0": "none"}))
+    results = {"same": same == [], "bigger request bound": bigger_request == [],
+               "bigger reply bound refused": len(bigger_reply) == 1 and "went up" in bigger_reply[0],
+               "smaller request bound refused": len(smaller_request) == 1 and "went down" in smaller_request[0],
+               "renamed refused": any("name changed" in p for p in renamed),
+               "renumbered refused": any("removed without" in p for p in renumbered),
+               "added field": added == [],
+               "removed enum value refused": any("removed without reserving" in p for p in value_gone)}
+    for name, ok in results.items():
+        print(f"{'ok  ' if ok else 'FAIL'} {name}")
+    return 0 if all(results.values()) else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--protoc", default="protoc")
     ap.add_argument("--update", action="store_true", help="record the current API (at a release)")
+    ap.add_argument("--self-test", action="store_true", help="check the rules on a made-up API")
     args = ap.parse_args()
+    if args.self_test:
+        return self_test()
     api = describe(args.protoc)
     if args.update:
         with open(SNAPSHOT, "w") as f:
@@ -163,7 +214,8 @@ def main():
         print(f"incompatible: {p}", file=sys.stderr)
     if problems:
         print("proto/forge must stay compatible with the released API (proto/forge/API.json): "
-              "add new fields instead, reserve removed numbers, only make bounds larger", file=sys.stderr)
+              "add new fields instead, reserve removed numbers, keep the bounds of what a peer receives",
+              file=sys.stderr)
         return 1
     print(f"proto/forge is compatible with the released API ({len(old['messages'])} messages, "
           f"{len(old['enums'])} enums)")

@@ -38,6 +38,18 @@ TEST_CASE("services: StateStore restores persistent controls and saves only when
     off.restore(d, "", logger);
     off.mark_dirty();
     off.save(d, logger, true);  // no file configured: nothing to do
+
+    // With a pool the file is written off the calling thread (the main loop).
+    forge::ThreadPool pool(1);
+    forge::detail::StateStore async;
+    async.restore(d, file, logger);
+    d.set("gain", 9);
+    async.mark_dirty();
+    async.save(d, logger, false, &pool);
+    pool.wait();
+    CHECK(forge::load_json(file)["gain"] == 9);
+    async.save(d, logger, false, &pool);  // not dirty: nothing queued
+    pool.wait();
 }
 
 TEST_CASE("services: LayoutStore keeps page layouts in a file, or only in memory with \"-\"") {

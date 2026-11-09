@@ -432,7 +432,7 @@ int Application::run(int argc, char** argv) {
         loop_tick_ms_ = steady_ms();
         every(std::chrono::seconds(1), [this, steady_ms] {
             loop_tick_ms_ = steady_ms();  // /health reports a stalled main loop
-            state_->save(*dashboard_, logger_);
+            state_->save(*dashboard_, logger_, false, &pool());  // the file is written off the loop
             if (state_event_pending_.exchange(false)) control_changed({}, false);
         });
         if (hub_registration_) hub_->start(cfg);
@@ -600,13 +600,22 @@ void Application::shutdown() {
         workers_.clear();
     });
 
-    try {
-        for (auto it = components_.rbegin(); it != components_.rend(); ++it) (*it)->on_stop();
-        on_stop();
-        for (auto& h : hooks_.stop) h(*this);
-    } catch (const std::exception& e) {
-        if (logger_) logger_->error("stop handler failed: {}", e.what());
+    // Every stop handler runs, also after one of them failed: a faulty
+    // component must not leave the others' devices open.
+    const auto stop_step = [this](const char* what, const auto& run) {
+        try {
+            run();
+        } catch (const std::exception& e) {
+            if (logger_) logger_->error("{} failed on stop: {}", what, e.what());
+        } catch (...) {
+            if (logger_) logger_->error("{} failed on stop: unknown exception", what);
+        }
+    };
+    for (auto it = components_.rbegin(); it != components_.rend(); ++it) {
+        stop_step((*it)->name().c_str(), [&] { (*it)->on_stop(); });
     }
+    stop_step("on_stop()", [&] { on_stop(); });
+    for (auto& h : hooks_.stop) stop_step("a stop hook", [&] { h(*this); });
     if (dashboard_) state_->save(*dashboard_, logger_, true);
     messaging_->stop();
 

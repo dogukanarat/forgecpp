@@ -196,10 +196,14 @@ public:
                    std::function<std::string()> get, std::function<void(const std::string&)> set);
 
     /// Read-only value bound to a variable (anything convertible to JSON).
+    /// The variable must outlive the dashboard: a temporary (the result of a
+    /// call) is refused at compile time; use the callable overload for it.
     template <class T, class = std::enable_if_t<!std::is_invocable_v<const T&>>>
     Control value(const std::string& id, const std::string& label, const T& ref) {
         return value(id, label, Getter([&ref] { return json(ref); }));
     }
+    template <class T, class = std::enable_if_t<!std::is_invocable_v<const T&> && !std::is_lvalue_reference_v<T>>>
+    Control value(const std::string& id, const std::string& label, T&& temporary) = delete;
     /// Read-only value of an atomic another thread updates (a counter, a flag).
     template <class T>
     Control value(const std::string& id, const std::string& label, const std::atomic<T>& ref) {

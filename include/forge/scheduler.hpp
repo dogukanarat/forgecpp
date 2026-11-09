@@ -11,6 +11,7 @@
 //   s.every(1s, [&] { ++ticks; });
 //   s.advance(10s);          // runs the 10 ticks now, in order, on this thread
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -21,6 +22,7 @@
 #include <optional>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace forge {
 
@@ -49,7 +51,10 @@ public:
     /// Run `task` every `period` (fixed rate; missed ticks are skipped, not bursted).
     Id every(Clock::duration period, Task task, bool run_immediately = false);
 
-    /// Cancel a pending task. Returns false if it was unknown or already finished.
+    /// Cancel a task. A task that was handed to the executor but has not run
+    /// yet is cancelled too (it does nothing when its turn comes), so on the
+    /// executor's thread a true result means the task never runs again.
+    /// Returns false if it was unknown or already finished.
     bool cancel(Id id);
     void cancel_all();
 
@@ -69,13 +74,25 @@ public:
     void stop();
 
 private:
+    /// Shared with the tasks handed to the executor: cancel() clears `alive`
+    /// and a queued task then does nothing.
+    struct State {
+        Task task;
+        std::atomic<bool> alive{true};
+        std::atomic<bool> done{false};  ///< a one-shot task ran
+    };
     struct Entry {
         Clock::time_point due;
         Clock::duration period{};
-        std::shared_ptr<Task> task;
+        std::shared_ptr<State> state;
+        bool fired = false;  ///< one-shot: handed to the executor, kept until it ran
     };
 
     Id schedule(Clock::time_point due, Clock::duration period, Task task);
+    /// Forget the one-shot entries whose task ran (lock held).
+    void sweep_fired();
+    /// Cancel every entry (lock held).
+    void clear_entries();
     void run();
     /// Take the first task due at or before `now` (lock held); false if none.
     bool take_due(Clock::time_point now, Task& task, Id& id, Clock::time_point& due);
@@ -87,6 +104,7 @@ private:
     std::condition_variable cv_;
     std::unordered_map<Id, Entry> entries_;
     std::multimap<Clock::time_point, Id> queue_;
+    std::vector<Id> fired_;  ///< one-shot entries handed to the executor
     Id next_id_ = 1;
     bool stopping_ = false;
     bool manual_ = false;

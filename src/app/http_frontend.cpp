@@ -326,12 +326,14 @@ void HttpFrontend::create_web(const Config& cfg) {
     http_->get_json(api + "/logs",
                     [this](const http::Request&) { return weblog_ ? weblog_->history() : json::array(); });
     http_->get_json(api + "/alarms", [&alarms](const http::Request&) { return alarms.to_json(); });
-    http_->post_json(api + "/alarms/ack", [&alarms](const http::Request& req, const json&) {
-        return json{{"acknowledged", alarms.acknowledge_all("web " + req.remote_addr)}};
+    // Through the control service, like the `ack` command and the console: the
+    // role check and the audit record are the same on every channel.
+    http_->post_json(api + "/alarms/ack", [&control, web_caller](const http::Request& req, const json&) {
+        return json{{"acknowledged", control.ack("all", web_caller(req))}};
     });
-    http_->post_json(api + "/alarms/:id/ack", [&alarms](const http::Request& req, const json&) {
+    http_->post_json(api + "/alarms/:id/ack", [&alarms, &control, web_caller](const http::Request& req, const json&) {
         const auto id = req.path_params.at("id");
-        if (!alarms.acknowledge(id, "web " + req.remote_addr)) throw Error(404, "unknown alarm '" + id + "'");
+        control.ack(id, web_caller(req));
         return to_json(*alarms.get(id));
     });
     subscriptions_.push_back(alarms.on_change([this] { alarms_dirty_ = true; }));

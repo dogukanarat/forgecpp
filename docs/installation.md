@@ -18,7 +18,7 @@ One-liner (clones into a temporary directory, installs and cleans up):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh | bash
-curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh | bash -s -- --prefix /opt/forgecpp --ref v0.3.0
+curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh | bash -s -- --prefix /opt/forgecpp --ref v0.4.0
 ```
 
 `install.sh` builds every dependency as its own CMake project and installs it

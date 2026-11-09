@@ -114,21 +114,53 @@ void Messaging::start(const Config& cfg) {
     }
     const auto device = cfg.value<std::string>("forge.serial");
     if (!device.empty()) {
-        serial::LinkOptions o;
-        o.device = device;
-        o.baud = cfg.value<int>("forge.serial_baud");
-        o.framing.frame_size = static_cast<std::size_t>(cfg.value<int>("forge.serial_frame_size"));
-        o.thread_name = "forge-serial";
-        o.on_request = [this](std::span<const std::uint8_t> frame, const auto& send) {
+        serial_options_.device = device;
+        serial_options_.baud = cfg.value<int>("forge.serial_baud");
+        serial_options_.framing.frame_size = static_cast<std::size_t>(cfg.value<int>("forge.serial_frame_size"));
+        serial_options_.thread_name = "forge-serial";
+        serial_options_.on_request = [this](std::span<const std::uint8_t> frame, const auto& send) {
             CallerScope caller(app_.control().identify("link", "serial", {}));
             tmtc::Dispatcher(app_.commands()).handle(frame, send);
         };
-        serial_ = std::make_unique<serial::Link>(std::move(o));
-        logger->info("forge: commands on {} at {} baud", device, cfg.value<int>("forge.serial_baud"));
+        // A device that is not there yet (USB still enumerating) is not fatal:
+        // health says so and the line is tried again every second.
+        open_serial();
+        app_.every(std::chrono::seconds(1), [this] { check_serial(); });
     }
 }
 
+bool Messaging::open_serial() {
+    auto logger = app_.logger();
+    try {
+        serial_ = std::make_unique<serial::Link>(serial_options_);
+    } catch (const std::exception& e) {
+        if (serial_error_ != e.what()) {  // the same reason again: only in debug
+            logger->warn("forge: cannot open {}: {} (trying again every second)", serial_options_.device, e.what());
+            serial_error_ = e.what();
+        } else {
+            logger->debug("forge: cannot open {}: {}", serial_options_.device, e.what());
+        }
+        app_.health().set("serial", HealthState::failed, e.what(), false);
+        return false;
+    }
+    serial_error_.clear();
+    logger->info("forge: commands on {} at {} baud", serial_options_.device, serial_options_.baud);
+    app_.health().set("serial", HealthState::ok, "commands on " + serial_options_.device, false);
+    return true;
+}
+
+void Messaging::check_serial() {
+    if (serial_stopped_) return;
+    if (serial_ && !serial_->connected()) {
+        app_.logger()->warn("forge: {} went away; waiting for it", serial_options_.device);
+        app_.health().set("serial", HealthState::failed, "line gone: " + serial_options_.device, false);
+        serial_.reset();
+    }
+    if (!serial_) open_serial();
+}
+
 void Messaging::stop_control() {
+    serial_stopped_ = true;
     if (control_server_) control_server_->stop();
     serial_.reset();
 }
@@ -143,6 +175,7 @@ void Messaging::stop() {
 }
 
 void Messaging::reset() {
+    serial_stopped_ = true;
     serial_.reset();
     control_server_.reset();
     {
@@ -175,7 +208,7 @@ std::vector<zmq::StreamInfo> Messaging::stream_list() const {
 
 void Messaging::add_endpoints(std::map<std::string, std::string>& e) const {
     if (control_server_) e["control"] = control_server_->endpoint();
-    if (serial_) e["serial"] = serial_->device();
+    if (serial_ || !serial_options_.device.empty()) e["serial"] = serial_options_.device;
     if (events_pub_) e["events"] = events_pub_->endpoint();
     std::lock_guard lock(data_mutex_);
     if (data_pub_) e["data"] = data_pub_->endpoint();

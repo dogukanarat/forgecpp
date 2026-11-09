@@ -528,6 +528,57 @@ TEST_CASE("serial: the program's commands on [forge].serial, as on [forge].contr
     CHECK(device.stats().framing.frames_dropped == 0);
 }
 
+TEST_CASE("serial: a line that is missing or goes away is reported and opened again") {
+    // The program opens the line by name: a symlink the test points at a pty,
+    // later at another one, like a USB adapter that is unplugged and plugged.
+    forge::testing::TempDir dir;
+    const auto link_path = (dir / "tty").string();
+    int peer_fd = -1, other = -1;
+    char name[128] = {};
+    REQUIRE(::openpty(&peer_fd, &other, name, nullptr, nullptr) == 0);
+    ::close(other);
+    const auto serial_state = [](forge::Application& app) -> std::string {
+        for (const auto& c : app.health().snapshot().components) {
+            if (c.name == "serial") return forge::to_string(c.state);
+        }
+        return "none";
+    };
+
+    // Not there at start: not fatal, health says so.
+    forge::testing::AppRunner<ControlledApp> r({"-D", "forge.serial=" + link_path, "-D", "http.enabled=false"});
+    CHECK(serial_state(r.app()) == "failed");
+    CHECK(r->endpoints().at("serial") == link_path);
+
+    // It appears: commands are answered within a second or so.
+    REQUIRE(::symlink(name, link_path.c_str()) == 0);
+    CHECK(forge::testing::wait_until([&] { return serial_state(r.app()) == "ok"; }, 5s));
+    {
+        forge::serial::LinkOptions o;
+        o.fd = peer_fd;  // the link closes it: the line "goes away" for the program
+        forge::serial::Link device(o);
+        forge_ping_request req{};
+        req.token = 9;
+        forge_ping_reply rsp{};
+        REQUIRE(device.call(kKick, req, rsp).ok());
+        CHECK(rsp.token == 9);
+    }
+    CHECK(forge::testing::wait_until([&] { return serial_state(r.app()) == "failed"; }, 5s));
+
+    // A new adapter under the same name.
+    REQUIRE(::openpty(&peer_fd, &other, name, nullptr, nullptr) == 0);
+    ::close(other);
+    const auto tmp = link_path + ".new";
+    REQUIRE(::symlink(name, tmp.c_str()) == 0);
+    REQUIRE(::rename(tmp.c_str(), link_path.c_str()) == 0);
+    CHECK(forge::testing::wait_until([&] { return serial_state(r.app()) == "ok"; }, 5s));
+    forge::serial::LinkOptions o;
+    o.fd = peer_fd;
+    forge::serial::Link device(o);
+    forge_ping_reply rsp{};
+    REQUIRE(device.call(kKick, forge_ping_request{3}, rsp).ok());
+    CHECK(rsp.token == 12);  // the kicks add up: 9 before the line went away, 3 now
+}
+
 TEST_CASE("zmq: send_wait() waits for a peer instead of dropping") {
     fz::Sender out(fz::Sender::Kind::push, "tcp://127.0.0.1:*");
     const auto m = fz::make_message("x", forge_ping_request{7});

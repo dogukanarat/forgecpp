@@ -60,13 +60,26 @@ void StateStore::restore(web::Dashboard& dashboard, const std::string& file, con
     }
 }
 
-void StateStore::save(web::Dashboard& dashboard, const Logger& logger, bool force) {
-    const bool dirty = dirty_.exchange(false);
-    if (file_.empty() || !(dirty || force)) return;
+void StateStore::save(web::Dashboard& dashboard, const Logger& logger, bool force, ThreadPool* pool) {
+    if (file_.empty() || !(dirty_.load() || force)) return;
+    if (pool && writing_.load()) return;  // the last write is still on its way; dirty_ stays set
+    dirty_ = false;
     json j = json::object();
     for (const auto& id : dashboard.persistent_ids()) j[id] = dashboard.get(id);
+    if (!pool) {
+        write(j, logger);
+        return;
+    }
+    writing_ = true;
+    pool->detach_task([this, j = std::move(j), logger] {
+        write(j, logger);
+        writing_ = false;
+    });
+}
+
+void StateStore::write(const json& values, const Logger& logger) {
     try {
-        save_json(file_, j);
+        save_json(file_, values);
     } catch (const std::exception& e) {
         logger->warn("state: cannot save {}: {}", file_, e.what());
     }
