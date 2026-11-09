@@ -163,7 +163,8 @@ Param text_param(std::string name, std::optional<std::string> def, std::string h
 }
 Param select_param(std::string name, std::vector<std::string> options, std::optional<std::string> def,
                    std::string help) {
-    return Param{std::move(name), "select", std::move(help), def ? json(*def) : json(nullptr), std::move(options), {}, {}};
+    return Param{
+        std::move(name), "select", std::move(help), def ? json(*def) : json(nullptr), std::move(options), {}, {}};
 }
 
 CommandRef Group::command(const std::string& id, const std::string& label, std::vector<Param> params,
@@ -216,52 +217,59 @@ Control Group::button(const std::string& id, const std::string& label, std::func
 }
 
 Control Group::toggle(const std::string& id, const std::string& label, bool& value) {
-    return add(Kind::toggle, id, label, [&value] { return json(value); },
-               [&value](const json& v) { value = v.get<bool>(); });
+    return add(
+        Kind::toggle, id, label, [&value] { return json(value); }, [&value](const json& v) { value = v.get<bool>(); });
 }
 
 Control Group::toggle(const std::string& id, const std::string& label, std::function<bool()> get,
                       std::function<void(bool)> set) {
-    return add(Kind::toggle, id, label, [get = std::move(get)] { return json(get()); },
-               [set = std::move(set)](const json& v) { set(v.get<bool>()); });
+    return add(
+        Kind::toggle, id, label, [get = std::move(get)] { return json(get()); },
+        [set = std::move(set)](const json& v) { set(v.get<bool>()); });
 }
 
 Control Group::slider(const std::string& id, const std::string& label, std::function<double()> get,
                       std::function<void(double)> set, double min, double max, double step) {
-    return add(Kind::slider, id, label, [get = std::move(get)] { return json(get()); },
+    return add(
+               Kind::slider, id, label, [get = std::move(get)] { return json(get()); },
                [set = std::move(set)](const json& v) { set(v.get<double>()); })
         .range(min, max, step);
 }
 
 Control Group::number(const std::string& id, const std::string& label, std::function<double()> get,
                       std::function<void(double)> set) {
-    return add(Kind::number, id, label, [get = std::move(get)] { return json(get()); },
-               [set = std::move(set)](const json& v) { set(v.get<double>()); });
+    return add(
+        Kind::number, id, label, [get = std::move(get)] { return json(get()); },
+        [set = std::move(set)](const json& v) { set(v.get<double>()); });
 }
 
 Control Group::text(const std::string& id, const std::string& label, std::string& value) {
-    return add(Kind::text, id, label, [&value] { return json(value); },
-               [&value](const json& v) { value = v.get<std::string>(); });
+    return add(
+        Kind::text, id, label, [&value] { return json(value); },
+        [&value](const json& v) { value = v.get<std::string>(); });
 }
 
 Control Group::text(const std::string& id, const std::string& label, std::function<std::string()> get,
                     std::function<void(const std::string&)> set) {
-    return add(Kind::text, id, label, [get = std::move(get)] { return json(get()); },
-               [set = std::move(set)](const json& v) { set(v.get<std::string>()); });
+    return add(
+        Kind::text, id, label, [get = std::move(get)] { return json(get()); },
+        [set = std::move(set)](const json& v) { set(v.get<std::string>()); });
 }
 
 Control Group::select(const std::string& id, const std::string& label, std::vector<std::string> options,
                       std::string& value) {
-    auto c = add(Kind::select, id, label, [&value] { return json(value); },
-                 [&value](const json& v) { value = v.get<std::string>(); });
+    auto c = add(
+        Kind::select, id, label, [&value] { return json(value); },
+        [&value](const json& v) { value = v.get<std::string>(); });
     owner_.by_id_.at(id)->options = std::move(options);
     return c;
 }
 
 Control Group::select(const std::string& id, const std::string& label, std::vector<std::string> options,
                       std::function<std::string()> get, std::function<void(const std::string&)> set) {
-    auto c = add(Kind::select, id, label, [get = std::move(get)] { return json(get()); },
-                 [set = std::move(set)](const json& v) { set(v.get<std::string>()); });
+    auto c = add(
+        Kind::select, id, label, [get = std::move(get)] { return json(get()); },
+        [set = std::move(set)](const json& v) { set(v.get<std::string>()); });
     owner_.by_id_.at(id)->options = std::move(options);
     return c;
 }
@@ -442,8 +450,7 @@ void Dashboard::set(const std::string& id, const json& value) {
                 throw bad("must be one of " + json(c.options).dump());
             }
             break;
-        default:
-            throw bad("cannot be set");
+        default: throw bad("cannot be set");
     }
     c.set(value);
 }

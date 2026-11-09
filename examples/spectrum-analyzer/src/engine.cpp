@@ -201,8 +201,7 @@ bool Engine::sweep(const Settings& s, Frame& frame) {
     // keeps several of them in CMA memory) whatever the RBW and averaging.
     const std::size_t ffts = std::clamp<std::size_t>(s.vbw_averages, 1, 256);
     const std::size_t chunk_ffts = std::clamp<std::size_t>(kMaxBufferSamples / plan.fft_size, 1, ffts);
-    const std::size_t buffer =
-        fixed ? tuning.block_samples : std::max<std::size_t>(plan.fft_size * chunk_ffts, 1024);
+    const std::size_t buffer = fixed ? tuning.block_samples : std::max<std::size_t>(plan.fft_size * chunk_ffts, 1024);
     std::uint64_t version;
     {
         std::lock_guard lock(mutex_);
@@ -216,7 +215,8 @@ bool Engine::sweep(const Settings& s, Frame& frame) {
     for (const auto& seg : plan.segments) {
         {
             std::lock_guard lock(mutex_);
-            if (!running_ || settings_version_ != version || reconnect_requested_) return false;  // restart with new settings
+            if (!running_ || settings_version_ != version || reconnect_requested_)
+                return false;  // restart with new settings
         }
         if (fixed) {
             if (!streaming_ || buffer != buffer_size_) {

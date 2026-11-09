@@ -60,12 +60,12 @@ const std::array<std::array<float, kTaps>, kPhases + 1>& clock_table() {
 
 // Inverse normal CDF (Acklam), for the Gaussian table.
 double inverse_normal(double p) {
-    static const double a[] = {-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
-                               1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00};
+    static const double a[] = {-3.969683028665376e+01, 2.209460984245205e+02,  -2.759285104469687e+02,
+                               1.383577518672690e+02,  -3.066479806614716e+01, 2.506628277459239e+00};
     static const double b[] = {-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
                                6.680131188771972e+01, -1.328068155288572e+01};
     static const double c[] = {-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
-                               -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00};
+                               -2.549732539343734e+00, 4.374664141464968e+00,  2.938163982698783e+00};
     static const double d[] = {7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00,
                                3.754408661907416e+00};
     const double lo = 0.02425, hi = 1 - lo;
@@ -94,7 +94,8 @@ const std::vector<float>& gauss_table() {
             v[i] = static_cast<float>(x);
             sq += x * x;
         }
-        const auto g = static_cast<float>(1.0 / std::sqrt(sq / static_cast<double>(v.size())));  // exactly unit variance
+        const auto g =
+            static_cast<float>(1.0 / std::sqrt(sq / static_cast<double>(v.size())));  // exactly unit variance
         for (auto& x : v) x *= g;
         return v;
     }();
@@ -153,7 +154,8 @@ void Channel::rebuild() {
         for (const auto& p : s_.paths) {
             const double d = p.delay_us * 1e-6 * rate_;
             const auto a = std::polar(db_to_amp(p.gain_db) / std::sqrt(power), p.phase_deg * kPi / 180);
-            for (std::size_t n = 0; n < len; ++n) h[n] += a * blackman_sinc(static_cast<double>(n) - kSincHalf - d, kSincHalf);
+            for (std::size_t n = 0; n < len; ++n)
+                h[n] += a * blackman_sinc(static_cast<double>(n) - kSincHalf - d, kSincHalf);
         }
         for (const auto& v : h) mp_taps_.push_back(cf(v));
     }
@@ -399,8 +401,8 @@ void Channel::stage_frequency(cf* x, std::size_t n) {
 // ---------------------------------------------------------------------------
 
 std::vector<std::string> preset_names() {
-    return {"clean", "awgn-30", "awgn-25", "awgn-20", "awgn-15", "awgn-10", "offset-5k", "doppler", "oscillators",
-            "indoor", "urban", "mobile", "interference", "bad-radio"};
+    return {"clean",   "awgn-30",     "awgn-25", "awgn-20", "awgn-15", "awgn-10",      "offset-5k",
+            "doppler", "oscillators", "indoor",  "urban",   "mobile",  "interference", "bad-radio"};
 }
 
 Settings preset(const std::string& name) {

@@ -44,13 +44,13 @@ class Config;
 class Console;
 namespace config {
 class Schema;
-}
+}  // namespace config
 namespace web {
 class Dashboard;
-}
+}  // namespace web
 namespace http {
 class Server;
-}
+}  // namespace http
 
 class Component {
 public:

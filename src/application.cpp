@@ -6,19 +6,21 @@
 #include "forge/control.hpp"
 #include "forge/crash.hpp"
 #include "forge/http.hpp"
+#include "forge/hub.hpp"
 #include "forge/rt.hpp"
 #include "forge/systemd.hpp"
-#include "forge/hub.hpp"
 #include "forge/trace.hpp"
 #include "forge/version.hpp"
 #include "forge/web.hpp"
 #include "forge/zmq.hpp"
 
-#include <fstream>
 #include <sys/resource.h>
+#include <fstream>
 
 #include <CLI/CLI.hpp>
 
+#include <pthread.h>
+#include <unistd.h>
 #include <algorithm>
 #include <cctype>
 #include <csignal>
@@ -26,8 +28,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <pthread.h>
-#include <unistd.h>
 
 namespace forge {
 
@@ -35,7 +35,7 @@ namespace detail {
 
 namespace {
 enum LoopErrorKind { kNone, kHttp, kConfig, kInvalidArgument, kOutOfRange, kRuntime, kStopped };
-}
+}  // namespace
 
 void LoopError::capture() noexcept {
     try {
@@ -106,8 +106,7 @@ Application::Application(AppInfo info, const std::string& installed_config)
     auto& cli = *cli_;
     cli.name(info_.name);
     cli.description(info_.description.empty() ? info_.name : info_.description);
-    cli.set_version_flag("-V,--version",
-                         std::format("{} {} (forgecpp {})", info_.name, info_.version, version_string));
+    cli.set_version_flag("-V,--version", std::format("{} {} (forgecpp {})", info_.name, info_.version, version_string));
     cli.option_defaults()->group("Framework options");
 
     cli.add_option("-c,--config", config_file_, "Configuration file (TOML)");
@@ -161,13 +160,12 @@ void Application::background_failed(const char* what) {
 }
 
 void Application::loop_busy() const {
-    static auto& timeouts = metrics::registry().counter(
-        "forge.control.timeouts", "Requests that gave up waiting for a busy main loop");
+    static auto& timeouts =
+        metrics::registry().counter("forge.control.timeouts", "Requests that gave up waiting for a busy main loop");
     timeouts.inc();
     const auto lag = loop_age_ms();
     throw Error(503, std::format("main loop busy (last heartbeat {} ms ago)", lag),
-                          json{{"error", "main loop busy"}, {"loop_age_ms", lag},
-                               {"timeout_ms", request_timeout_ms_.load()}});
+                json{{"error", "main loop busy"}, {"loop_age_ms", lag}, {"timeout_ms", request_timeout_ms_.load()}});
 }
 
 void Application::reload() {
@@ -180,14 +178,15 @@ void Application::post(Task task) {
     static auto& lag = metrics::registry().histogram("forge.loop.lag_seconds", metrics::latency_buckets(),
                                                      "Delay between post() and execution on the main loop", "s");
     static auto& busy = metrics::registry().counter("forge.loop.busy_us", "Time spent running main loop tasks", "us");
-    static auto& slow = metrics::registry().counter(
-        "forge.loop.slow_tasks", "Main loop tasks that took longer than [forge].slow_task_ms");
+    static auto& slow = metrics::registry().counter("forge.loop.slow_tasks",
+                                                    "Main loop tasks that took longer than [forge].slow_task_ms");
     tasks_.push([this, t = std::move(task), queued = std::chrono::steady_clock::now()] {
         const auto start = std::chrono::steady_clock::now();
         lag.observe(std::chrono::duration<double>(start - queued).count());
         FORGE_TRACE_SCOPE("loop.task", "forge");
         t();
-        const auto took = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start);
+        const auto took =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start);
         busy.inc(static_cast<std::uint64_t>(took.count()));
         // Everything else waits while a task runs: point at it (at most every 10 s).
         const int limit_ms = slow_task_ms_.load(std::memory_order_relaxed);
@@ -196,17 +195,16 @@ void Application::post(Task task) {
             static std::atomic<std::int64_t> last_warning{0};
             const auto now_s = std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count();
             if (now_s - last_warning.exchange(now_s) >= 10 && logger_) {
-                logger_->warn("a main loop task took {} ms (> [forge].slow_task_ms = {}): everything else waited; "
-                              "move heavy work off the loop with background() (forge.loop.slow_tasks, trace \"loop.task\")",
-                              took.count() / 1000, limit_ms);
+                logger_->warn(
+                    "a main loop task took {} ms (> [forge].slow_task_ms = {}): everything else waited; "
+                    "move heavy work off the loop with background() (forge.loop.slow_tasks, trace \"loop.task\")",
+                    took.count() / 1000, limit_ms);
             }
         }
     });
 }
 
-Scheduler::Id Application::after(Duration delay, Task task) {
-    return scheduler().after(delay, std::move(task));
-}
+Scheduler::Id Application::after(Duration delay, Task task) { return scheduler().after(delay, std::move(task)); }
 
 Scheduler::Id Application::every(Duration period, Task task, bool run_immediately) {
     return scheduler().every(period, std::move(task), run_immediately);
@@ -301,9 +299,9 @@ std::int64_t Application::loop_age_ms() const {
     if (manual_clock_) return 0;  // the heartbeat timer only runs when a test advances time
     const auto tick = loop_tick_ms_.load();
     if (tick <= 0) return 0;
-    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                         std::chrono::steady_clock::now().time_since_epoch())
-                         .count();
+    const auto now =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count();
     return std::max<std::int64_t>(now - tick, 0);
 }
 
@@ -380,13 +378,14 @@ int Application::run(int argc, char** argv) {
                                    : std::make_unique<Scheduler>(to_main_loop);
         start_signal_thread();
 
-        logger_->info("{} {} starting (forgecpp {}, pid {}, {} worker threads)", id(), info_.version,
-                      version_string, ::getpid(), pool_->get_thread_count());
+        logger_->info("{} {} starting (forgecpp {}, pid {}, {} worker threads)", id(), info_.version, version_string,
+                      ::getpid(), pool_->get_thread_count());
         if (!is_standard_name(info_.name)) {
-            logger_->warn("'{}' does not follow the daemon naming standard: lowercase words separated by '-' "
-                          "(e.g. radio-controller); the name is used for the binary, config file, systemd unit "
-                          "and forge-hub entry",
-                          info_.name);
+            logger_->warn(
+                "'{}' does not follow the daemon naming standard: lowercase words separated by '-' "
+                "(e.g. radio-controller); the name is used for the binary, config file, systemd unit "
+                "and forge-hub entry",
+                info_.name);
         }
         if (!cfg.source().empty()) logger_->info("configuration: {}", cfg.source().string());
         trace::set_thread_name("main");
@@ -421,11 +420,14 @@ int Application::run(int argc, char** argv) {
         if (cfg.value<bool>("console.enabled")) console_->start_repl();
 
         if (auto wd = systemd::watchdog_interval()) {
-            every(*wd / 2, [this] {
-                if (watchdog_->tick(health_, config().value<double>("health.watchdog_grace_s"), logger_)) {
-                    systemd::notify("WATCHDOG=1");
-                }
-            }, true);
+            every(
+                *wd / 2,
+                [this] {
+                    if (watchdog_->tick(health_, config().value<double>("health.watchdog_grace_s"), logger_)) {
+                        systemd::notify("WATCHDOG=1");
+                    }
+                },
+                true);
             logger_->debug("systemd watchdog enabled ({} ms)",
                            std::chrono::duration_cast<std::chrono::milliseconds>(*wd).count());
         }
@@ -474,7 +476,8 @@ int Application::parse_command_line(int argc, char** argv) {
         }
     }
     if (instance_.size() > 32 ||
-        instance_.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.") != std::string::npos) {
+        instance_.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.") !=
+            std::string::npos) {
         std::cerr << info_.name << ": invalid instance name '" << instance_ << "'\n";
         return 2;
     }
@@ -743,7 +746,8 @@ void Application::control_changed(const std::string&, bool persistent) {
 
 void Application::declare_framework_config(config::Schema& s) {
     s.section("log", "Logging");
-    s.string("log.level", "info", "Default level").choices({"trace", "debug", "info", "warn", "error", "critical", "off"});
+    s.string("log.level", "info", "Default level")
+        .choices({"trace", "debug", "info", "warn", "error", "critical", "off"});
     s.string("log.format", "text", "text: [log].pattern; json: one JSON object per line").choices({"text", "json"});
     s.string("log.pattern", log::Options{}.pattern,
              "Text lines: {time} {level} {logger} {message} {thread} {file} {line}");
@@ -824,7 +828,8 @@ void Application::declare_framework_config(config::Schema& s) {
     s.string("state.file", "", "Controls marked persist() are saved here (empty = not saved)");
 
     s.section("health", "Health and watchdog");
-    s.number("health.watchdog_grace_s", 0, "Stop systemd watchdog pings after a critical component failed this long (0 = never)")
+    s.number("health.watchdog_grace_s", 0,
+             "Stop systemd watchdog pings after a critical component failed this long (0 = never)")
         .range(0, 86400)
         .unit("s");
 
@@ -877,10 +882,10 @@ void Application::start_observability(const Config& cfg) {
             std::ifstream in(*report);
             std::string first;
             std::getline(in, first);
-            const auto kept = std::format("{}/{}-crash-{}.txt", dir, info_.name,
-                                          std::chrono::duration_cast<std::chrono::seconds>(
-                                              std::chrono::system_clock::now().time_since_epoch())
-                                              .count());
+            const auto kept = std::format(
+                "{}/{}-crash-{}.txt", dir, info_.name,
+                std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
+                    .count());
             std::error_code ec;
             std::filesystem::rename(*report, kept, ec);
             logger_->error("the previous run crashed ({}); report: {}", first, ec ? *report : kept);
@@ -899,37 +904,50 @@ void Application::start_observability(const Config& cfg) {
 
     // Process metrics, computed when read.
     auto& m = metrics::registry();
-    m.gauge_fn("process.uptime_seconds", [this] { return std::chrono::duration<double>(uptime()).count(); }, "Uptime", "s");
-    m.gauge_fn("process.rss_bytes", [] {
-        long pages = 0, rss = 0;
-        if (FILE* f = std::fopen("/proc/self/statm", "r")) {
-            if (std::fscanf(f, "%ld %ld", &pages, &rss) != 2) rss = 0;
-            std::fclose(f);
-        }
-        return static_cast<double>(rss) * static_cast<double>(::sysconf(_SC_PAGESIZE));
-    }, "Resident memory", "bytes");
-    m.gauge_fn("process.cpu_seconds", [] {
-        rusage u{};
-        ::getrusage(RUSAGE_SELF, &u);
-        return static_cast<double>(u.ru_utime.tv_sec + u.ru_stime.tv_sec) +
-               static_cast<double>(u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6;
-    }, "CPU time (user + system)", "s");
-    m.gauge_fn("process.threads", [] {
-        std::error_code ec;
-        std::size_t n = 0;
-        for (auto it = std::filesystem::directory_iterator("/proc/self/task", ec);
-             !ec && it != std::filesystem::directory_iterator(); ++it) {
-            ++n;
-        }
-        return static_cast<double>(n);
-    }, "Threads");
-    m.gauge_fn("forge.pool.queued", [this] { return pool_ ? static_cast<double>(pool_->get_tasks_queued()) : 0.0; },
-               "Tasks waiting for a worker thread");
-    m.gauge_fn("forge.scheduler.timers", [this] { return scheduler_ ? static_cast<double>(scheduler_->pending()) : 0.0; },
-               "Pending timers");
+    m.gauge_fn(
+        "process.uptime_seconds", [this] { return std::chrono::duration<double>(uptime()).count(); }, "Uptime", "s");
+    m.gauge_fn(
+        "process.rss_bytes",
+        [] {
+            long pages = 0, rss = 0;
+            if (FILE* f = std::fopen("/proc/self/statm", "r")) {
+                if (std::fscanf(f, "%ld %ld", &pages, &rss) != 2) rss = 0;
+                std::fclose(f);
+            }
+            return static_cast<double>(rss) * static_cast<double>(::sysconf(_SC_PAGESIZE));
+        },
+        "Resident memory", "bytes");
+    m.gauge_fn(
+        "process.cpu_seconds",
+        [] {
+            rusage u{};
+            ::getrusage(RUSAGE_SELF, &u);
+            return static_cast<double>(u.ru_utime.tv_sec + u.ru_stime.tv_sec) +
+                   static_cast<double>(u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6;
+        },
+        "CPU time (user + system)", "s");
+    m.gauge_fn(
+        "process.threads",
+        [] {
+            std::error_code ec;
+            std::size_t n = 0;
+            for (auto it = std::filesystem::directory_iterator("/proc/self/task", ec);
+                 !ec && it != std::filesystem::directory_iterator(); ++it) {
+                ++n;
+            }
+            return static_cast<double>(n);
+        },
+        "Threads");
+    m.gauge_fn(
+        "forge.pool.queued", [this] { return pool_ ? static_cast<double>(pool_->get_tasks_queued()) : 0.0; },
+        "Tasks waiting for a worker thread");
+    m.gauge_fn(
+        "forge.scheduler.timers", [this] { return scheduler_ ? static_cast<double>(scheduler_->pending()) : 0.0; },
+        "Pending timers");
     m.gauge_fn("forge.alarms.active", [this] { return static_cast<double>(alarms_.active_count()); }, "Active alarms");
-    m.gauge_fn("forge.health.state", [this] { return static_cast<double>(health_.overall()); },
-               "Overall health: 1 ok, 2 degraded, 3 failed");
+    m.gauge_fn(
+        "forge.health.state", [this] { return static_cast<double>(health_.overall()); },
+        "Overall health: 1 ok, 2 degraded, 3 failed");
 }
 
 // ---------------------------------------------------------------------------
@@ -942,12 +960,14 @@ void Component::setup_web(web::Dashboard&) {}
 void Component::setup_console(Console&) {}
 void Component::setup_http(http::Server&) {}
 bool is_standard_name(std::string_view name) {
-    if (name.empty() || name.size() > 64 || !std::islower(static_cast<unsigned char>(name.front())) || name.back() == '-') {
+    if (name.empty() || name.size() > 64 || !std::islower(static_cast<unsigned char>(name.front())) ||
+        name.back() == '-') {
         return false;
     }
     char prev = 0;
     for (const char c : name) {
-        const bool ok = std::islower(static_cast<unsigned char>(c)) || std::isdigit(static_cast<unsigned char>(c)) || c == '-';
+        const bool ok =
+            std::islower(static_cast<unsigned char>(c)) || std::isdigit(static_cast<unsigned char>(c)) || c == '-';
         if (!ok || (c == '-' && prev == '-')) return false;
         prev = c;
     }

@@ -58,10 +58,13 @@ TEST_CASE("zmq: framing - header, typed body, blob and topic filtering") {
     std::vector<fz::Message> got;
     fz::Receiver::Options opts;
     opts.topics = {"iq"};
-    fz::Receiver sub(fz::Receiver::Kind::sub, pub.endpoint(), [&](fz::Message&& msg) {
-        std::lock_guard lock(m);
-        got.push_back(std::move(msg));
-    }, opts);
+    fz::Receiver sub(
+        fz::Receiver::Kind::sub, pub.endpoint(),
+        [&](fz::Message&& msg) {
+            std::lock_guard lock(m);
+            got.push_back(std::move(msg));
+        },
+        opts);
     // Subscriptions propagate asynchronously ("slow joiner"): wait for them.
     REQUIRE(forge::testing::wait_until([&] { return pub.subscriptions() == 1; }));
 
@@ -69,7 +72,10 @@ TEST_CASE("zmq: framing - header, typed body, blob and topic filtering") {
     CHECK(pub.publish("status", record("ignored")));
     CHECK(pub.publish("iq", record("first"), samples.data(), samples.size() * sizeof(std::int16_t)));
     CHECK(pub.publish("iq", record("second")));
-    REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return got.size() == 2; }));
+    REQUIRE(forge::testing::wait_until([&] {
+        std::lock_guard lock(m);
+        return got.size() == 2;
+    }));
 
     std::lock_guard lock(m);
     const auto& a = got[0];
@@ -118,10 +124,13 @@ TEST_CASE("zmq: publisher streams - subscribers per topic, rate limit, latest-on
     std::vector<fz::Message> got;
     fz::Receiver::Options opts;
     opts.topics = {"fast"};
-    fz::Receiver sub(fz::Receiver::Kind::sub, pub.endpoint(), [&](fz::Message&& msg) {
-        std::lock_guard lock(m);
-        got.push_back(std::move(msg));
-    }, opts);
+    fz::Receiver sub(
+        fz::Receiver::Kind::sub, pub.endpoint(),
+        [&](fz::Message&& msg) {
+            std::lock_guard lock(m);
+            got.push_back(std::move(msg));
+        },
+        opts);
     REQUIRE(forge::testing::wait_until([&] { return fast.subscribers() == 1; }));
     CHECK(slow.subscribers() == 0);
     CHECK(fast.wanted());
@@ -133,7 +142,10 @@ TEST_CASE("zmq: publisher streams - subscribers per topic, rate limit, latest-on
     CHECK(fast.publish(record("with blob"), blob, blob->data(), blob->size() * 2));
     blob.reset();
     for (int i = 0; i < 9; ++i) fast.publish(record("n" + std::to_string(i)));
-    REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return got.size() == 10; }));
+    REQUIRE(forge::testing::wait_until([&] {
+        std::lock_guard lock(m);
+        return got.size() == 10;
+    }));
     CHECK(forge::testing::wait_until([&] { return weak.expired(); }));
     {
         std::lock_guard lock(m);
@@ -195,14 +207,17 @@ TEST_CASE("zmq: a slow request does not hold up the others; replies go to the cl
     std::atomic<int> slow_running{0};
     fz::ServerOptions options;
     options.workers = 2;
-    fz::Server server("tcp://127.0.0.1:*", [&](std::string_view req) {
-        if (req == "slow") {
-            ++slow_running;
-            std::this_thread::sleep_for(800ms);
-            return one("slow done");
-        }
-        return std::vector<std::string>{"re:" + std::string(req), "part 2"};
-    }, options);
+    fz::Server server(
+        "tcp://127.0.0.1:*",
+        [&](std::string_view req) {
+            if (req == "slow") {
+                ++slow_running;
+                std::this_thread::sleep_for(800ms);
+                return one("slow done");
+            }
+            return std::vector<std::string>{"re:" + std::string(req), "part 2"};
+        },
+        options);
     CHECK(server.workers() == 2);
 
     std::vector<std::string> slow_reply;
@@ -234,11 +249,14 @@ TEST_CASE("zmq: requests that waited too long for a worker are refused, not hand
     options.workers = 1;
     options.max_queue_wait = 100ms;
     options.busy = [](std::string_view req) { return one("busy:" + std::string(req)); };
-    fz::Server server("tcp://127.0.0.1:*", [&](std::string_view req) {
-        ++handled;
-        if (req == "slow") std::this_thread::sleep_for(400ms);
-        return one("ok");
-    }, options);
+    fz::Server server(
+        "tcp://127.0.0.1:*",
+        [&](std::string_view req) {
+            ++handled;
+            if (req == "slow") std::this_thread::sleep_for(400ms);
+            return one("ok");
+        },
+        options);
     std::thread slow([&] { CHECK(req_exchange(server.endpoint(), "slow") == one("ok")); });
     while (handled == 0) std::this_thread::sleep_for(1ms);
     CHECK(req_exchange(server.endpoint(), "late") == one("busy:late"));
@@ -298,7 +316,8 @@ TEST_CASE("zmq: an application's command endpoint and its events") {
     CHECK(pb::view(info.version) == "3.0.0");
     bool listed = false;
     for (pb_size_t i = 0; i < info.endpoints_count; ++i) {
-        listed = listed || (pb::view(info.endpoints[i].name) == "control" && pb::view(info.endpoints[i].url) == ep.at("control"));
+        listed = listed ||
+                 (pb::view(info.endpoints[i].name) == "control" && pb::view(info.endpoints[i].url) == ep.at("control"));
     }
     CHECK(listed);
 
@@ -372,8 +391,8 @@ TEST_CASE("zmq: an application's command endpoint and its events") {
 }
 
 TEST_CASE("zmq: the same commands answer JSON over HTTP") {
-    forge::testing::AppRunner<ControlledApp> r({"-D", "http.enabled=true", "-D", "http.host=127.0.0.1",
-                                                "-D", "http.port=0"});
+    forge::testing::AppRunner<ControlledApp> r(
+        {"-D", "http.enabled=true", "-D", "http.host=127.0.0.1", "-D", "http.port=0"});
     forge::http::Client http("http://127.0.0.1:" + std::to_string(r->http()->port()));
     // Values are JSON text in the messages: "433.0" is the number 433.
     const auto value = [](const json& reply) { return json::parse(reply["value"].get<std::string>()); };

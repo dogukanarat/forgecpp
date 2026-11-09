@@ -110,14 +110,11 @@ struct HubFixture {
     }
     void set_boot(const std::string& id) { std::ofstream(boot_file) << id << "\n"; }
     void start_hub(std::vector<std::string> extra = {}) {
-        std::vector<std::string> args{"-D", "registry.listen=tcp://127.0.0.1:*",
-                                      "-D", "registry.state_file=" + state_file,
-                                      "-D", "registry.boot_id_file=" + boot_file,
-                                      "-D", "registry.tick_ms=20",
-                                      "-D", "registry.probe_interval_ms=50",
-                                      "-D", "registry.probe_timeout_ms=300",
-                                      "-D", "registry.unresponsive_after_s=0",
-                                      "-D", "http.enabled=false"};
+        std::vector<std::string> args{
+            "-D", "registry.listen=tcp://127.0.0.1:*",  "-D", "registry.state_file=" + state_file,
+            "-D", "registry.boot_id_file=" + boot_file, "-D", "registry.tick_ms=20",
+            "-D", "registry.probe_interval_ms=50",      "-D", "registry.probe_timeout_ms=300",
+            "-D", "registry.unresponsive_after_s=0",    "-D", "http.enabled=false"};
         args.insert(args.end(), extra.begin(), extra.end());
         hub = std::make_unique<forge::testing::AppRunner<forgehub::Hub>>(
             args, std::make_unique<forgehub::Hub>(std::make_unique<FakeSystemd>(sd)));
@@ -146,9 +143,23 @@ struct HubFixture {
     }
     /// The real thing: a forgecpp application registering by itself.
     int application(const std::string& name, std::vector<std::string> extra = {}) {
-        std::vector<std::string> args{HUB_TEST_APP, "--name", name, "-c", app_config, "-D", "log.console=false",
-                                      "-D", "http.enabled=true", "-D", "http.host=127.0.0.1", "-D", "http.port=0",
-                                      "-D", "hub.endpoint=" + h().registry_endpoint(), "-D", "hub.retry_s=1"};
+        std::vector<std::string> args{HUB_TEST_APP,
+                                      "--name",
+                                      name,
+                                      "-c",
+                                      app_config,
+                                      "-D",
+                                      "log.console=false",
+                                      "-D",
+                                      "http.enabled=true",
+                                      "-D",
+                                      "http.host=127.0.0.1",
+                                      "-D",
+                                      "http.port=0",
+                                      "-D",
+                                      "hub.endpoint=" + h().registry_endpoint(),
+                                      "-D",
+                                      "hub.retry_s=1"};
         args.insert(args.end(), extra.begin(), extra.end());
         return spawn(args);
     }
@@ -173,10 +184,12 @@ struct HubFixture {
 
     std::optional<forgehub::Entry> entry(const std::string& name) { return h().entry(name); }
     bool wait_state(const std::string& name, forge_hub_app_state s, std::chrono::milliseconds t = 5s) {
-        return forge::testing::wait_until([&] {
-            const auto e = entry(name);
-            return e && e->state == s;
-        }, t);
+        return forge::testing::wait_until(
+            [&] {
+                const auto e = entry(name);
+                return e && e->state == s;
+            },
+            t);
     }
     forge_hub_app_status status(const std::string& name) {
         const auto l = h().list();
@@ -338,7 +351,8 @@ TEST_CASE("hub: systemd units: state, restarts, policy and why it failed come fr
     // systemd started it again: waiting for it, then it registers.
     const int q = f.sleeper();
     f.set_unit("alpha.service", unit("active", "running", q, 1, "signal"));
-    REQUIRE(forge::testing::wait_until([&] { return f.entry("alpha")->message.find("waiting for it to register") != std::string::npos; }));
+    REQUIRE(forge::testing::wait_until(
+        [&] { return f.entry("alpha")->message.find("waiting for it to register") != std::string::npos; }));
     {
         std::lock_guard lock(f.sd->m);
         f.sd->unit_by_pid[q] = "alpha.service";
@@ -403,8 +417,8 @@ TEST_CASE("hub: the registry survives hub restarts; processes of an earlier boot
 }
 
 TEST_CASE("hub: static entries are listed and checked") {
-    HubFixture f({"-D", "static.docs.title=Docs", "-D", "static.docs.url=http://{host}:9000/",
-                  "-D", "static.dead.health_url=http://127.0.0.1:1/health"});
+    HubFixture f({"-D", "static.docs.title=Docs", "-D", "static.docs.url=http://{host}:9000/", "-D",
+                  "static.dead.health_url=http://127.0.0.1:1/health"});
     REQUIRE(f.entry("docs"));
     CHECK(f.entry("docs")->static_entry);
     CHECK(f.entry("docs")->state == forge_hub_app_state_STATE_UNKNOWN);

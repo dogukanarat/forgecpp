@@ -152,10 +152,9 @@ Schema::Result Schema::validate(const Config& cfg) const {
         if (v->is_number() && (k.min || k.max)) {
             const double d = v->get<double>();
             if ((k.min && d < *k.min) || (k.max && d > *k.max) || std::isnan(d)) {
-                r.errors.push_back(std::format("{}: {} is outside {} .. {}{}", path, v->dump(),
-                                               k.min ? std::format("{}", *k.min) : "-inf",
-                                               k.max ? std::format("{}", *k.max) : "+inf",
-                                               k.unit_text.empty() ? "" : " " + k.unit_text));
+                r.errors.push_back(std::format(
+                    "{}: {} is outside {} .. {}{}", path, v->dump(), k.min ? std::format("{}", *k.min) : "-inf",
+                    k.max ? std::format("{}", *k.max) : "+inf", k.unit_text.empty() ? "" : " " + k.unit_text));
             }
         }
         if (v->is_string() && !k.choice_values.empty() &&

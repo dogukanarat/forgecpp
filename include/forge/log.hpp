@@ -219,9 +219,9 @@ using Logger = log::Logger;
 }  // namespace forge
 
 // The default logger, with the caller's file and line (shown with {file}:{line} in the pattern).
-#define FORGE_TRACE(...)    ::forge::log::trace(__VA_ARGS__)
-#define FORGE_DEBUG(...)    ::forge::log::debug(__VA_ARGS__)
-#define FORGE_INFO(...)     ::forge::log::info(__VA_ARGS__)
-#define FORGE_WARN(...)     ::forge::log::warn(__VA_ARGS__)
-#define FORGE_ERROR(...)    ::forge::log::error(__VA_ARGS__)
+#define FORGE_TRACE(...) ::forge::log::trace(__VA_ARGS__)
+#define FORGE_DEBUG(...) ::forge::log::debug(__VA_ARGS__)
+#define FORGE_INFO(...) ::forge::log::info(__VA_ARGS__)
+#define FORGE_WARN(...) ::forge::log::warn(__VA_ARGS__)
+#define FORGE_ERROR(...) ::forge::log::error(__VA_ARGS__)
 #define FORGE_CRITICAL(...) ::forge::log::critical(__VA_ARGS__)

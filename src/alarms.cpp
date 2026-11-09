@@ -212,7 +212,8 @@ bool Alarms::active(const std::string& id) const {
 
 std::size_t Alarms::active_count() const {
     std::lock_guard lock(mutex_);
-    return static_cast<std::size_t>(std::count_if(alarms_.begin(), alarms_.end(), [](const Alarm& a) { return a.active; }));
+    return static_cast<std::size_t>(
+        std::count_if(alarms_.begin(), alarms_.end(), [](const Alarm& a) { return a.active; }));
 }
 
 std::size_t Alarms::pending_count() const {

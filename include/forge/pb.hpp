@@ -27,7 +27,16 @@ namespace forge::pb {
 
 /// What a field holds, where nanopb's own field type is not enough
 /// (float and fixed32 look the same to nanopb, an enum looks like an int).
-enum class FieldKind : std::uint8_t { boolean, signed_int, unsigned_int, floating, string, bytes, enumeration, message };
+enum class FieldKind : std::uint8_t {
+    boolean,
+    signed_int,
+    unsigned_int,
+    floating,
+    string,
+    bytes,
+    enumeration,
+    message
+};
 
 struct EnumValue {
     std::int32_t number;

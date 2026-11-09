@@ -162,7 +162,6 @@ TEST_CASE("tmtc: refusals carry the status") {
     bad[7] = static_cast<std::uint8_t>(bad.size() - c2::header_size);
     f.dispatch(bad);
     CHECK(f.refusal().errno_code() == EBADMSG);
-
 }
 
 TEST_CASE("tmtc: an answer in parts") {

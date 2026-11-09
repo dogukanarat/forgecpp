@@ -290,11 +290,11 @@ void register_builtin_commands(Application& app) {
         return Status();
     });
 
-    r.add<forge_release_request, forge_release_reply>(
-        forge_msg_id_release, "release", [&control](const auto& req, auto&) {
-            control.release(req.id, current_caller());
-            return Status();
-        });
+    r.add<forge_release_request, forge_release_reply>(forge_msg_id_release, "release",
+                                                      [&control](const auto& req, auto&) {
+                                                          control.release(req.id, current_caller());
+                                                          return Status();
+                                                      });
 
     r.add_parts<forge_health_request, forge_health_reply>(
         forge_msg_id_health, "health", [&app](const auto&, auto& rsp, std::uint32_t& more) {

@@ -69,7 +69,8 @@ c2::Kind Dispatcher::handle(std::span<const std::uint8_t> message, const Send& s
     thread_local std::array<std::uint8_t, c2::header_size + c2::payload_max> buf;
     const auto answer = [&](std::uint8_t flags, std::span<const std::uint8_t> payload) {
         std::size_t n = 0;
-        const auto hdr = c2::make_header(flags, m.header.cmd_id, m.header.seq, static_cast<std::uint16_t>(payload.size()));
+        const auto hdr =
+            c2::make_header(flags, m.header.cmd_id, m.header.seq, static_cast<std::uint16_t>(payload.size()));
         if (c2::encode_message(hdr, payload, buf, n).ok()) send(std::span(buf).first(n));
     };
     const auto refuse = [&](const Status& s) { answer(c2::flag::nack, c2::nack_payload(s)); };
@@ -93,7 +94,9 @@ c2::Kind Dispatcher::handle(std::span<const std::uint8_t> message, const Send& s
             refuse(s);
             break;
         }
-        const std::uint8_t flags = more != 0 ? (c2::flag::rsp | c2::flag::more) : len == 0 ? c2::flag::ack : c2::flag::rsp;
+        const std::uint8_t flags = more != 0  ? (c2::flag::rsp | c2::flag::more)
+                                   : len == 0 ? c2::flag::ack
+                                              : c2::flag::rsp;
         answer(flags, std::span(buf).subspan(c2::header_size, len));
     } while (more != 0);
     return kind;

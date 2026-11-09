@@ -8,10 +8,10 @@
 #include "forge/version.hpp"
 #include "forge/web.hpp"
 
+#include <unistd.h>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
-#include <unistd.h>
 
 namespace forge::detail {
 
@@ -134,8 +134,8 @@ void RemoteConsole::register_builtins(Console& c) {
             std::tm tm{};
             ::localtime_r(&t, &tm);
             c.print("  {:<8} {:<9} {:<20} {:02}:{:02}:{:02} {}{}", to_string(a.severity),
-                    a.pending() ? "ACTIVE" : (a.active ? "ACKED" : "CLEARED"), a.id, tm.tm_hour, tm.tm_min,
-                    tm.tm_sec, a.message, a.count > 1 ? std::format(" (x{})", a.count) : "");
+                    a.pending() ? "ACTIVE" : (a.active ? "ACKED" : "CLEARED"), a.id, tm.tm_hour, tm.tm_min, tm.tm_sec,
+                    a.message, a.count > 1 ? std::format(" (x{})", a.count) : "");
         }
     });
     c.add(
@@ -159,17 +159,18 @@ void RemoteConsole::register_controls(Console& c) {
         if (!so_far.empty()) return {};
         return dashboard->ids();
     };
-    c.add("controls", "controls  list the web dashboard controls and their values", [dashboard, &c](const Console::Args&) {
-        const auto schema = dashboard->schema();
-        for (const auto& g : schema["groups"]) {
-            c.print("[{}]", g["title"].get<std::string>());
-            for (const auto& ctl : g["controls"]) {
-                const auto value = ctl.contains("value") ? ctl["value"].dump() : std::string("(button)");
-                c.print("  {:<20} {:<7} {}{}", ctl["id"].get<std::string>(), ctl["kind"].get<std::string>(), value,
-                        ctl.contains("unit") ? " " + ctl["unit"].get<std::string>() : "");
-            }
-        }
-    });
+    c.add("controls", "controls  list the web dashboard controls and their values",
+          [dashboard, &c](const Console::Args&) {
+              const auto schema = dashboard->schema();
+              for (const auto& g : schema["groups"]) {
+                  c.print("[{}]", g["title"].get<std::string>());
+                  for (const auto& ctl : g["controls"]) {
+                      const auto value = ctl.contains("value") ? ctl["value"].dump() : std::string("(button)");
+                      c.print("  {:<20} {:<7} {}{}", ctl["id"].get<std::string>(), ctl["kind"].get<std::string>(),
+                              value, ctl.contains("unit") ? " " + ctl["unit"].get<std::string>() : "");
+                  }
+              }
+          });
     c.add(
         "set", "set <id> <value>  change a dashboard control (value as JSON: 42, true, \"text\")",
         [&control, &c](const Console::Args& args) {

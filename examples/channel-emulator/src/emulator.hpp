@@ -20,10 +20,10 @@
 
 #include <atomic>
 #include <chrono>
-#include <vector>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace emulator {
 

@@ -133,7 +133,8 @@ TEST_CASE("config schema: sources do not repeat the default of a declared key") 
             if (!e.is_regular_file() || (ext != ".cpp" && ext != ".hpp" && !scaffolder)) continue;
             std::ifstream in(e.path());
             const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            for (std::sregex_iterator it(text.begin(), text.end(), declared), end; it != end; ++it) keys.insert((*it)[1]);
+            for (std::sregex_iterator it(text.begin(), text.end(), declared), end; it != end; ++it)
+                keys.insert((*it)[1]);
             for (std::sregex_iterator it(text.begin(), text.end(), read), end; it != end; ++it) {
                 reads.emplace_back((*it)[1], fs::relative(e.path(), root).string());
             }

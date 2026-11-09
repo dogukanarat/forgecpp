@@ -52,8 +52,9 @@ Health::Report Health::snapshot() const {
     r.state = overall();
     std::lock_guard lock(mutex_);
     for (const auto& [name, e] : components_) {
-        r.components.push_back({name, e.state, e.message, e.critical,
-                                std::chrono::duration_cast<std::chrono::milliseconds>(e.since.time_since_epoch()).count()});
+        r.components.push_back(
+            {name, e.state, e.message, e.critical,
+             std::chrono::duration_cast<std::chrono::milliseconds>(e.since.time_since_epoch()).count()});
     }
     return r;
 }

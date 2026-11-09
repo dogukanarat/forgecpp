@@ -18,7 +18,6 @@ bool equal_consttime(std::string_view a, std::string_view b) {
     return diff == 0;
 }
 
-
 }  // namespace
 
 const char* to_string(Role role) {

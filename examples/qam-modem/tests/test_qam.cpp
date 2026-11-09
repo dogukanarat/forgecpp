@@ -65,8 +65,9 @@ std::vector<std::int16_t> through(const std::vector<std::int16_t>& tx, const Cha
                 const auto j = static_cast<std::ptrdiff_t>(i) - k;
                 if (j < 0 || j >= static_cast<std::ptrdiff_t>(n)) continue;
                 const double sinc = std::abs(t) < 1e-12 ? 1.0 : std::sin(kPi * t) / (kPi * t);
-                e += sinc * (0.42 + 0.5 * std::cos(kPi * (k - ch.delay) / (K + 1)) +
-                             0.08 * std::cos(2 * kPi * (k - ch.delay) / (K + 1))) *
+                e += sinc *
+                     (0.42 + 0.5 * std::cos(kPi * (k - ch.delay) / (K + 1)) +
+                      0.08 * std::cos(2 * kPi * (k - ch.delay) / (K + 1))) *
                      std::complex<double>(tx[2 * j], tx[2 * j + 1]);
             }
             acc += std::pow(10.0, ch.echo_db / 20) * std::polar(1.0, ch.echo_phase) * e;
@@ -344,7 +345,7 @@ TEST_CASE("qam: CPU cost") {
     auto t2 = std::chrono::steady_clock::now();
     const double tx_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     const double rx_ms = std::chrono::duration<double, std::milli>(t2 - t1).count();
-    MESSAGE("1 s of signal (" << seq << " packets): modulate " << tx_ms << " ms, demodulate " << rx_ms << " ms, decoded "
-                              << got);
+    MESSAGE("1 s of signal (" << seq << " packets): modulate " << tx_ms << " ms, demodulate " << rx_ms
+                              << " ms, decoded " << got);
     CHECK(got + 2 >= seq);  // the last one is cut off, the first starts at sample 0
 }

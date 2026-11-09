@@ -8,14 +8,13 @@
 #include "forge/version.hpp"
 #include "forge/web.hpp"
 
-
+#include <unistd.h>
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <ctime>
 #include <deque>
 #include <filesystem>
-#include <unistd.h>
 
 namespace forge::detail {
 
@@ -127,7 +126,8 @@ void HttpFrontend::create_web(const Config& cfg) {
         std::vector<http::EventStream::Message> greeting;
         if (!app_.stopping()) {
             try {
-                greeting.push_back({"state", app_.invoke_for(app_.request_timeout(), [dashboard] { return dashboard->state(); })});
+                greeting.push_back(
+                    {"state", app_.invoke_for(app_.request_timeout(), [dashboard] { return dashboard->state(); })});
             } catch (const std::exception& e) {
                 // main loop busy: the next state event brings the values
                 log::debug("web: greeting without the state: {}", e.what());
@@ -178,26 +178,29 @@ void HttpFrontend::create_web(const Config& cfg) {
     });
     http_->get_json(api + "/controls/:id", [this, dashboard](const http::Request& req) {
         const auto id = req.path_params.at("id");
-        return json{{"id", id}, {"value", app_.invoke_for(app_.request_timeout(), [dashboard, &id] { return dashboard->get(id); })}};
+        return json{
+            {"id", id},
+            {"value", app_.invoke_for(app_.request_timeout(), [dashboard, &id] { return dashboard->get(id); })}};
     });
     auto web_caller = [&control](const http::Request& req) {
         return control.identify("web", req.remote_addr, {}, req.get_header_value("Authorization"));
     };
-    http_->post_json(api + "/controls/:id", [this, dashboard, &control, web_caller](const http::Request& req, const json& body) {
-        const auto id = req.path_params.at("id");
-        const auto caller = web_caller(req);
-        const bool button =
-            app_.invoke_for(app_.request_timeout(), [&] { return dashboard->control(id).kind == web::Kind::button; });
-        if (button) {
-            control.press(id, caller);
-        } else {
-            if (!(body.is_object() && body.contains("value"))) {
-                throw Error(400, "request body must be {\"value\": ...}");
-            }
-            control.set(id, body["value"], caller);
-        }
-        return json{{"id", id}, {"value", control.get(id, caller)}};
-    });
+    http_->post_json(api + "/controls/:id",
+                     [this, dashboard, &control, web_caller](const http::Request& req, const json& body) {
+                         const auto id = req.path_params.at("id");
+                         const auto caller = web_caller(req);
+                         const bool button = app_.invoke_for(
+                             app_.request_timeout(), [&] { return dashboard->control(id).kind == web::Kind::button; });
+                         if (button) {
+                             control.press(id, caller);
+                         } else {
+                             if (!(body.is_object() && body.contains("value"))) {
+                                 throw Error(400, "request body must be {\"value\": ...}");
+                             }
+                             control.set(id, body["value"], caller);
+                         }
+                         return json{{"id", id}, {"value", control.get(id, caller)}};
+                     });
     http_->post_json(api + "/commands/:id", [&control, web_caller](const http::Request& req, const json& body) {
         const auto id = req.path_params.at("id");
         json args = body.is_object() && body.contains("args") ? body["args"] : body;
@@ -296,16 +299,16 @@ void HttpFrontend::create_web(const Config& cfg) {
     http_->post_json(api + "/tmtc/:name", [this, &control](const http::Request& req, const json& body) {
         const auto& name = req.path_params.at("name");
         const bool number = !name.empty() && name.find_first_not_of("0123456789") == std::string::npos;
-        const auto* cmd = number && name.size() <= 5 ? app_.commands().find(static_cast<std::uint16_t>(std::stoul(name)))
-                                                     : app_.commands().find(std::string_view(name));
+        const auto* cmd = number && name.size() <= 5
+                              ? app_.commands().find(static_cast<std::uint16_t>(std::stoul(name)))
+                              : app_.commands().find(std::string_view(name));
         if (!cmd) throw Error(404, "no command '" + name + "'");
         if (cmd->is_push()) throw Error(501, "'" + name + "' is a report, not a command");
         CallerScope caller(control.identify("web", req.remote_addr, {}, req.get_header_value("Authorization")));
         return cmd->run_json(body);
     });
-    http_->get_json(api + "/logs", [this](const http::Request&) {
-        return weblog_ ? weblog_->history() : json::array();
-    });
+    http_->get_json(api + "/logs",
+                    [this](const http::Request&) { return weblog_ ? weblog_->history() : json::array(); });
     http_->get_json(api + "/alarms", [&alarms](const http::Request&) { return alarms.to_json(); });
     http_->post_json(api + "/alarms/ack", [&alarms](const http::Request& req, const json&) {
         return json{{"acknowledged", alarms.acknowledge_all("web " + req.remote_addr)}};
@@ -322,7 +325,9 @@ void HttpFrontend::create_web(const Config& cfg) {
     http_->events(api + "/events", events_);
 
     // "/" shows the application's own index.html when there is one, else the dashboard.
-    http_->get("/", [](const http::Request&, http::Response& res) { res.set_redirect("forge/"); });  // relative: also behind a proxy
+    http_->get("/", [](const http::Request&, http::Response& res) {
+        res.set_redirect("forge/");
+    });  // relative: also behind a proxy
 }
 
 void HttpFrontend::start(const Config& cfg) {
@@ -373,7 +378,8 @@ std::string LayoutStore::default_file(const std::string& name) {
         std::string dir(sd);
         return dir.substr(0, dir.find(':')) + "/web-layout.json";
     }
-    if (const char* xdg = std::getenv("XDG_STATE_HOME"); xdg && *xdg) return std::string(xdg) + "/" + name + "/web-layout.json";
+    if (const char* xdg = std::getenv("XDG_STATE_HOME"); xdg && *xdg)
+        return std::string(xdg) + "/" + name + "/web-layout.json";
     if (const char* home = std::getenv("HOME"); home && *home) {
         return std::string(home) + "/.local/state/" + name + "/web-layout.json";
     }
@@ -405,7 +411,7 @@ void LayoutStore::load(std::string file, const std::string& app_name, const Logg
 // ("@" cannot start a page name).
 namespace {
 constexpr const char* kUsers = "@users";
-}
+}  // namespace
 
 json LayoutStore::get(const std::string& page, const std::string& user) const {
     std::lock_guard lock(mutex_);

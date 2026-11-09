@@ -74,7 +74,8 @@ void Histogram::snapshot(std::vector<std::uint64_t>& cumulative, std::uint64_t& 
 }
 
 std::vector<double> latency_buckets() {
-    return {50e-6, 100e-6, 250e-6, 500e-6, 1e-3, 2.5e-3, 5e-3, 10e-3, 25e-3, 50e-3, 100e-3, 250e-3, 500e-3, 1, 2.5, 5, 10};
+    return {50e-6, 100e-6, 250e-6, 500e-6, 1e-3, 2.5e-3, 5e-3, 10e-3, 25e-3,
+            50e-3, 100e-3, 250e-3, 500e-3, 1,    2.5,    5,    10};
 }
 
 std::vector<double> exponential_buckets(double start, double factor, int count) {
@@ -84,8 +85,7 @@ std::vector<double> exponential_buckets(double start, double factor, int count) 
     return b;
 }
 
-Registry::Entry& Registry::entry(const std::string& name, Type type, const std::string& help,
-                                 const std::string& unit) {
+Registry::Entry& Registry::entry(const std::string& name, Type type, const std::string& help, const std::string& unit) {
     auto [it, inserted] = entries_.try_emplace(name);
     Entry& e = it->second;
     if (inserted) {
@@ -144,7 +144,8 @@ std::vector<std::string> Registry::names() const {
 Snapshot Registry::snapshot(const std::string& prefix) const {
     Snapshot s;
     s.time_unix_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count();
     std::lock_guard lock(mutex_);
     for (const auto& [name, e] : entries_) {
         if (!prefix.empty() && name.compare(0, prefix.size(), prefix) != 0) continue;
@@ -230,8 +231,8 @@ std::string Registry::prometheus() const {
                                        m.buckets[i]);
                 }
                 out += std::format("{}_bucket{} {}\n", n, with("le=\"+Inf\""), m.count);
-                out += std::format("{}_sum{} {}\n{}_count{} {}\n", n, with(""), prom_number(m.sum), n, with(""),
-                                   m.count);
+                out +=
+                    std::format("{}_sum{} {}\n{}_count{} {}\n", n, with(""), prom_number(m.sum), n, with(""), m.count);
                 break;
         }
     }

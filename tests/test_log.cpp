@@ -1,5 +1,5 @@
-#include <forge/log.hpp>
 #include <forge/json.hpp>
+#include <forge/log.hpp>
 #include <forge/log_rt.hpp>
 #include <forge/testing.hpp>
 #include <forge/trace.hpp>

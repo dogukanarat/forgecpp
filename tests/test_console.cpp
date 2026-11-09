@@ -74,7 +74,9 @@ struct Pipes {
             if (fd >= 0) ::close(fd);
         }
     }
-    void type(std::string_view keys) { REQUIRE(::write(in[1], keys.data(), keys.size()) == static_cast<ssize_t>(keys.size())); }
+    void type(std::string_view keys) {
+        REQUIRE(::write(in[1], keys.data(), keys.size()) == static_cast<ssize_t>(keys.size()));
+    }
     void close_input() {
         ::close(in[1]);
         in[1] = -1;

@@ -4,16 +4,21 @@
 #include "forge/log_rt.hpp"
 #include "forge/trace.hpp"
 
-#include <nlohmann/json.hpp>
 #include <quill/Backend.h>
 #include <quill/Frontend.h>
 #include <quill/sinks/Sink.h>
+#include <nlohmann/json.hpp>
 
+#include <pthread.h>
+#include <sys/stat.h>
+#include <syslog.h>
+#include <unistd.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -21,12 +26,7 @@
 #include <filesystem>
 #include <map>
 #include <mutex>
-#include <pthread.h>
-#include <csignal>
 #include <stdexcept>
-#include <sys/stat.h>
-#include <syslog.h>
-#include <unistd.h>
 
 namespace forge::log {
 
@@ -91,10 +91,9 @@ struct Segment {
 };
 
 std::vector<Segment> parse_pattern(const std::string& pattern) {
-    static const std::map<std::string, Field> names{{"time", Field::time},     {"level", Field::level},
-                                                    {"logger", Field::logger}, {"message", Field::message},
-                                                    {"thread", Field::thread}, {"file", Field::file},
-                                                    {"line", Field::line}};
+    static const std::map<std::string, Field> names{
+        {"time", Field::time},     {"level", Field::level}, {"logger", Field::logger}, {"message", Field::message},
+        {"thread", Field::thread}, {"file", Field::file},   {"line", Field::line}};
     std::vector<Segment> out;
     std::string text;
     for (std::size_t i = 0; i < pattern.size(); ++i) {
@@ -165,12 +164,13 @@ std::string render_json(const Entry& e, std::string_view trace_hex) {
     const auto secs = static_cast<std::time_t>(e.time_ns / 1000000000ull);
     std::tm tm{};
     ::gmtime_r(&secs, &tm);
-    nlohmann::json j{{"time", std::format("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z", tm.tm_year + 1900, tm.tm_mon + 1,
-                                          tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, (e.time_ns / 1000ull) % 1000000)},
-                     {"level", to_string(e.level)},
-                     {"logger", e.logger},
-                     {"message", e.message},
-                     {"thread", std::strtoull(std::string(e.thread).c_str(), nullptr, 10)}};
+    nlohmann::json j{
+        {"time", std::format("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:06}Z", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                             tm.tm_hour, tm.tm_min, tm.tm_sec, (e.time_ns / 1000ull) % 1000000)},
+        {"level", to_string(e.level)},
+        {"logger", e.logger},
+        {"message", e.message},
+        {"thread", std::strtoull(std::string(e.thread).c_str(), nullptr, 10)}};
     if (!trace_hex.empty()) j["trace"] = trace_hex;
     return j.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) + "\n";
 }
@@ -267,8 +267,9 @@ public:
                    std::string_view message, std::string_view) override {
         const std::string_view tags = metadata && metadata->tags() ? metadata->tags() : "";
         const std::string_view line_no = metadata && metadata->line() ? metadata->line() : "";
-        const Entry e{timestamp, from_quill(level), logger_name, message, thread_id,
-                      metadata ? metadata->file_name() : std::string_view(), line_no};
+        const Entry e{timestamp, from_quill(level), logger_name,
+                      message,   thread_id,         metadata ? metadata->file_name() : std::string_view(),
+                      line_no};
 
         // tags: "<trace id hex>:<span id hex>" of the caller (see Logger::write)
         trace::Context ctx;
@@ -509,8 +510,8 @@ void Logger::write(Level level, std::string_view message, const std::source_loca
     std::string tags;
     if (const auto ctx = ::forge::trace::current(); ctx.valid()) tags = ctx.trace_hex() + ":" + ctx.span_hex();
     QUILL_LOG_RUNTIME_METADATA_DEEP(impl_->quill, to_quill(level), where.file_name(),
-                                    static_cast<std::uint32_t>(where.line()), where.function_name(), tags.c_str(),
-                                    "{}", message);
+                                    static_cast<std::uint32_t>(where.line()), where.function_name(), tags.c_str(), "{}",
+                                    message);
     const int flush_on = impl_->flush_on.load();
     if (static_cast<int>(level) >= (flush_on >= 0 ? flush_on : state().flush_level.load())) quill::Backend::notify();
 }

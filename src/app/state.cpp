@@ -7,9 +7,9 @@
 #include "forge/version.hpp"
 #include "forge/web.hpp"
 
+#include <unistd.h>
 #include <cstring>
 #include <filesystem>
-#include <unistd.h>
 
 namespace forge::detail {
 
@@ -79,8 +79,8 @@ bool Watchdog::tick(Health& health, double grace_s, const Logger& logger) {
     if (grace_s > 0) {
         if (auto failed = health.critical_failed_for(); failed && *failed > grace_s) {
             if (!paused_) {
-                logger->critical("a critical component failed {:.0f} s ago: stopping watchdog pings (systemd restarts us)",
-                                 *failed);
+                logger->critical(
+                    "a critical component failed {:.0f} s ago: stopping watchdog pings (systemd restarts us)", *failed);
             }
             paused_ = true;
             return false;

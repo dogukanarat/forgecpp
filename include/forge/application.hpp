@@ -50,8 +50,8 @@
 #include "forge/json.hpp"
 #include "forge/log.hpp"
 #include "forge/metrics.hpp"
-#include "forge/scheduler.hpp"
 #include "forge/pb.hpp"
+#include "forge/scheduler.hpp"
 #include "forge/thread_pool.hpp"
 #include "forge/tmtc.hpp"
 
@@ -77,7 +77,7 @@
 
 namespace CLI {
 class App;
-}
+}  // namespace CLI
 
 namespace forge {
 
@@ -112,7 +112,7 @@ void register_builtin_commands(Application& app);
 }  // namespace detail
 namespace web {
 class Dashboard;
-}
+}  // namespace web
 namespace zmq {
 class Publisher;
 class Stream;
@@ -124,7 +124,7 @@ class ControlService;
 class Telnet;
 namespace hub {
 class Client;
-}
+}  // namespace hub
 
 /// Daemon naming standard: lowercase letters and digits, words separated by '-'
 /// ("radio-controller", "forge-hub"). Other names work, with a warning at start-up.
@@ -200,9 +200,7 @@ public:
     }
 
     /// [forge].request_timeout_ms: how long a request waits for the main loop.
-    std::chrono::milliseconds request_timeout() const {
-        return std::chrono::milliseconds(request_timeout_ms_.load());
-    }
+    std::chrono::milliseconds request_timeout() const { return std::chrono::milliseconds(request_timeout_ms_.load()); }
 
     /// True on the thread running the main loop.
     bool on_main_loop() const { return std::this_thread::get_id() == main_thread_.load(); }
@@ -338,10 +336,9 @@ public:
     template <pb::Message Req, pb::Message Rsp>
     void command(std::uint16_t id, std::string name, tmtc::Handler<Req, Rsp> handler) {
         if (commands_closed_) throw std::logic_error("command '" + name + "': add commands before the start");
-        commands_.add<Req, Rsp>(id, std::move(name),
-                                [this, h = std::move(handler)](const Req& req, Rsp& rsp) {
-                                    return invoke_for(request_timeout(), [&] { return h(req, rsp); });
-                                });
+        commands_.add<Req, Rsp>(id, std::move(name), [this, h = std::move(handler)](const Req& req, Rsp& rsp) {
+            return invoke_for(request_timeout(), [&] { return h(req, rsp); });
+        });
     }
     /// Endpoints this application serves (control, events, data, http, telnet).
     std::map<std::string, std::string> endpoints() const;
@@ -392,8 +389,8 @@ protected:
 
 private:
     template <class F>
-    auto invoke_until(std::optional<std::chrono::steady_clock::time_point> deadline, F&& fn)
-        -> std::invoke_result_t<std::decay_t<F>> {
+    auto invoke_until(std::optional<std::chrono::steady_clock::time_point> deadline,
+                      F&& fn) -> std::invoke_result_t<std::decay_t<F>> {
         using R = std::invoke_result_t<std::decay_t<F>>;
         if (on_main_loop()) return fn();
         enum class Phase { pending, running, done, abandoned };
@@ -578,8 +575,8 @@ private:
 }  // namespace forge
 
 /// Define main() for an Application subclass.
-#define FORGE_MAIN(AppClass)                 \
-    int main(int argc, char** argv) {        \
-        AppClass app;                        \
-        return app.run(argc, argv);          \
+#define FORGE_MAIN(AppClass)          \
+    int main(int argc, char** argv) { \
+        AppClass app;                 \
+        return app.run(argc, argv);   \
     }

@@ -104,8 +104,7 @@ public:
 
 private:
     void set_node(std::string_view path, toml::table holder);  // moves holder["v"]
-    [[noreturn]] static void type_error(std::string_view path, std::string_view expected,
-                                        const toml::node& node);
+    [[noreturn]] static void type_error(std::string_view path, std::string_view expected, const toml::node& node);
 
     template <class T>
     static std::optional<T> convert(std::string_view path, const toml::node& node);

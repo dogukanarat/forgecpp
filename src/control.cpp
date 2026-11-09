@@ -44,9 +44,9 @@ Caller ControlService::identify(std::string channel, std::string client, std::st
 
 void ControlService::require(Role needed, const Caller& caller, const std::string& what) const {
     if (static_cast<int>(caller.role) >= static_cast<int>(needed)) return;
-    throw Error(caller.user.empty() && app_.auth().enabled() ? 401 : 403,
-                    std::format("{} needs role {} ({} is {})", what, to_string(needed), caller.describe(),
-                                to_string(caller.role)));
+    throw Error(
+        caller.user.empty() && app_.auth().enabled() ? 401 : 403,
+        std::format("{} needs role {} ({} is {})", what, to_string(needed), caller.describe(), to_string(caller.role)));
 }
 
 json ControlService::leases() const {
@@ -113,7 +113,8 @@ json ControlService::set(const std::string& id, const json& value, const Caller&
     json old;
     try {
         auto* d = app_.dashboard();
-        const auto& c = app_.invoke_for(app_.request_timeout(), [&]() -> const web::detail::ControlDef& { return d->control(id); });
+        const auto& c =
+            app_.invoke_for(app_.request_timeout(), [&]() -> const web::detail::ControlDef& { return d->control(id); });
         if (c.kind == web::Kind::button) {
             press(id, caller);
             return nullptr;
@@ -141,7 +142,8 @@ json ControlService::set(const std::string& id, const json& value, const Caller&
 void ControlService::press(const std::string& id, const Caller& caller) {
     try {
         auto* d = app_.dashboard();
-        const auto& c = app_.invoke_for(app_.request_timeout(), [&]() -> const web::detail::ControlDef& { return d->control(id); });
+        const auto& c =
+            app_.invoke_for(app_.request_timeout(), [&]() -> const web::detail::ControlDef& { return d->control(id); });
         require(c.role, caller, "pressing '" + id + "'");
         check_lease(id, caller);
         app_.invoke_for(app_.request_timeout(), [&] { d->press(id); });

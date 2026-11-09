@@ -25,7 +25,8 @@ double round_to(double v, double step) { return std::round(v / step) * step; }
 /// "host:port" (host may be empty or "*" = any).
 sockaddr_in parse_address(const std::string& s, const char* what) {
     const auto colon = s.rfind(':');
-    if (colon == std::string::npos) throw forge::ConfigError(std::string(what) + ": expected host:port, got '" + s + "'");
+    if (colon == std::string::npos)
+        throw forge::ConfigError(std::string(what) + ": expected host:port, got '" + s + "'");
     std::string host = s.substr(0, colon);
     const int port = std::stoi(s.substr(colon + 1));
     if (port < 0 || port > 65535) throw forge::ConfigError(std::string(what) + ": bad port in '" + s + "'");
@@ -55,7 +56,8 @@ void make_test_packet(std::vector<std::uint8_t>& p, std::uint32_t n, std::size_t
 
 }  // namespace
 
-QamModem::QamModem() : Application({"qam-modem", QAM_VERSION, "16QAM packet modem over an AD936x (radio-controller)"}) {}
+QamModem::QamModem()
+    : Application({"qam-modem", QAM_VERSION, "16QAM packet modem over an AD936x (radio-controller)"}) {}
 
 // ---------------------------------------------------------------------------
 // Configuration and controls
@@ -65,7 +67,8 @@ void QamModem::setup_config(forge::config::Schema& s) {
     s.string("modem.radio_control", "tcp://127.0.0.1:5557", "radio-controller [forge].control");
     s.string("modem.radio_data", "tcp://127.0.0.1:5555", "radio-controller [forge].data (stream \"iq\")");
     s.string("modem.radio_tx", "tcp://127.0.0.1:5556", "radio-controller [zmq].tx");
-    s.integer("modem.rx_channel", 1, "RX channel the modem demodulates (one of radio-controller's rx_channels)").range(1, 2);
+    s.integer("modem.rx_channel", 1, "RX channel the modem demodulates (one of radio-controller's rx_channels)")
+        .range(1, 2);
     s.boolean("modem.configure_radio", true, "Set radio-controller up at start (LO, rate, bandwidth, gains, TX on)");
     s.number("modem.lo_hz", 2.1e9, "RX and TX LO").range(70e6, 6e9).unit("Hz");
     s.number("modem.sample_rate_hz", 3e6, "Sample rate (symbol rate = rate / sps)").range(2.084e6, 61.44e6).unit("Hz");
@@ -82,7 +85,8 @@ void QamModem::setup_config(forge::config::Schema& s) {
     s.number("modem.rolloff", 0.35, "RRC roll-off").range(0.1, 1.0);
     s.number("modem.tx_level_dbfs", -12, "TX signal RMS").range(-40, -6).unit("dBFS");
     s.number("modem.detect_threshold", 0.6, "Preamble detector threshold (Schmidl & Cox metric)").range(0.2, 0.95);
-    s.boolean("modem.equalizer", true, "Decision feedback equalizer for echoes (off: less CPU, gain and phase tracking only)");
+    s.boolean("modem.equalizer", true,
+              "Decision feedback equalizer for echoes (off: less CPU, gain and phase tracking only)");
     s.integer("modem.eq_ff", 8, "Equalizer feed-forward taps (half-symbol spaced)").range(1, 32);
     s.integer("modem.eq_lead", 3, "... of them ahead of the symbol").range(0, 31);
     s.integer("modem.eq_fb", 3, "Equalizer feedback taps (symbols): echoes up to about eq_fb symbols").range(0, 16);
@@ -103,12 +107,15 @@ void QamModem::setup_web(forge::web::Dashboard& ui) {
     auto& link = ui.group("Link");
     link.value("radio", "Radio", [this] { return radio_status_; });
     link.toggle("tx_enabled", "Transmit", [this] { return tx_enabled_.load(); }, [this](bool on) { tx_enabled_ = on; });
-    link.toggle("test_mode", "Test packets", [this] { return test_mode_.load(); }, [this](bool on) {
-        test_mode_ = on;
-        test_expect_ = -1;
-    });
-    link.number("tx_level_dbfs", "TX level", [this] { return tx_level_dbfs_.load(); },
-                [this](double v) { tx_level_dbfs_ = std::clamp(v, -40.0, -6.0); })
+    link.toggle(
+        "test_mode", "Test packets", [this] { return test_mode_.load(); },
+        [this](bool on) {
+            test_mode_ = on;
+            test_expect_ = -1;
+        });
+    link.number(
+            "tx_level_dbfs", "TX level", [this] { return tx_level_dbfs_.load(); },
+            [this](double v) { tx_level_dbfs_ = std::clamp(v, -40.0, -6.0); })
         .range(-40, -6, 0.5)
         .unit("dBFS");
     link.value("symbol_rate", "Symbol rate", [this] { return params_.symbol_rate() / 1e3; }).unit("ksym/s");
@@ -153,10 +160,13 @@ void QamModem::setup_web(forge::web::Dashboard& ui) {
     test.value("test_kbps", "Rate", [this] { return round_to(test_ok_.kbps, 0.1); }).unit("kbit/s");
     test.value("test_lost", "Lost", [this] { return test_lost_.load(); });
     test.value("test_bad", "Wrong content", [this] { return test_bad_.load(); });
-    test.value("test_per", "Packet error rate", [this] {
-        const double ok = static_cast<double>(test_ok_.packets.load()), lost = static_cast<double>(test_lost_.load());
-        return ok + lost > 0 ? lost / (ok + lost) : 0.0;
-    }).precision(6);
+    test.value("test_per", "Packet error rate",
+               [this] {
+                   const double ok = static_cast<double>(test_ok_.packets.load()),
+                                lost = static_cast<double>(test_lost_.load());
+                   return ok + lost > 0 ? lost / (ok + lost) : 0.0;
+               })
+        .precision(6);
 }
 
 void QamModem::setup_http(forge::http::Server& server) {
@@ -242,9 +252,10 @@ void QamModem::on_start() {
     udp_thread_ = std::thread([this] { udp_loop(); });
     tx_thread_ = std::thread([this] { tx_loop(); });
 
-    logger()->info("modem: {:.0f} ksym/s 16QAM ({:.2f} Mbit/s raw, {:.0f} kHz wide), UDP on port {}, radio {} / {} / {}",
-                   params_.symbol_rate() / 1e3, params_.symbol_rate() * 4 / 1e6, params_.occupied_bandwidth() / 1e3,
-                   udp_port_, radio_control_, radio_data_, radio_tx_);
+    logger()->info(
+        "modem: {:.0f} ksym/s 16QAM ({:.2f} Mbit/s raw, {:.0f} kHz wide), UDP on port {}, radio {} / {} / {}",
+        params_.symbol_rate() / 1e3, params_.symbol_rate() * 4 / 1e6, params_.occupied_bandwidth() / 1e3, udp_port_,
+        radio_control_, radio_data_, radio_tx_);
     if (cfg.value<bool>("modem.configure_radio")) {
         configure_radio();
     } else {
@@ -416,7 +427,7 @@ void QamModem::add_credit(std::size_t samples) {
     {
         std::lock_guard lock(credit_mutex_);
         credit_ = std::min<std::int64_t>(credit_ + static_cast<std::int64_t>(samples),
-                                          static_cast<std::int64_t>(lead_samples_));
+                                         static_cast<std::int64_t>(lead_samples_));
         last_rx_block_ = std::chrono::steady_clock::now();
     }
     credit_cv_.notify_one();
@@ -479,7 +490,8 @@ void QamModem::on_iq(forge::zmq::Message&& m) {
     } catch (const forge::zmq::Error&) {
         return;
     }
-    if (b.channel != rx_channel_ || std::string_view(b.format) != "cs16" || m.blob.size() != std::size_t(b.samples) * 4) {
+    if (b.channel != rx_channel_ || std::string_view(b.format) != "cs16" ||
+        m.blob.size() != std::size_t(b.samples) * 4) {
         return;
     }
     rx_rate_hz_ = b.sample_rate;
@@ -490,9 +502,9 @@ void QamModem::on_iq(forge::zmq::Message&& m) {
     bool gap = last >= 0 && b.buffer != static_cast<std::uint64_t>(last) + 1;  // samples lost
     // Behind real time (a slow CPU, a busy board): skip old blocks rather than let
     // the queue and the latency grow; the demodulator starts again with fresh ones.
-    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                            std::chrono::system_clock::now().time_since_epoch())
-                            .count();
+    const auto now_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count();
     if (m.header.time_unix_ns > 0 && now_ns - m.header.time_unix_ns > max_lag_ns_) {
         ++rx_late_;
         skipping_ = true;
@@ -523,7 +535,8 @@ void QamModem::on_packet(qam::Packet&& p) {
         }
         test_ok_.add(p.payload.size());
         const auto want = test_expect_.load();
-        if (want >= 0 && static_cast<std::int32_t>(n) > want) test_lost_ += static_cast<std::uint32_t>(n) - static_cast<std::uint32_t>(want);
+        if (want >= 0 && static_cast<std::int32_t>(n) > want)
+            test_lost_ += static_cast<std::uint32_t>(n) - static_cast<std::uint32_t>(want);
         test_expect_ = static_cast<std::int32_t>(n + 1);
         return;
     }
@@ -533,7 +546,8 @@ void QamModem::on_packet(qam::Packet&& p) {
         if (!have_peer_) return;
         to = peer_;
     }
-    if (::sendto(udp_fd_, p.payload.data(), p.payload.size(), 0, reinterpret_cast<const sockaddr*>(&to), sizeof to) >= 0) {
+    if (::sendto(udp_fd_, p.payload.data(), p.payload.size(), 0, reinterpret_cast<const sockaddr*>(&to), sizeof to) >=
+        0) {
         udp_out_.add(p.payload.size());
     }
 }

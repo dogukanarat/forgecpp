@@ -16,8 +16,8 @@
 #include <forge/pb.hpp>
 #include <forge/zmq.hpp>
 
-#include <CLI/CLI.hpp>
 #include <httplib.h>
+#include <CLI/CLI.hpp>
 
 #include <atomic>
 #include <csignal>
@@ -265,7 +265,8 @@ int main(int argc, char** argv) {
                         for (pb_size_t k = 0; k < page.commands_count; ++k) {
                             const auto& c = page.commands[k];
                             std::cout << "  " << c.id << "  command(";
-                            for (pb_size_t p = 0; p < c.params_count; ++p) std::cout << (p ? ", " : "") << c.params[p].name;
+                            for (pb_size_t p = 0; p < c.params_count; ++p)
+                                std::cout << (p ? ", " : "") << c.params[p].name;
                             std::cout << ")\n";
                         }
                     });
@@ -299,12 +300,13 @@ int main(int argc, char** argv) {
             if (!result.is_discarded() && !result.is_null()) std::cout << result.dump(2) << "\n";
         } else if (alarms->parsed()) {
             bool any = false;
-            link.each<forge_alarms_request, forge_alarms_reply>(
-                forge_msg_id_alarms, "alarms", {}, [&](const forge_alarms_reply& page) {
-                    if (t.as_json) return print_json(page);
-                    for (pb_size_t k = 0; k < page.alarms_count; ++k) print_alarm("", page.alarms[k]);
-                    any = any || page.alarms_count > 0;
-                });
+            link.each<forge_alarms_request, forge_alarms_reply>(forge_msg_id_alarms, "alarms", {},
+                                                                [&](const forge_alarms_reply& page) {
+                                                                    if (t.as_json) return print_json(page);
+                                                                    for (pb_size_t k = 0; k < page.alarms_count; ++k)
+                                                                        print_alarm("", page.alarms[k]);
+                                                                    any = any || page.alarms_count > 0;
+                                                                });
             if (!any && !t.as_json) std::cout << "no alarms\n";
         } else if (ack->parsed()) {
             forge_ack_request req{};
@@ -314,14 +316,15 @@ int main(int argc, char** argv) {
         } else if (logs->parsed()) {
             forge_logs_request req{};
             req.limit = limit;
-            link.each<forge_logs_request, forge_logs_reply>(forge_msg_id_logs, "logs", req, [&](const forge_logs_reply& page) {
-                if (t.as_json) return print_json(page);
-                for (pb_size_t k = 0; k < page.records_count; ++k) {
-                    const auto& x = page.records[k];
-                    std::cout << clock_time(x.time_unix_ns) << " [" << level_text(x.level) << "] [" << x.logger << "] "
-                              << x.message << "\n";
-                }
-            });
+            link.each<forge_logs_request, forge_logs_reply>(
+                forge_msg_id_logs, "logs", req, [&](const forge_logs_reply& page) {
+                    if (t.as_json) return print_json(page);
+                    for (pb_size_t k = 0; k < page.records_count; ++k) {
+                        const auto& x = page.records[k];
+                        std::cout << clock_time(x.time_unix_ns) << " [" << level_text(x.level) << "] [" << x.logger
+                                  << "] " << x.message << "\n";
+                    }
+                });
         } else if (metrics->parsed()) {
             forge_metrics_request req{};
             set_text(req.prefix, prefix);
@@ -374,7 +377,8 @@ int main(int argc, char** argv) {
             set_text(req.id, id);
             req.seconds = lease_seconds;
             std::cout << id << " leased for "
-                      << link.one<forge_lease_request, forge_lease_reply>(forge_msg_id_lease, "lease", req).seconds << " s\n";
+                      << link.one<forge_lease_request, forge_lease_reply>(forge_msg_id_lease, "lease", req).seconds
+                      << " s\n";
         } else if (release->parsed()) {
             forge_release_request req{};
             set_text(req.id, id);

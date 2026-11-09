@@ -58,11 +58,9 @@ public:
     static Status error(std::uint16_t module, int errno_code, const char* message = nullptr);
     /// An error whose code is already in wire (Zephyr) numbering, or is not an
     /// errno at all (module_id::nrf).
-    static constexpr Status wire_error(std::uint16_t module, std::uint16_t wire_code,
-                                       const char* message = nullptr) {
+    static constexpr Status wire_error(std::uint16_t module, std::uint16_t wire_code, const char* message = nullptr) {
         Status s;
-        s.value_ = static_cast<std::int32_t>(0x80000000U |
-                                             ((static_cast<std::uint32_t>(module) << 16) & 0x7FFF0000U) |
+        s.value_ = static_cast<std::int32_t>(0x80000000U | ((static_cast<std::uint32_t>(module) << 16) & 0x7FFF0000U) |
                                              wire_code);
         s.message_ = message;
         return s;

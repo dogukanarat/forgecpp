@@ -6,8 +6,8 @@
 using namespace std::chrono_literals;
 
 TEST_CASE("pump: controls through the command link, like forgectl") {
-    forge::testing::AppRunner<Pump> r({"-D", "forge.control=tcp://127.0.0.1:*", "-D", "forge.data=tcp://127.0.0.1:*",
-                                       "-D", "http.enabled=false"});
+    forge::testing::AppRunner<Pump> r(
+        {"-D", "forge.control=tcp://127.0.0.1:*", "-D", "forge.data=tcp://127.0.0.1:*", "-D", "http.enabled=false"});
     forge::Remote pump(r->endpoints().at("control"));
     CHECK(pump.set("speed_rpm", 1500) == 1500);
     pump.press("start");

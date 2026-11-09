@@ -59,8 +59,8 @@ TEST_CASE("application: full lifecycle with config, overrides, timers, events an
     const auto cfg_path = dir / "testapp.toml";
     std::ofstream(cfg_path) << "[app]\ngreeting = \"from file\"\n[log]\nconsole = false\n";
 
-    std::vector<std::string> args{"testapp", "-c", cfg_path.string(), "-D", "app.greeting=overridden",
-                                  "--custom", "5", "--http", "127.0.0.1:0", "-D", "threads.workers=2"};
+    std::vector<std::string> args{"testapp", "-c",     cfg_path.string(), "-D", "app.greeting=overridden", "--custom",
+                                  "5",       "--http", "127.0.0.1:0",     "-D", "threads.workers=2"};
     auto argv = make_argv(args);
 
     TestApp app;

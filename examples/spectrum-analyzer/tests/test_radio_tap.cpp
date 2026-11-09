@@ -32,11 +32,11 @@ namespace {
 class FakeRadio {
 public:
     explicit FakeRadio(json tap_channels = json::array({2})) {
-        state_ = {{"tap_channels", tap_channels}, {"rx2_gain_mode", "slow_attack"}, {"rx2_gain_db", 30.0},
-                  {"gain_mode", "slow_attack"}, {"rx_gain_db", 30.0}, {"temperature_c", 44.5}};
-        commands_.add<forge_get_request, forge_get_reply>(forge_msg_id_get, "get", [this](const auto& req, auto& rsp) {
-            return answer(req.id, nullptr, rsp.value);
-        });
+        state_ = {{"tap_channels", tap_channels}, {"rx2_gain_mode", "slow_attack"},
+                  {"rx2_gain_db", 30.0},          {"gain_mode", "slow_attack"},
+                  {"rx_gain_db", 30.0},           {"temperature_c", 44.5}};
+        commands_.add<forge_get_request, forge_get_reply>(
+            forge_msg_id_get, "get", [this](const auto& req, auto& rsp) { return answer(req.id, nullptr, rsp.value); });
         commands_.add<forge_set_request, forge_set_reply>(forge_msg_id_set, "set", [this](const auto& req, auto& rsp) {
             return answer(req.id, req.value, rsp.value);
         });
@@ -118,10 +118,12 @@ double tolerance(const sa::Frame& f) {
 std::shared_ptr<const sa::Frame> wait_frame(sa::Engine& e, const std::function<bool(const sa::Frame&)>& ok,
                                             std::chrono::milliseconds timeout = 10s) {
     std::shared_ptr<const sa::Frame> f;
-    forge::testing::wait_until([&] {
-        f = e.latest();
-        return f && ok(*f);
-    }, timeout);
+    forge::testing::wait_until(
+        [&] {
+            f = e.latest();
+            return f && ok(*f);
+        },
+        timeout);
     return f && ok(*f) ? f : nullptr;
 }
 
@@ -161,7 +163,10 @@ TEST_CASE("sa radio tap: the window follows the band radio-controller is tuned t
     CHECK(radio.state()["rx2_gain_mode"] == "manual");
     CHECK(radio.state()["gain_mode"] == "slow_attack");  // RX1 untouched
     CHECK(radio.state()["rx2_gain_db"] == 33.0);
-    REQUIRE(forge::testing::wait_until([&] { auto g = e.latest(); return g && g->rx_gain_db == 33.0; }));
+    REQUIRE(forge::testing::wait_until([&] {
+        auto g = e.latest();
+        return g && g->rx_gain_db == 33.0;
+    }));
     CHECK(e.latest()->unit_offset_db == doctest::Approx(-33.0));
     CHECK(e.status().connected);
     CHECK(e.status().temperature_c.value_or(0) == 44.5);
@@ -307,15 +312,39 @@ TEST_CASE("sa radio tap: with the real radio-controller (simulated AD9361, TX1 -
     forge::testing::TempDir dir;
     const auto empty = (dir / "empty.toml").string();
     { std::ofstream(empty) << "# no radio-controller.toml from the working directory\n"; }
-    std::vector<std::string> args{"radio-controller", "-c", empty, "--backend", "sim",
-                                  "-D", "log.console=false", "-D", "http.enabled=false",
-                                  "-D", "forge.data=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-                                  "-D", "forge.control=tcp://127.0.0.1:*",
-                                  "-D", "radio.sim.channels=2", "-D", "radio.sim.loopback_rx=2",
-                                  "-D", "radio.tap_rx=[2]",
-                                  "-D", "radio.rx_lo_hz=2410e6", "-D", "radio.tx_lo_hz=2410e6",
-                                  "-D", "radio.sample_rate_hz=10e6", "-D", "radio.rx_bandwidth_hz=10e6",
-                                  "-D", "radio.tx_enabled=true", "-D", "radio.tx_attenuation_db=10"};
+    std::vector<std::string> args{"radio-controller",
+                                  "-c",
+                                  empty,
+                                  "--backend",
+                                  "sim",
+                                  "-D",
+                                  "log.console=false",
+                                  "-D",
+                                  "http.enabled=false",
+                                  "-D",
+                                  "forge.data=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "zmq.tx=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "forge.control=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "radio.sim.channels=2",
+                                  "-D",
+                                  "radio.sim.loopback_rx=2",
+                                  "-D",
+                                  "radio.tap_rx=[2]",
+                                  "-D",
+                                  "radio.rx_lo_hz=2410e6",
+                                  "-D",
+                                  "radio.tx_lo_hz=2410e6",
+                                  "-D",
+                                  "radio.sample_rate_hz=10e6",
+                                  "-D",
+                                  "radio.rx_bandwidth_hz=10e6",
+                                  "-D",
+                                  "radio.tx_enabled=true",
+                                  "-D",
+                                  "radio.tx_attenuation_db=10"};
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
     radio::RadioController app;
@@ -350,9 +379,12 @@ TEST_CASE("sa radio tap: with the real radio-controller (simulated AD9361, TX1 -
     std::strcpy(tb.format, "cs16");
     tb.cyclic = true;
     REQUIRE(forge::testing::wait_until([&] { return push.publish("tx", tb, tx.data(), tx.size() * 2); }));
-    f = wait_frame(e, [](const sa::Frame& f) {
-        return !f.peaks.empty() && std::abs(f.peaks.front().freq_hz - 2411.5e6) < tolerance(f);
-    }, 15s);
+    f = wait_frame(
+        e,
+        [](const sa::Frame& f) {
+            return !f.peaks.empty() && std::abs(f.peaks.front().freq_hz - 2411.5e6) < tolerance(f);
+        },
+        15s);
     CHECK(f);
     e.stop();
     app.stop();

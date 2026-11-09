@@ -13,12 +13,12 @@
 #include <httplib.h>
 
 #include <arpa/inet.h>
-#include <fstream>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <fstream>
 
 using forge::json;
 using namespace std::chrono_literals;
@@ -145,10 +145,13 @@ TEST_CASE("control: roles, leases, audit, commands and persistence") {
     forge::testing::TempDir dir;
     const auto state = (dir / "state.json").string();
     std::vector<std::string> args{"-D", "auth.enabled=true",
-                                  "-D", "auth.users.vera.token=\"v\"",   "-D", "auth.users.vera.role=\"viewer\"",
-                                  "-D", "auth.users.otto.token=\"o\"",   "-D", "auth.users.otto.role=\"operator\"",
+                                  "-D", "auth.users.vera.token=\"v\"",
+                                  "-D", "auth.users.vera.role=\"viewer\"",
+                                  "-D", "auth.users.otto.token=\"o\"",
+                                  "-D", "auth.users.otto.role=\"operator\"",
                                   "-D", "auth.users.otto.password=\"pw\"",
-                                  "-D", "auth.users.ada.token=\"a\"",    "-D", "auth.users.ada.role=\"admin\"",
+                                  "-D", "auth.users.ada.token=\"a\"",
+                                  "-D", "auth.users.ada.role=\"admin\"",
                                   "-D", "state.file=\"" + state + "\""};
     {
         forge::testing::AppRunner<RolesApp> r(args);
@@ -249,7 +252,8 @@ TEST_CASE("config: an invalid configuration stops the start with the reason") {
 }
 
 TEST_CASE("health: components, overall state, strict /health and HTTP endpoints") {
-    forge::testing::AppRunner<RolesApp> r({"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\""});
+    forge::testing::AppRunner<RolesApp> r(
+        {"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\""});
     httplib::Client http("127.0.0.1", r->http()->port());
     r->health().set("radio", forge::HealthState::ok);
     r->health().set("gps", forge::HealthState::failed, "no fix", false);
@@ -310,7 +314,8 @@ TEST_CASE("buffer pool: buffers are recycled, allocations stay flat") {
 }
 
 TEST_CASE("rt: thread settings from the configuration") {
-    const auto cfg = forge::Config::parse("[threads.rx]\npolicy = 'other'\nnice = 0\ncpus = [0]\n[threads.bad]\npolicy = 'x'");
+    const auto cfg =
+        forge::Config::parse("[threads.rx]\npolicy = 'other'\nnice = 0\ncpus = [0]\n[threads.bad]\npolicy = 'x'");
     const auto s = forge::rt::thread_settings(cfg, "rx");
     REQUIRE(s);
     CHECK(s->cpus == std::vector<int>{0});
@@ -362,10 +367,10 @@ struct Telnet {
 }  // namespace
 
 TEST_CASE("telnet: remote console sessions with login, roles, commands and live logs") {
-    forge::testing::AppRunner<RolesApp> r({"-D", "console.telnet=\"127.0.0.1:0\"", "-D", "auth.enabled=true",
-                                           "-D", "auth.users.otto.password=\"pw\"", "-D",
-                                           "auth.users.otto.role=\"operator\"", "-D", "auth.users.vera.password=\"pv\"",
-                                           "-D", "auth.users.vera.role=\"viewer\""});
+    forge::testing::AppRunner<RolesApp> r({"-D", "console.telnet=\"127.0.0.1:0\"", "-D", "auth.enabled=true", "-D",
+                                           "auth.users.otto.password=\"pw\"", "-D", "auth.users.otto.role=\"operator\"",
+                                           "-D", "auth.users.vera.password=\"pv\"", "-D",
+                                           "auth.users.vera.role=\"viewer\""});
     const auto ep = r->endpoints().at("telnet");
     const int port = std::stoi(ep.substr(ep.rfind(':') + 1));
     {
@@ -554,11 +559,12 @@ TEST_CASE("framework: a blocked main loop does not hang requests (invoke_for, 50
 TEST_CASE("web: card layouts are stored on the device and survive a restart") {
     forge::testing::TempDir dir;
     const auto file = (dir / "state" / "web-layout.json").string();
-    const json layout{{"version", 1},
-                      {"items", json::array({{{"id", "frequency"}, {"x", 0}, {"y", 0}, {"w", 6}, {"h", 30}, {"fit", false}},
-                                             {{"id", "markers"}, {"x", 6}, {"y", 0}, {"w", 6}, {"h", 50}, {"fit", true}}})}};
-    const std::vector<std::string> args{"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\"",
-                                        "-D", "web.layout_file=" + file};
+    const json layout{
+        {"version", 1},
+        {"items", json::array({{{"id", "frequency"}, {"x", 0}, {"y", 0}, {"w", 6}, {"h", 30}, {"fit", false}},
+                               {{"id", "markers"}, {"x", 6}, {"y", 0}, {"w", 6}, {"h", 50}, {"fit", true}}})}};
+    const std::vector<std::string> args{"-D", "http.enabled=true",       "-D", "http.port=0",
+                                        "-D", "http.host=\"127.0.0.1\"", "-D", "web.layout_file=" + file};
     auto stored = [](const httplib::Result& res) {  // the layout without the "scope" it was read from
         json j = json::parse(res->body);
         CHECK(j["scope"] == "device");
@@ -599,7 +605,8 @@ TEST_CASE("web: card layouts are stored on the device and survive a restart") {
         CHECK(json::parse(res->body)["saved"] == false);
     }
     // The vendored GridStack is served with the panel.
-    forge::testing::AppRunner<RolesApp> r({"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\""});
+    forge::testing::AppRunner<RolesApp> r(
+        {"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\""});
     httplib::Client http("127.0.0.1", r->http()->port());
     const auto js = http.Get("/forge/vendor/gridstack/gridstack-all.js");
     REQUIRE(js);
@@ -610,11 +617,15 @@ TEST_CASE("web: card layouts are stored on the device and survive a restart") {
 
 TEST_CASE("web: signed-in users keep their own card layouts; the device's is the default") {
     forge::testing::TempDir dir;
-    const std::vector<std::string> args{
-        "-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\"",
-        "-D", "web.layout_file=" + (dir / "layout.json").string(), "-D", "auth.enabled=true",
-        "-D", "auth.users.vera.token=\"v\"", "-D", "auth.users.vera.role=\"viewer\"",
-        "-D", "auth.users.ada.token=\"a\"", "-D", "auth.users.ada.role=\"admin\""};
+    const std::vector<std::string> args{"-D", "http.enabled=true",
+                                        "-D", "http.port=0",
+                                        "-D", "http.host=\"127.0.0.1\"",
+                                        "-D", "web.layout_file=" + (dir / "layout.json").string(),
+                                        "-D", "auth.enabled=true",
+                                        "-D", "auth.users.vera.token=\"v\"",
+                                        "-D", "auth.users.vera.role=\"viewer\"",
+                                        "-D", "auth.users.ada.token=\"a\"",
+                                        "-D", "auth.users.ada.role=\"admin\""};
     const json device{{"items", json::array({{{"id", "a"}, {"x", 0}, {"y", 0}, {"w", 12}, {"h", 10}}})}};
     const json mine{{"items", json::array({{{"id", "a"}, {"x", 6}, {"y", 0}, {"w", 6}, {"h", 20}}})}};
     forge::testing::AppRunner<RolesApp> r(args);
@@ -667,7 +678,8 @@ protected:
             if (hot) {
                 cool_since = {};
                 if (hot_since == forge::Scheduler::Clock::time_point{}) hot_since = now();
-                if (now() - hot_since >= std::chrono::seconds(3)) alarms().raise("hot", forge::Severity::warning, "too hot");
+                if (now() - hot_since >= std::chrono::seconds(3))
+                    alarms().raise("hot", forge::Severity::warning, "too hot");
             } else {
                 hot_since = {};
                 if (cool_since == forge::Scheduler::Clock::time_point{}) cool_since = now();
@@ -717,8 +729,9 @@ TEST_CASE("threading: background(), call() on the loop, the dashboard's owner, s
     // background(): the work on a worker, the result on the main loop
     std::promise<std::pair<int, bool>> got;
     r->post([&] {
-        r->background([&] { return std::make_pair(42, r->on_main_loop()); },
-                      [&](std::pair<int, bool> v) { got.set_value({v.first + (r->on_main_loop() ? 1 : 0), v.second}); });
+        r->background(
+            [&] { return std::make_pair(42, r->on_main_loop()); },
+            [&](std::pair<int, bool> v) { got.set_value({v.first + (r->on_main_loop() ? 1 : 0), v.second}); });
     });
     const auto v = got.get_future().get();
     CHECK(v.first == 43);   // then() ran on the main loop

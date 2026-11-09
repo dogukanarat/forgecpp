@@ -49,8 +49,7 @@ Plan make_fixed_plan(double center_hz, double span_hz, double rbw_hz, radio::dsp
     return p;
 }
 
-Plan make_plan(double center_hz, double span_hz, double rbw_hz, radio::dsp::Window window,
-               const HardwareLimits& lim) {
+Plan make_plan(double center_hz, double span_hz, double rbw_hz, radio::dsp::Window window, const HardwareLimits& lim) {
     Plan p;
     span_hz = std::max(span_hz, 1e3);
     p.start_hz = center_hz - span_hz / 2;
@@ -58,8 +57,8 @@ Plan make_plan(double center_hz, double span_hz, double rbw_hz, radio::dsp::Wind
 
     const double realtime_max = lim.rate_max_hz * lim.usable_fraction;
     p.swept = span_hz > realtime_max;
-    p.sample_rate_hz = p.swept ? lim.sweep_rate_hz : std::clamp(span_hz / lim.usable_fraction, lim.rate_min_hz,
-                                                                 lim.rate_max_hz);
+    p.sample_rate_hz =
+        p.swept ? lim.sweep_rate_hz : std::clamp(span_hz / lim.usable_fraction, lim.rate_min_hz, lim.rate_max_hz);
     p.rf_bandwidth_hz = std::min(p.sample_rate_hz * lim.usable_fraction * 1.05, 56e6);
 
     choose_fft(p, span_hz, rbw_hz, window, lim.fft_max, lim);
@@ -134,8 +133,10 @@ std::vector<double> to_display(const Bins& bins, double start, double stop, std:
         double v;
         if (count == 0) {
             // More points than bins: interpolate between the neighbours (in dB).
-            if (j == 0) v = p.front();
-            else if (j >= f.size()) v = p.back();
+            if (j == 0)
+                v = p.front();
+            else if (j >= f.size())
+                v = p.back();
             else {
                 const double t = (fc - f[j - 1]) / (f[j] - f[j - 1]);
                 out[i] = to_db(p[j - 1]) + t * (to_db(p[j]) - to_db(p[j - 1]));
@@ -189,12 +190,16 @@ void Trace::update(const std::vector<double>& db, std::size_t average_count) {
     switch (mode_) {
         case TraceMode::clear_write: db_ = db; break;
         case TraceMode::max_hold:
-            if (count_ == 1) db_ = db;
-            else for (std::size_t i = 0; i < db.size(); ++i) db_[i] = std::max(db_[i], db[i]);
+            if (count_ == 1)
+                db_ = db;
+            else
+                for (std::size_t i = 0; i < db.size(); ++i) db_[i] = std::max(db_[i], db[i]);
             break;
         case TraceMode::min_hold:
-            if (count_ == 1) db_ = db;
-            else for (std::size_t i = 0; i < db.size(); ++i) db_[i] = std::min(db_[i], db[i]);
+            if (count_ == 1)
+                db_ = db;
+            else
+                for (std::size_t i = 0; i < db.size(); ++i) db_[i] = std::min(db_[i], db[i]);
             break;
         case TraceMode::average: {
             // Running (linear power) average over the last `average_count` sweeps.
@@ -202,7 +207,8 @@ void Trace::update(const std::vector<double>& db, std::size_t average_count) {
                 linear_.resize(db.size());
                 for (std::size_t i = 0; i < db.size(); ++i) linear_[i] = from_db(db[i]);
             } else {
-                const double k = static_cast<double>(std::min<std::size_t>(count_, std::max<std::size_t>(average_count, 1)));
+                const double k =
+                    static_cast<double>(std::min<std::size_t>(count_, std::max<std::size_t>(average_count, 1)));
                 for (std::size_t i = 0; i < db.size(); ++i) linear_[i] += (from_db(db[i]) - linear_[i]) / k;
             }
             db_.resize(db.size());

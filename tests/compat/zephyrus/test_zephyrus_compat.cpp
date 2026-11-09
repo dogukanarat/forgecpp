@@ -165,8 +165,17 @@ TEST_CASE("zephyrus compat: status encoding") {
 
 TEST_CASE("zephyrus compat: status decoding, every kind of value") {
     std::mt19937 rng(5);
-    std::vector<int32_t> values{0, 1, -1, -22, -0x8000, -0xFFFF, -0x10000, INT32_MIN, INT32_MAX,
-                                static_cast<int32_t>(0x80000000U), static_cast<int32_t>(0xFFFF0000U)};
+    std::vector<int32_t> values{0,
+                                1,
+                                -1,
+                                -22,
+                                -0x8000,
+                                -0xFFFF,
+                                -0x10000,
+                                INT32_MIN,
+                                INT32_MAX,
+                                static_cast<int32_t>(0x80000000U),
+                                static_cast<int32_t>(0xFFFF0000U)};
     for (int i = 0; i < kRounds; ++i) values.push_back(static_cast<int32_t>(rng()));
     for (int i = 0; i < 1000; ++i) values.push_back(-static_cast<int32_t>(rng() % 70000));  // plain errnos
     for (int32_t v : values) {

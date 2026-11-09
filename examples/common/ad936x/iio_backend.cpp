@@ -39,9 +39,7 @@ std::string errstr(int err) {
     return buf;
 }
 
-[[noreturn]] void fail(const std::string& what, int err) {
-    throw DeviceError(what + ": " + errstr(err));
-}
+[[noreturn]] void fail(const std::string& what, int err) { throw DeviceError(what + ": " + errstr(err)); }
 
 class IioBackend final : public Backend {
 public:
@@ -208,7 +206,8 @@ public:
         const auto step = iio_buffer_step(buf);
         const auto* first = static_cast<const std::uint8_t*>(iio_buffer_first(buf, (rx_mask_ & kRx1) ? rx_i_ : rx2_i_));
         const auto* end = static_cast<const std::uint8_t*>(iio_buffer_end(buf));
-        const std::size_t available = step > 0 ? static_cast<std::size_t>(end - first) / static_cast<std::size_t>(step) : 0;
+        const std::size_t available =
+            step > 0 ? static_cast<std::size_t>(end - first) / static_cast<std::size_t>(step) : 0;
         const std::size_t n = std::min(available, max_samples);
         auto convert = [&](const std::uint8_t* p, std::int16_t* out) {
             for (std::size_t i = 0; i < n; ++i, p += step) {

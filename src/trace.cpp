@@ -1,19 +1,18 @@
 #include "forge/trace.hpp"
 
-
 #include <format>
 
+#include <pthread.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
 #include <memory>
 #include <mutex>
-#include <pthread.h>
 #include <random>
 #include <set>
-#include <sys/syscall.h>
-#include <unistd.h>
 #include <unordered_map>
 #include <vector>
 
@@ -62,8 +61,7 @@ struct Recorder {
         head = 0;
     }
 
-    void record(Type type, const char* name, const char* category, std::int64_t start, std::int64_t dur,
-                double value) {
+    void record(Type type, const char* name, const char* category, std::int64_t start, std::int64_t dur, double value) {
         if (!enabled.load(std::memory_order_relaxed)) return;
         const std::uint64_t idx = head.fetch_add(1, std::memory_order_relaxed);
         Event& e = events[idx % capacity];

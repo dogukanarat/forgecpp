@@ -4,21 +4,21 @@
 
 #include <linenoise.h>
 
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
-#include <fcntl.h>
 #include <fstream>
 #include <map>
 #include <mutex>
 #include <optional>
-#include <poll.h>
-#include <sys/ioctl.h>
 #include <thread>
-#include <unistd.h>
 
 namespace forge {
 namespace {
@@ -207,7 +207,8 @@ struct Console::Impl {
         const auto cmd = find(input.substr(0, space));
         if (!cmd || !starts_with(cmd->help, input.substr(0, space))) return {};
         const auto usage_end = cmd->help.find("  ");
-        std::string usage = cmd->help.substr(space, usage_end == std::string::npos ? std::string::npos : usage_end - space);
+        std::string usage =
+            cmd->help.substr(space, usage_end == std::string::npos ? std::string::npos : usage_end - space);
         usage.erase(0, usage.find_first_not_of(' '));
         return usage;
     }
@@ -349,9 +350,8 @@ struct Console::Impl {
         log::TerminalWriter previous;
         if (options.redirect_logs) {
             // log lines are printed above the line being typed, coloured if the console is
-            previous = log::set_terminal_writer([this](std::string_view plain, std::string_view coloured) {
-                write(options.color ? coloured : plain);
-            });
+            previous = log::set_terminal_writer(
+                [this](std::string_view plain, std::string_view coloured) { write(options.color ? coloured : plain); });
         }
         if (!options.banner.empty()) write(options.banner + "\n");
 
@@ -431,8 +431,7 @@ Console::Console(Options options) : impl_(std::make_shared<Impl>(std::move(optio
 
 Console::~Console() { stop(); }
 
-Console& Console::add(const std::string& name, const std::string& help, Handler handler,
-                      Completer completer) {
+Console& Console::add(const std::string& name, const std::string& help, Handler handler, Completer completer) {
     std::lock_guard lock(impl_->mutex);
     impl_->commands[name] = Impl::Command{help, std::move(handler), std::move(completer), false};
     return *this;

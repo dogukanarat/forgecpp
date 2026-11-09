@@ -16,10 +16,11 @@ namespace forgehub {
 std::uint64_t timespan_us(const std::string& s) {
     if (s.empty() || s == "infinity") return 0;
     static const std::pair<const char*, double> units[] = {
-        {"usec", 1}, {"us", 1}, {"msec", 1e3}, {"ms", 1e3}, {"seconds", 1e6}, {"second", 1e6}, {"sec", 1e6},
-        {"s", 1e6}, {"minutes", 60e6}, {"minute", 60e6}, {"min", 60e6}, {"hours", 3600e6}, {"hour", 3600e6},
-        {"hr", 3600e6}, {"h", 3600e6}, {"days", 86400e6}, {"day", 86400e6}, {"d", 86400e6},
-        {"weeks", 604800e6}, {"week", 604800e6}, {"w", 604800e6}};
+        {"usec", 1},       {"us", 1},         {"msec", 1e3},    {"ms", 1e3},         {"seconds", 1e6},
+        {"second", 1e6},   {"sec", 1e6},      {"s", 1e6},       {"minutes", 60e6},   {"minute", 60e6},
+        {"min", 60e6},     {"hours", 3600e6}, {"hour", 3600e6}, {"hr", 3600e6},      {"h", 3600e6},
+        {"days", 86400e6}, {"day", 86400e6},  {"d", 86400e6},   {"weeks", 604800e6}, {"week", 604800e6},
+        {"w", 604800e6}};
     double total = 0;
     std::size_t i = 0;
     bool any = false;
@@ -64,9 +65,9 @@ public:
     }
 
     std::map<std::string, UnitState> show(const std::vector<std::string>& units) override {
-        std::vector<std::string> argv{"systemctl", "show",
-                                      "-p", "Id,LoadState,ActiveState,SubState,Result,MainPID,NRestarts,Restart,"
-                                            "StartLimitBurst,StartLimitIntervalUSec,RestartUSec,WatchdogUSec"};
+        std::vector<std::string> argv{"systemctl", "show", "-p",
+                                      "Id,LoadState,ActiveState,SubState,Result,MainPID,NRestarts,Restart,"
+                                      "StartLimitBurst,StartLimitIntervalUSec,RestartUSec,WatchdogUSec"};
         for (const auto& u : units) {
             if (valid_unit_name(u)) argv.push_back(u);
         }
@@ -110,18 +111,30 @@ std::map<std::string, UnitState> parse_show(const std::string& output) {
         const auto eq = line.find('=');
         if (eq == std::string::npos) continue;
         const auto key = line.substr(0, eq), value = line.substr(eq + 1);
-        if (key == "Id") id = value;
-        else if (key == "LoadState") st.loaded = value == "loaded";
-        else if (key == "ActiveState") st.active = value;
-        else if (key == "SubState") st.sub = value;
-        else if (key == "Result") st.result = value;
-        else if (key == "MainPID") st.main_pid = static_cast<int>(to_u64(value));
-        else if (key == "NRestarts") st.n_restarts = static_cast<std::uint32_t>(to_u64(value));
-        else if (key == "Restart") st.restart = value;
-        else if (key == "StartLimitBurst") st.start_limit_burst = static_cast<std::uint32_t>(to_u64(value));
-        else if (key == "StartLimitIntervalUSec") st.start_limit_interval_us = timespan_us(value);
-        else if (key == "RestartUSec") st.restart_us = timespan_us(value);
-        else if (key == "WatchdogUSec") st.watchdog_us = timespan_us(value);
+        if (key == "Id")
+            id = value;
+        else if (key == "LoadState")
+            st.loaded = value == "loaded";
+        else if (key == "ActiveState")
+            st.active = value;
+        else if (key == "SubState")
+            st.sub = value;
+        else if (key == "Result")
+            st.result = value;
+        else if (key == "MainPID")
+            st.main_pid = static_cast<int>(to_u64(value));
+        else if (key == "NRestarts")
+            st.n_restarts = static_cast<std::uint32_t>(to_u64(value));
+        else if (key == "Restart")
+            st.restart = value;
+        else if (key == "StartLimitBurst")
+            st.start_limit_burst = static_cast<std::uint32_t>(to_u64(value));
+        else if (key == "StartLimitIntervalUSec")
+            st.start_limit_interval_us = timespan_us(value);
+        else if (key == "RestartUSec")
+            st.restart_us = timespan_us(value);
+        else if (key == "WatchdogUSec")
+            st.watchdog_us = timespan_us(value);
     }
     return out;
 }

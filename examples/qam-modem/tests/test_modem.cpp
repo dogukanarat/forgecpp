@@ -93,17 +93,17 @@ EchoResult echo(unsigned port, double mbps, std::size_t size, std::chrono::milli
 }  // namespace
 
 TEST_CASE("qam-modem: starts without a radio, reports it, queues UDP packets") {
-    forge::testing::AppRunner<modem::QamModem> m({"-D", "http.enabled=false", "-D", "forge.control=tcp://127.0.0.1:*",
-                                                  "-D", "forge.events=tcp://127.0.0.1:*", "-D", "forge.data=tcp://127.0.0.1:*",
-                                                  "-D", "console.telnet=", "-D", "modem.udp_listen=127.0.0.1:0",
-                                                  "-D", "modem.radio_control=tcp://127.0.0.1:1",
-                                                  "-D", "modem.radio_data=tcp://127.0.0.1:1",
-                                                  "-D", "modem.radio_tx=tcp://127.0.0.1:1"});
+    forge::testing::AppRunner<modem::QamModem> m(
+        {"-D", "http.enabled=false", "-D", "forge.control=tcp://127.0.0.1:*", "-D", "forge.events=tcp://127.0.0.1:*",
+         "-D", "forge.data=tcp://127.0.0.1:*", "-D", "console.telnet=", "-D", "modem.udp_listen=127.0.0.1:0", "-D",
+         "modem.radio_control=tcp://127.0.0.1:1", "-D", "modem.radio_data=tcp://127.0.0.1:1", "-D",
+         "modem.radio_tx=tcp://127.0.0.1:1"});
     CHECK(get(m.app(), "symbol_rate") == 750.0);
     CHECK(get(m.app(), "raw_rate") == 3000.0);
     CHECK(get(m.app(), "bandwidth").get<double>() == doctest::Approx(1012.5));
     // radio-controller is not there: an alarm, the modem keeps running
-    CHECK(forge::testing::wait_until([&] { return get(m.app(), "radio").get<std::string>().rfind("error", 0) == 0; }, 10s));
+    CHECK(forge::testing::wait_until([&] { return get(m.app(), "radio").get<std::string>().rfind("error", 0) == 0; },
+                                     10s));
     CHECK(m.app().invoke([&] { return m.app().alarms().active("modem.radio"); }));
 
     const int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
@@ -122,24 +122,31 @@ TEST_CASE("qam-modem: starts without a radio, reports it, queues UDP packets") {
 #ifdef QAM_WITH_RADIO_CONTROLLER
 TEST_CASE("qam-modem: echo through radio-controller (simulated AD9361, TX1 -> splitter -> RX1/RX2) at 2 Mbit/s") {
     forge::testing::AppRunner<radio::RadioController> radio(
-        {"--backend", "sim", "-D", "http.enabled=false", "-D", "console.telnet=",
-         "-D", "forge.data=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-         "-D", "forge.control=tcp://127.0.0.1:*", "-D", "forge.events=tcp://127.0.0.1:*",
-         "-D", "radio.sim.channels=2", "-D", "radio.sim.splitter=true", "-D", "radio.sim.loopback_db=-30",
-         "-D", "radio.sim.loopback_cfo_hz=1200",  // a little frequency error on the received copy
-         "-D", "radio.rx_channels=[1]", "-D", "radio.tap_rx=[2]"});
+        {"--backend", "sim",
+         "-D",        "http.enabled=false",
+         "-D",        "console.telnet=",
+         "-D",        "forge.data=tcp://127.0.0.1:*",
+         "-D",        "zmq.tx=tcp://127.0.0.1:*",
+         "-D",        "forge.control=tcp://127.0.0.1:*",
+         "-D",        "forge.events=tcp://127.0.0.1:*",
+         "-D",        "radio.sim.channels=2",
+         "-D",        "radio.sim.splitter=true",
+         "-D",        "radio.sim.loopback_db=-30",
+         "-D",        "radio.sim.loopback_cfo_hz=1200",  // a little frequency error on the received copy
+         "-D",        "radio.rx_channels=[1]",
+         "-D",        "radio.tap_rx=[2]"});
     auto& r = radio.app();
 
     forge::testing::AppRunner<modem::QamModem> m(
-        {"-D", "http.enabled=false", "-D", "console.telnet=", "-D", "forge.control=tcp://127.0.0.1:*",
-         "-D", "forge.events=tcp://127.0.0.1:*", "-D", "forge.data=tcp://127.0.0.1:*",
-         "-D", "modem.udp_listen=127.0.0.1:0", "-D", "modem.radio_control=" + r.control_endpoint(),
-         "-D", "modem.radio_data=" + r.data_endpoint(), "-D", "modem.radio_tx=" + r.tx_endpoint()});
+        {"-D", "http.enabled=false", "-D", "console.telnet=", "-D", "forge.control=tcp://127.0.0.1:*", "-D",
+         "forge.events=tcp://127.0.0.1:*", "-D", "forge.data=tcp://127.0.0.1:*", "-D", "modem.udp_listen=127.0.0.1:0",
+         "-D", "modem.radio_control=" + r.control_endpoint(), "-D", "modem.radio_data=" + r.data_endpoint(), "-D",
+         "modem.radio_tx=" + r.tx_endpoint()});
     auto& q = m.app();
 
     // The modem sets the radio up: 2.1 GHz, 3 MSPS, manual gain, TX on.
-    REQUIRE(forge::testing::wait_until([&] { return get(q, "radio").get<std::string>().find("MHz") != std::string::npos; },
-                                       10s));
+    REQUIRE(forge::testing::wait_until(
+        [&] { return get(q, "radio").get<std::string>().find("MHz") != std::string::npos; }, 10s));
     CHECK(get(r, "rx_lo_mhz").get<double>() == doctest::Approx(2100));
     CHECK(get(r, "tx_lo_mhz").get<double>() == doctest::Approx(2100));
     CHECK(get(r, "sample_rate_msps").get<double>() == doctest::Approx(3));

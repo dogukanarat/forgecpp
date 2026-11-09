@@ -40,13 +40,10 @@ QuillLogger* quill_logger(const Logger& logger);
 
 #define FORGE_RT_TRACE(logger, fmt, ...) \
     QUILL_LOG_TRACE_L1(::forge::log::detail::quill_logger(logger), fmt, ##__VA_ARGS__)
-#define FORGE_RT_DEBUG(logger, fmt, ...) \
-    QUILL_LOG_DEBUG(::forge::log::detail::quill_logger(logger), fmt, ##__VA_ARGS__)
-#define FORGE_RT_INFO(logger, fmt, ...) \
-    QUILL_LOG_INFO(::forge::log::detail::quill_logger(logger), fmt, ##__VA_ARGS__)
+#define FORGE_RT_DEBUG(logger, fmt, ...) QUILL_LOG_DEBUG(::forge::log::detail::quill_logger(logger), fmt, ##__VA_ARGS__)
+#define FORGE_RT_INFO(logger, fmt, ...) QUILL_LOG_INFO(::forge::log::detail::quill_logger(logger), fmt, ##__VA_ARGS__)
 #define FORGE_RT_WARN(logger, fmt, ...) \
     QUILL_LOG_WARNING(::forge::log::detail::quill_logger(logger), fmt, ##__VA_ARGS__)
-#define FORGE_RT_ERROR(logger, fmt, ...) \
-    QUILL_LOG_ERROR(::forge::log::detail::quill_logger(logger), fmt, ##__VA_ARGS__)
+#define FORGE_RT_ERROR(logger, fmt, ...) QUILL_LOG_ERROR(::forge::log::detail::quill_logger(logger), fmt, ##__VA_ARGS__)
 #define FORGE_RT_CRITICAL(logger, fmt, ...) \
     QUILL_LOG_CRITICAL(::forge::log::detail::quill_logger(logger), fmt, ##__VA_ARGS__)

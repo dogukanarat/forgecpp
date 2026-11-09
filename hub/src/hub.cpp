@@ -8,8 +8,8 @@
 
 #include <algorithm>
 #include <cctype>
-#include <filesystem>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <random>
 
@@ -57,7 +57,8 @@ std::string local_endpoint(std::string ep) {
 
 std::string seconds(std::uint64_t us) {
     const auto s = us / 1000000.0;
-    return s == static_cast<std::uint64_t>(s) ? std::to_string(static_cast<std::uint64_t>(s)) : std::format("{:.1f}", s);
+    return s == static_cast<std::uint64_t>(s) ? std::to_string(static_cast<std::uint64_t>(s))
+                                              : std::format("{:.1f}", s);
 }
 
 template <std::size_t N>
@@ -83,8 +84,8 @@ forge_hub_restart_policy policy_of(const UnitState& u) {
     forge_hub_restart_policy p{};
     put(p.restart, u.restart);
     p.mode = u.restart == "no" || u.restart.empty() ? forge_hub_restart_mode_MODE_NEVER
-             : u.restart == "always"                 ? forge_hub_restart_mode_MODE_ALWAYS
-                                                     : forge_hub_restart_mode_MODE_ON_FAILURE;
+             : u.restart == "always"                ? forge_hub_restart_mode_MODE_ALWAYS
+                                                    : forge_hub_restart_mode_MODE_ON_FAILURE;
     if (u.start_limit_interval_us > 0 && u.start_limit_burst > 0) {
         p.max_restarts = u.start_limit_burst - 1;  // the first start counts too
         p.window_s = static_cast<std::uint32_t>(u.start_limit_interval_us / 1000000);
@@ -125,12 +126,18 @@ void Hub::setup_config(forge::config::Schema& s) {
              "Registration endpoint (keep it on localhost: it accepts any local process)");
     s.string("registry.state_file", "", "Remember the applications across hub restarts (JSON)");
     s.integer("registry.tick_ms", 1000, "How often processes are checked").range(20, 60000).unit("ms");
-    s.integer("registry.probe_interval_ms", 2000, "Health check and systemd query interval").range(50, 600000).unit("ms");
+    s.integer("registry.probe_interval_ms", 2000, "Health check and systemd query interval")
+        .range(50, 600000)
+        .unit("ms");
     s.integer("registry.probe_timeout_ms", 1500, "Health check timeout").range(50, 60000).unit("ms");
-    s.integer("registry.unresponsive_after_s", 5, "Failing health checks this long: unresponsive").range(0, 3600).unit("s");
+    s.integer("registry.unresponsive_after_s", 5, "Failing health checks this long: unresponsive")
+        .range(0, 3600)
+        .unit("s");
     s.boolean("registry.systemd", true, "Follow the systemd units of the applications (state, restarts, actions)");
-    s.string("registry.boot_id_file", "/proc/sys/kernel/random/boot_id", "Boot id (processes of an earlier boot are gone)");
-    s.open_section("static", "[static.<name>] url, health_url, title, description, group: applications that do not register");
+    s.string("registry.boot_id_file", "/proc/sys/kernel/random/boot_id",
+             "Boot id (processes of an earlier boot are gone)");
+    s.open_section("static",
+                   "[static.<name>] url, health_url, title, description, group: applications that do not register");
     s.section("proxy", "Applications' web pages through the hub's port");
     s.boolean("proxy.enabled", true,
               "Serve each application's pages at /apps/<name>/ on the hub's port (one port for the device; "
@@ -146,12 +153,12 @@ void Hub::setup_web(forge::web::Dashboard& ui) {
     auto& g = ui.group("Applications");
     auto count = [this](auto pred) {
         std::lock_guard lock(mutex_);
-        return static_cast<int>(std::count_if(apps_.begin(), apps_.end(), [&](const auto& kv) { return pred(kv.second); }));
+        return static_cast<int>(
+            std::count_if(apps_.begin(), apps_.end(), [&](const auto& kv) { return pred(kv.second); }));
     };
     g.value("apps", "Known", [count] { return count([](const Entry&) { return true; }); });
-    g.value("running", "Running", [count] {
-        return count([](const Entry& e) { return e.state == forge_hub_app_state_STATE_RUNNING; });
-    });
+    g.value("running", "Running",
+            [count] { return count([](const Entry& e) { return e.state == forge_hub_app_state_STATE_RUNNING; }); });
     g.value("failed", "Failed / crashed", [count] {
         return count([](const Entry& e) {
             return e.state == forge_hub_app_state_STATE_FAILED || e.state == forge_hub_app_state_STATE_CRASHED;
@@ -159,18 +166,18 @@ void Hub::setup_web(forge::web::Dashboard& ui) {
     });
     g.value("registry", "Registration endpoint", [this] { return registry_endpoint(); });
     using forge::web::text_param;
-    g.command("restart", "Restart", {text_param("name", std::nullopt, "application")},
-              [this](const json& a) { return restart(a["name"].get<std::string>()); })
-        .help("systemctl restart (also after the unit failed)");
-    g.command("stop", "Stop", {text_param("name", std::nullopt, "application")},
-              [this](const json& a) { return stop_app(a["name"].get<std::string>()); })
-        .help("systemctl stop (SIGTERM for applications without a unit)");
-    g.command("start", "Start", {text_param("name", std::nullopt, "application")},
-              [this](const json& a) { return start(a["name"].get<std::string>()); })
-        .help("systemctl start (also after the unit failed)");
-    g.command("forget", "Forget", {text_param("name", std::nullopt, "application")},
-              [this](const json& a) { return forget(a["name"].get<std::string>()); })
-        .help("Remove an application that is not running from the list");
+    g.command("restart", "Restart", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
+         return restart(a["name"].get<std::string>());
+     }).help("systemctl restart (also after the unit failed)");
+    g.command("stop", "Stop", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
+         return stop_app(a["name"].get<std::string>());
+     }).help("systemctl stop (SIGTERM for applications without a unit)");
+    g.command("start", "Start", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
+         return start(a["name"].get<std::string>());
+     }).help("systemctl start (also after the unit failed)");
+    g.command("forget", "Forget", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
+         return forget(a["name"].get<std::string>());
+     }).help("Remove an application that is not running from the list");
 }
 
 void Hub::setup_http(forge::http::Server& server) {
@@ -183,7 +190,11 @@ void Hub::setup_http(forge::http::Server& server) {
     // /apps/<name>/<path>: the application's own HTTP server, through this port.
     const std::string pattern = R"(/apps/([A-Za-z0-9_.@-]+)(/.*)?)";
     auto handler = [this](const forge::http::Request& req, forge::http::Response& res) { proxy_request(req, res); };
-    server.get(pattern, handler).post(pattern, handler).put(pattern, handler).patch(pattern, handler).del(pattern, handler);
+    server.get(pattern, handler)
+        .post(pattern, handler)
+        .put(pattern, handler)
+        .patch(pattern, handler)
+        .del(pattern, handler);
 }
 
 void Hub::proxy_request(const forge::http::Request& req, forge::http::Response& res) {
@@ -272,8 +283,8 @@ void Hub::setup_console(forge::Console& c) {
         if (l.apps.empty()) c.print("no applications registered");
         for (const auto& a : l.apps) {
             const auto state = std::string(state_name(a.state));
-            c.print("  {:<22} {:<12} pid {:<7} http {:<5} restarts {:<3} {:<28} {}", text(a.app.name), state,
-                    a.app.pid, a.app.http_port, a.restarts, text(a.supervision), text(a.message));
+            c.print("  {:<22} {:<12} pid {:<7} http {:<5} restarts {:<3} {:<28} {}", text(a.app.name), state, a.app.pid,
+                    a.app.http_port, a.restarts, text(a.supervision), text(a.message));
         }
     });
 }
@@ -315,15 +326,15 @@ void Hub::on_start() {
     load_registry();
 
     registry_commands_.add<forge_hub_register_request, forge_hub_register_reply>(
-        forge_hub_msg_id_register, "register", [this](const auto& req, auto& rsp) { return on_register(req.app, rsp); });
+        forge_hub_msg_id_register, "register",
+        [this](const auto& req, auto& rsp) { return on_register(req.app, rsp); });
     registry_commands_.add<forge_hub_unregister_request, forge_hub_unregister_reply>(
         forge_hub_msg_id_unregister, "unregister", [this](const auto& req, auto&) {
             on_unregister(req);
             return forge::Status();
         });
-    registry_ = std::make_unique<forge::zmq::Server>(
-        cfg.value<std::string>("registry.listen"),
-        [this](std::string_view req) { return handle(req); });
+    registry_ = std::make_unique<forge::zmq::Server>(cfg.value<std::string>("registry.listen"),
+                                                     [this](std::string_view req) { return handle(req); });
     logger()->info("registry on {}", registry_->endpoint());
     apps_stream_ = &stream<forge_hub_app_status>("apps");
     every(std::chrono::milliseconds(tick_ms_), [this] { tick(); }, true);
@@ -373,8 +384,9 @@ forge::Status Hub::on_register(const forge_hub_app_registration& app, forge_hub_
     Entry& e = apps_[name];
     if (e.static_entry) return refuse(EEXIST, "a static entry of the hub's configuration has this name");
     // The same process registering again (retry_s heartbeat) changes nothing.
-    const bool same = e.pid == pid && e.ticks == ticks &&
-                      (e.state == forge_hub_app_state_STATE_RUNNING || e.state == forge_hub_app_state_STATE_UNRESPONSIVE);
+    const bool same =
+        e.pid == pid && e.ticks == ticks &&
+        (e.state == forge_hub_app_state_STATE_RUNNING || e.state == forge_hub_app_state_STATE_UNRESPONSIVE);
     if (!same) {
         e.pid = pid;
         e.ticks = ticks;
@@ -427,7 +439,9 @@ void Hub::raise(const Entry& e, const std::string& kind, forge::Severity severit
     alarms().raise("app." + std::string(e.app.name) + "." + kind, severity, title_of(e) + ": " + text);
 }
 
-void Hub::clear(const Entry& e, const std::string& kind) { alarms().clear("app." + std::string(e.app.name) + "." + kind); }
+void Hub::clear(const Entry& e, const std::string& kind) {
+    alarms().clear("app." + std::string(e.app.name) + "." + kind);
+}
 
 void Hub::ended(Entry& e, const std::string& why, bool failure) {
     e.pid = 0;
@@ -477,8 +491,8 @@ void Hub::apply_units(const std::map<std::string, UnitState>& units) {
                 e.state = forge_hub_app_state_STATE_FAILED;
                 // An automatic restart refused by the start limit leaves the last
                 // run's Result (e.g. "signal"); a manual start refused says start-limit-hit.
-                const bool gave_up = u.result == "start-limit-hit" ||
-                                     (policy.max_restarts > 0 && u.n_restarts >= policy.max_restarts);
+                const bool gave_up =
+                    u.result == "start-limit-hit" || (policy.max_restarts > 0 && u.n_restarts >= policy.max_restarts);
                 // (NRestarts also counts the restart the start limit refused)
                 const auto restarts = policy.max_restarts > 0 ? policy.max_restarts : u.n_restarts;
                 e.message = gave_up ? std::format("gave up after {} restarts in {} s (last: {})", restarts,
@@ -494,9 +508,9 @@ void Hub::apply_units(const std::map<std::string, UnitState>& units) {
         clear(e, "failed");
         if (u.active == "activating") {
             e.state = forge_hub_app_state_STATE_STARTING;
-            e.message = u.sub == "auto-restart"
-                            ? std::format("{}; systemd restarts it in {} s", result_text(u.result), seconds(u.restart_us))
-                            : "starting";
+            e.message = u.sub == "auto-restart" ? std::format("{}; systemd restarts it in {} s", result_text(u.result),
+                                                              seconds(u.restart_us))
+                                                : "starting";
             e.pid = 0;
         } else if (u.active == "active") {
             if (u.main_pid > 0 && u.main_pid == e.pid) {
@@ -560,9 +574,8 @@ void Hub::tick() {
                 if (e.app.http_port > 0 || !control.empty()) {
                     e.probing = true;
                     probes.push_back({name, e.pid,
-                                      e.app.http_port > 0
-                                          ? std::format("http://127.0.0.1:{}/health", e.app.http_port)
-                                          : std::string(),
+                                      e.app.http_port > 0 ? std::format("http://127.0.0.1:{}/health", e.app.http_port)
+                                                          : std::string(),
                                       control});
                 }
             }
@@ -657,7 +670,8 @@ void Hub::probe_done(const std::string& name, int pid, bool ok, const json& heal
     if (why.empty()) {
         e.last_seen_ms = unix_ms();
         e.failing_since = 0;
-        if (e.state == forge_hub_app_state_STATE_UNRESPONSIVE || (e.static_entry && e.state != forge_hub_app_state_STATE_RUNNING)) {
+        if (e.state == forge_hub_app_state_STATE_UNRESPONSIVE ||
+            (e.static_entry && e.state != forge_hub_app_state_STATE_RUNNING)) {
             e.state = forge_hub_app_state_STATE_RUNNING;
             e.message.clear();
             clear(e, "unresponsive");

@@ -39,12 +39,13 @@ struct Sink {
     std::deque<std::pair<radio_tx_block, std::string>> blocks;
     fz::Receiver rx;
     Sink()
-        : rx(fz::Receiver::Kind::pull, "tcp://127.0.0.1:*",
-             [this](fz::Message&& msg) {
-                 std::lock_guard lock(m);
-                 blocks.emplace_back(msg.as<radio_tx_block>(), std::move(msg.blob));
-             },
-             fz::Receiver::Options{true, {""}, {}}) {}
+        : rx(
+              fz::Receiver::Kind::pull, "tcp://127.0.0.1:*",
+              [this](fz::Message&& msg) {
+                  std::lock_guard lock(m);
+                  blocks.emplace_back(msg.as<radio_tx_block>(), std::move(msg.blob));
+              },
+              fz::Receiver::Options{true, {""}, {}}) {}
     std::size_t size() {
         std::lock_guard lock(m);
         return blocks.size();
@@ -72,10 +73,10 @@ std::string tone_blob(std::size_t n) {
 TEST_CASE("channel-emulator: forwards every block, impaired as the controls say") {
     Sink sink;
     forge::testing::AppRunner<emulator::ChannelEmulator> emu(
-        {"-D", "http.enabled=false", "-D", "console.telnet=", "-D", "forge.control=tcp://127.0.0.1:*",
-         "-D", "forge.events=tcp://127.0.0.1:*", "-D", "forge.data=tcp://127.0.0.1:*",
-         "-D", "emulator.input=tcp://127.0.0.1:*", "-D", "emulator.output=" + sink.rx.endpoint(),
-         "-D", "emulator.radio_control=", "-D", "emulator.sample_rate_hz=1e6"});
+        {"-D", "http.enabled=false", "-D", "console.telnet=", "-D", "forge.control=tcp://127.0.0.1:*", "-D",
+         "forge.events=tcp://127.0.0.1:*", "-D", "forge.data=tcp://127.0.0.1:*", "-D",
+         "emulator.input=tcp://127.0.0.1:*", "-D", "emulator.output=" + sink.rx.endpoint(), "-D",
+         "emulator.radio_control=", "-D", "emulator.sample_rate_hz=1e6"});
     auto& e = emu.app();
     CHECK(get(e, "preset") == "clean");
     CHECK(get(e, "sample_rate") == 1.0);
@@ -84,7 +85,9 @@ TEST_CASE("channel-emulator: forwards every block, impaired as the controls say"
     radio_tx_block h{};
     std::strcpy(h.format, "cs16");
     const auto blob = tone_blob(4096);
-    auto send = [&] { REQUIRE(forge::testing::wait_until([&] { return tx.publish("tx", h, blob.data(), blob.size()); })); };
+    auto send = [&] {
+        REQUIRE(forge::testing::wait_until([&] { return tx.publish("tx", h, blob.data(), blob.size()); }));
+    };
 
     // clean: bit exact
     send();
@@ -212,28 +215,38 @@ TEST_CASE("channel-emulator: 16QAM modem packet error rate per preset") {
 }
 
 TEST_CASE("channel-emulator: qam-modem -> channel-emulator -> radio-controller (simulated) -> qam-modem") {
-    forge::testing::AppRunner<radio::RadioController> radio(
-        {"--backend", "sim", "-D", "http.enabled=false", "-D", "console.telnet=",
-         "-D", "forge.data=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-         "-D", "forge.control=tcp://127.0.0.1:*", "-D", "forge.events=tcp://127.0.0.1:*",
-         "-D", "radio.sim.channels=2", "-D", "radio.sim.splitter=true", "-D", "radio.sim.loopback_db=-30",
-         "-D", "radio.rx_channels=[1]", "-D", "radio.tap_rx=[2]"});
+    forge::testing::AppRunner<radio::RadioController> radio({"--backend", "sim",
+                                                             "-D",        "http.enabled=false",
+                                                             "-D",        "console.telnet=",
+                                                             "-D",        "forge.data=tcp://127.0.0.1:*",
+                                                             "-D",        "zmq.tx=tcp://127.0.0.1:*",
+                                                             "-D",        "forge.control=tcp://127.0.0.1:*",
+                                                             "-D",        "forge.events=tcp://127.0.0.1:*",
+                                                             "-D",        "radio.sim.channels=2",
+                                                             "-D",        "radio.sim.splitter=true",
+                                                             "-D",        "radio.sim.loopback_db=-30",
+                                                             "-D",        "radio.rx_channels=[1]",
+                                                             "-D",        "radio.tap_rx=[2]"});
     auto& r = radio.app();
     forge::testing::AppRunner<emulator::ChannelEmulator> emu(
-        {"-D", "http.enabled=false", "-D", "console.telnet=", "-D", "forge.control=tcp://127.0.0.1:*",
-         "-D", "forge.events=tcp://127.0.0.1:*", "-D", "forge.data=tcp://127.0.0.1:*",
-         "-D", "emulator.input=tcp://127.0.0.1:*", "-D", "emulator.output=" + r.tx_endpoint(),
-         "-D", "emulator.radio_control=" + r.control_endpoint()});
+        {"-D", "http.enabled=false", "-D", "console.telnet=", "-D", "forge.control=tcp://127.0.0.1:*", "-D",
+         "forge.events=tcp://127.0.0.1:*", "-D", "forge.data=tcp://127.0.0.1:*", "-D",
+         "emulator.input=tcp://127.0.0.1:*", "-D", "emulator.output=" + r.tx_endpoint(), "-D",
+         "emulator.radio_control=" + r.control_endpoint()});
     auto& e = emu.app();
-    forge::testing::AppRunner<modem::QamModem> m(
-        {"-D", "http.enabled=false", "-D", "console.telnet=", "-D", "forge.control=tcp://127.0.0.1:*",
-         "-D", "forge.events=tcp://127.0.0.1:*", "-D", "forge.data=tcp://127.0.0.1:*",
-         "-D", "modem.udp_listen=127.0.0.1:0", "-D", "modem.radio_control=" + r.control_endpoint(),
-         "-D", "modem.radio_data=" + r.data_endpoint(), "-D", "modem.radio_tx=" + e.input_endpoint(),
-         "-D", "modem.test_mode=true"});
+    forge::testing::AppRunner<modem::QamModem> m({"-D", "http.enabled=false",
+                                                  "-D", "console.telnet=",
+                                                  "-D", "forge.control=tcp://127.0.0.1:*",
+                                                  "-D", "forge.events=tcp://127.0.0.1:*",
+                                                  "-D", "forge.data=tcp://127.0.0.1:*",
+                                                  "-D", "modem.udp_listen=127.0.0.1:0",
+                                                  "-D", "modem.radio_control=" + r.control_endpoint(),
+                                                  "-D", "modem.radio_data=" + r.data_endpoint(),
+                                                  "-D", "modem.radio_tx=" + e.input_endpoint(),
+                                                  "-D", "modem.test_mode=true"});
     auto& q = m.app();
-    REQUIRE(forge::testing::wait_until([&] { return get(q, "radio").get<std::string>().find("MHz") != std::string::npos; },
-                                       10s));
+    REQUIRE(forge::testing::wait_until(
+        [&] { return get(q, "radio").get<std::string>().find("MHz") != std::string::npos; }, 10s));
     // the emulator reads the rate the modem set on the radio
     REQUIRE(forge::testing::wait_until([&] { return get(e, "sample_rate").get<double>() == 3.0; }, 10s));
 
@@ -249,7 +262,8 @@ TEST_CASE("channel-emulator: qam-modem -> channel-emulator -> radio-controller (
     auto [ok_clean, crc_clean, evm_clean] = measure(2s);
     MESSAGE("clean: " << ok_clean << " test packets, EVM " << evm_clean << " dB");
     CHECK(ok_clean > 0);
-    if (realtime) CHECK(ok_clean > 300);  // ~245 packets/s at 1400 bytes (sanitizer builds skip what they cannot keep up with)
+    if (realtime)
+        CHECK(ok_clean > 300);  // ~245 packets/s at 1400 bytes (sanitizer builds skip what they cannot keep up with)
 
     set(e, "preset", "awgn-20");
     std::this_thread::sleep_for(300ms);

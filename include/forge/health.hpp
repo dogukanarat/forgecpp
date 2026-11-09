@@ -42,8 +42,7 @@ public:
     };
 
     /// `critical`: a failure of this component means the service is broken.
-    void set(const std::string& component, HealthState state, const std::string& message = {},
-             bool critical = true);
+    void set(const std::string& component, HealthState state, const std::string& message = {}, bool critical = true);
     void remove(const std::string& component);
 
     HealthState overall() const;

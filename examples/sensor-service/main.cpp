@@ -56,9 +56,7 @@ Stats compute(const std::vector<Sample>& window) {
     return s;
 }
 
-json to_json(const Stats& s) {
-    return {{"count", s.count}, {"min", s.min}, {"max", s.max}, {"mean", s.mean}};
-}
+json to_json(const Stats& s) { return {{"count", s.count}, {"min", s.min}, {"max", s.max}, {"mean", s.mean}}; }
 
 }  // namespace
 
@@ -75,8 +73,8 @@ protected:
     }
 
     void setup_cli(CLI::App& cli) override {
-        cli.add_flag_callback("--simulate-spikes", [this] { spikes_ = true; },
-                              "Inject random spikes to trigger alarms");
+        cli.add_flag_callback(
+            "--simulate-spikes", [this] { spikes_ = true; }, "Inject random spikes to trigger alarms");
     }
 
     void setup_http(forge::http::Server& server) override {
@@ -104,12 +102,12 @@ protected:
         live.value("exceedances", "Threshold exceedances", exceedances_);
 
         auto& acq = ui.group("Acquisition");
-        acq.slider("rate_hz", "Sampling rate", [this] { return rate_hz_.load(); },
-                   [this](double hz) { rate_hz_ = hz; }, 1, 500, 1)
+        acq.slider(
+               "rate_hz", "Sampling rate", [this] { return rate_hz_.load(); }, [this](double hz) { rate_hz_ = hz; }, 1,
+               500, 1)
             .unit("Hz");
         acq.number("window", "Window size", window_size_).range(5, 1000, 1).unit("samples");
-        acq.toggle("spikes", "Simulate spikes", [this] { return spikes_.load(); },
-                   [this](bool on) { spikes_ = on; });
+        acq.toggle("spikes", "Simulate spikes", [this] { return spikes_.load(); }, [this](bool on) { spikes_ = on; });
 
         auto& alarm = ui.group("Alarm");
         alarm.toggle("alarm_enabled", "High-mean alarm", alarm_enabled_)
@@ -119,10 +117,12 @@ protected:
         alarm.button("test_alarm", "Test alarm", [this] {
             alarms().raise("sensor.test", forge::Severity::info, "Test alarm raised from the dashboard");
         });
-        alarm.button("reset", "Reset counters", [this] {
-                 total_ = 0;
-                 exceedances_ = 0;
-             })
+        alarm
+            .button("reset", "Reset counters",
+                    [this] {
+                        total_ = 0;
+                        exceedances_ = 0;
+                    })
             .confirm("Reset the sample and alarm counters?")
             .danger();
     }
@@ -221,7 +221,9 @@ private:
     }
 
     json stats_json() const {
-        return {{"total_samples", total_}, {"exceedances", exceedances_}, {"rate_hz", rate_hz_.load()},
+        return {{"total_samples", total_},
+                {"exceedances", exceedances_},
+                {"rate_hz", rate_hz_.load()},
                 {"last_window", to_json(last_)}};
     }
 

@@ -53,7 +53,8 @@ std::string format_paths(const std::vector<channel::Path>& paths) {
 }
 
 ChannelEmulator::ChannelEmulator()
-    : Application({"channel-emulator", EMULATOR_VERSION, "Radio channel impairments in the TX path of radio-controller"}) {}
+    : Application(
+          {"channel-emulator", EMULATOR_VERSION, "Radio channel impairments in the TX path of radio-controller"}) {}
 
 std::string ChannelEmulator::input_endpoint() const { return in_ ? in_->endpoint() : ""; }
 
@@ -66,7 +67,9 @@ void ChannelEmulator::setup_config(forge::config::Schema& s) {
     s.string("emulator.output", "tcp://127.0.0.1:5556", "and go on to radio-controller [zmq].tx (PUSH)");
     s.string("emulator.radio_control", "tcp://127.0.0.1:5557",
              "radio-controller [forge].control, read for the sample rate (\"\" = use sample_rate_hz)");
-    s.number("emulator.sample_rate_hz", 3e6, "Sample rate when radio-controller cannot tell").range(1e3, 122.88e6).unit("Hz");
+    s.number("emulator.sample_rate_hz", 3e6, "Sample rate when radio-controller cannot tell")
+        .range(1e3, 122.88e6)
+        .unit("Hz");
     std::string names;
     for (const auto& n : channel::preset_names()) names += (names.empty() ? "" : ", ") + n;
     s.string("emulator.preset", "clean", "Settings at start: " + names);
@@ -81,19 +84,21 @@ template <class T>
 void ChannelEmulator::bind(forge::web::Group& g, const std::string& id, const std::string& label,
                            T channel::Settings::*field, double min, double max, double step, const std::string& unit) {
     if constexpr (std::is_same_v<T, bool>) {
-        g.toggle(id, label, [this, field] { return settings_.*field; },
-                 [this, field](bool on) {
-                     settings_.*field = on;
-                     preset_ = "custom";
-                     changed();
-                 });
+        g.toggle(
+            id, label, [this, field] { return settings_.*field; },
+            [this, field](bool on) {
+                settings_.*field = on;
+                preset_ = "custom";
+                changed();
+            });
     } else {
-        auto c = g.number(id, label, [this, field] { return settings_.*field; },
-                          [this, field](double v) {
-                              settings_.*field = v;
-                              preset_ = "custom";
-                              changed();
-                          });
+        auto c = g.number(
+            id, label, [this, field] { return settings_.*field; },
+            [this, field](double v) {
+                settings_.*field = v;
+                preset_ = "custom";
+                changed();
+            });
         c.range(min, max, step);
         if (!unit.empty()) c.unit(unit);
     }
@@ -108,7 +113,9 @@ void ChannelEmulator::setup_web(forge::web::Dashboard& ui) {
     bind(e, "bypass", "Bypass (no impairments)", &S::bypass);
     e.value("sample_rate", "Sample rate", [this] { return msps_; }).unit("MSPS").precision(3);
     e.value("rate_source", "Rate from", [this] { return rate_source_; });
-    e.value("signal_dbfs", "Signal (while present)", [this] { return round_to(signal_dbfs_.load(), 0.1); }).unit("dBFS");
+    e.value("signal_dbfs", "Signal (while present)", [this] {
+         return round_to(signal_dbfs_.load(), 0.1);
+     }).unit("dBFS");
     e.value("blocks", "Blocks", [this] { return blocks_.load(); });
     e.value("clipped", "Clipped samples", [this] { return clipped_.load(); });
     e.value("cpu_percent", "CPU (of real time)", [this] { return round_to(cpu_.load() * 100, 0.1); }).unit("%");
@@ -123,12 +130,14 @@ void ChannelEmulator::setup_web(forge::web::Dashboard& ui) {
     bind(level, "gain_db", "Path gain", &S::gain_db, -60, 20, 0.5, "dB");
     bind(level, "noise", "Noise", &S::noise);
     bind(level, "snr_db", "SNR", &S::snr_db, -10, 60, 0.5, "dB");
-    level.number("noise_bw_khz", "SNR bandwidth", [this] { return noise_bandwidth_hz_ / 1e3; },
-                 [this](double v) {
-                     noise_bandwidth_hz_ = v * 1e3;
-                     settings_.noise_bandwidth_hz = noise_bandwidth_hz_;
-                     changed();
-                 })
+    level
+        .number(
+            "noise_bw_khz", "SNR bandwidth", [this] { return noise_bandwidth_hz_ / 1e3; },
+            [this](double v) {
+                noise_bandwidth_hz_ = v * 1e3;
+                settings_.noise_bandwidth_hz = noise_bandwidth_hz_;
+                changed();
+            })
         .range(0, 122880, 1)
         .unit("kHz");
 
@@ -146,14 +155,15 @@ void ChannelEmulator::setup_web(forge::web::Dashboard& ui) {
 
     auto& mp = ui.group("Multipath and fading");
     bind(mp, "multipath", "Multipath", &S::multipath);
-    mp.text("paths", "Paths (delay_us:gain_db:phase_deg, ...)", [this] { return paths_text_; },
-            [this](const std::string& t) {
-                auto p = parse_paths(t);  // throws: the control reports the error
-                settings_.paths = std::move(p);
-                paths_text_ = format_paths(settings_.paths);
-                preset_ = "custom";
-                changed();
-            });
+    mp.text(
+        "paths", "Paths (delay_us:gain_db:phase_deg, ...)", [this] { return paths_text_; },
+        [this](const std::string& t) {
+            auto p = parse_paths(t);  // throws: the control reports the error
+            settings_.paths = std::move(p);
+            paths_text_ = format_paths(settings_.paths);
+            preset_ = "custom";
+            changed();
+        });
     bind(mp, "fading", "Fading", &S::fading);
     bind(mp, "fading_hz", "Fading Doppler", &S::fading_hz, 0.01, 5000, 0.1, "Hz");
     bind(mp, "rician_k_db", "Rician K (-100 = Rayleigh)", &S::rician_k_db, -100, 40, 0.5, "dB");
@@ -191,14 +201,15 @@ void ChannelEmulator::on_start() {
 
     forge::zmq::SocketOptions so;
     so.send_hwm = 4;  // backpressure from radio-controller, not a queue here
-    out_ = std::make_unique<forge::zmq::Sender>(forge::zmq::Sender::Kind::push, cfg.value<std::string>("emulator.output"),
-                                                false, so);
+    out_ = std::make_unique<forge::zmq::Sender>(forge::zmq::Sender::Kind::push,
+                                                cfg.value<std::string>("emulator.output"), false, so);
     forge::zmq::Receiver::Options ro;
     ro.bind = true;
     ro.socket.recv_hwm = 4;
     running_ = true;
-    in_ = std::make_unique<forge::zmq::Receiver>(forge::zmq::Receiver::Kind::pull, cfg.value<std::string>("emulator.input"),
-                                                 [this](forge::zmq::Message&& m) { on_block(std::move(m)); }, ro);
+    in_ = std::make_unique<forge::zmq::Receiver>(
+        forge::zmq::Receiver::Kind::pull, cfg.value<std::string>("emulator.input"),
+        [this](forge::zmq::Message&& m) { on_block(std::move(m)); }, ro);
     logger()->info("emulator: {} -> {} (preset {}), sample rate from {}", in_->endpoint(),
                    cfg.value<std::string>("emulator.output"), preset_name,
                    radio_control_.empty() ? "the configuration" : radio_control_);

@@ -11,4 +11,3 @@ std::string Pump::write_csv(const std::vector<double>& h) {
     for (std::size_t i = 0; i < h.size(); ++i) out << i << ',' << h[i] << '\n';
     return file;
 }
-

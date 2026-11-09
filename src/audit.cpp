@@ -25,9 +25,9 @@ void Audit::configure(std::size_t history, const std::string& file) {
 
 void Audit::record(Record r) {
     if (r.time_unix_ns == 0) {
-        r.time_unix_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             std::chrono::system_clock::now().time_since_epoch())
-                             .count();
+        r.time_unix_ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count();
     }
     {
         std::lock_guard lock(mutex_);
@@ -52,8 +52,14 @@ std::vector<Audit::Record> Audit::list(std::size_t limit) const {
 }
 
 json to_json(const Audit::Record& r) {
-    json j{{"time_unix_ns", r.time_unix_ns}, {"channel", r.channel}, {"client", r.client}, {"user", r.user},
-           {"action", r.action},             {"target", r.target},   {"ok", r.ok},         {"error", r.error}};
+    json j{{"time_unix_ns", r.time_unix_ns},
+           {"channel", r.channel},
+           {"client", r.client},
+           {"user", r.user},
+           {"action", r.action},
+           {"target", r.target},
+           {"ok", r.ok},
+           {"error", r.error}};
     if (!r.old_value.is_null()) j["old_value"] = r.old_value;
     if (!r.new_value.is_null()) j["new_value"] = r.new_value;
     if (r.trace.valid()) j["trace_id"] = r.trace.trace_hex();

@@ -22,8 +22,8 @@ struct FlagName {
     std::uint8_t bit;
     const char* name;
 };
-constexpr FlagName kFlagNames[] = {{flag::req, "req"},   {flag::rsp, "rsp"},     {flag::push, "push"},
-                                   {flag::ack, "ack"},   {flag::nack, "nack"},   {flag::proto, "proto"},
+constexpr FlagName kFlagNames[] = {{flag::req, "req"},  {flag::rsp, "rsp"},   {flag::push, "push"},
+                                   {flag::ack, "ack"},  {flag::nack, "nack"}, {flag::proto, "proto"},
                                    {flag::more, "more"}};
 
 }  // namespace

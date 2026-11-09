@@ -6,18 +6,18 @@
 #include <format>
 
 #include <arpa/inet.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <ctime>
 #include <deque>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
 #include <stdexcept>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <unistd.h>
 
 namespace forge {
 namespace {
@@ -120,9 +120,7 @@ struct Telnet::Session {
                 case In::sub:
                     if (c == IAC) in = In::sub_iac;
                     break;
-                case In::sub_iac:
-                    in = c == SE ? In::data : In::sub;
-                    break;
+                case In::sub_iac: in = c == SE ? In::data : In::sub; break;
             }
         }
         return lines;
@@ -299,9 +297,10 @@ void Telnet::serve(std::shared_ptr<Session> s) {
         }
     }
     if (ok) {
-        s->print(std::format("signed in as {} ({}) - 'help' for commands, 'logs on' to follow the log, 'exit' to "
-                             "leave\n",
-                             cs.user.empty() ? "anonymous" : cs.user, to_string(cs.role)));
+        s->print(
+            std::format("signed in as {} ({}) - 'help' for commands, 'logs on' to follow the log, 'exit' to "
+                        "leave\n",
+                        cs.user.empty() ? "anonymous" : cs.user, to_string(cs.role)));
         std::vector<std::string> history;
         while (s->open && running_) {
             s->print(options_.prompt);
@@ -317,7 +316,8 @@ void Telnet::serve(std::shared_ptr<Session> s) {
                 continue;
             }
             if (cmd == "history") {
-                for (std::size_t i = 0; i < history.size(); ++i) s->print(std::format("{:>4}  {}\n", i + 1, history[i]));
+                for (std::size_t i = 0; i < history.size(); ++i)
+                    s->print(std::format("{:>4}  {}\n", i + 1, history[i]));
                 continue;
             }
             if (cmd == "color") {
@@ -344,8 +344,8 @@ void Telnet::serve(std::shared_ptr<Session> s) {
                         ::localtime_r(&t, &tm);
                         const bool c = p->color;
                         p->print(std::format("{:02}:{:02}:{:02} [{}{}{}] [{}] {}\n", tm.tm_hour, tm.tm_min, tm.tm_sec,
-                                             c ? log::level_color(level) : "", log::short_name(level), c ? "\033[0m" : "",
-                                             r.logger, r.message));
+                                             c ? log::level_color(level) : "", log::short_name(level),
+                                             c ? "\033[0m" : "", r.logger, r.message));
                     });
                     s->print("following the log (logs off to stop)\n");
                 } else {

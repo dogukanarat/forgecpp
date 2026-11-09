@@ -150,7 +150,9 @@ public:
     explicit RemoteConsole(Application& app) : app_(app) {}
     void create(const Config& cfg);
     void start_telnet(const Config& cfg);
-    void start_repl() { if (console_) console_->start(); }
+    void start_repl() {
+        if (console_) console_->start();
+    }
     void stop();
     void reset();
     Console* console() { return console_.get(); }

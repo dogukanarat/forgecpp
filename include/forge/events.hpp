@@ -50,8 +50,8 @@ public:
 
     template <class Event, class Fn>
     [[nodiscard]] Subscription subscribe(Fn&& fn) {
-        auto handler = std::make_shared<Handler>(
-            [f = std::forward<Fn>(fn)](const void* e) { f(*static_cast<const Event*>(e)); });
+        auto handler =
+            std::make_shared<Handler>([f = std::forward<Fn>(fn)](const void* e) { f(*static_cast<const Event*>(e)); });
         const auto type = std::type_index(typeid(Event));
         return Subscription(impl_, type, add(type, std::move(handler)));
     }

@@ -35,7 +35,7 @@ struct Carrier {
 // A small RF environment: ISM-band beacons and a couple of narrowband signals.
 const std::vector<Carrier>& carriers() {
     static const std::vector<Carrier> c{
-        {433.92e6, -42}, {868.3e6, -50}, {915.0e6, -47},  {1575.42e6, -70},
+        {433.92e6, -42}, {868.3e6, -50},  {915.0e6, -47},  {1575.42e6, -70},
         {2412.0e6, -46}, {2418.5e6, -58}, {2437.0e6, -52}, {5800.0e6, -55},
     };
     return c;
@@ -64,9 +64,7 @@ public:
                 {"model", options_.channels > 1 ? "Simulated AD9361" : "Simulated AD9364"},
                 {"rx_channels", options_.channels},
                 {"tx_channels", options_.channels},
-                {"loopback", options_.loopback
-                                 ? nlohmann::json(fmt_loopback())
-                                 : nlohmann::json(false)},
+                {"loopback", options_.loopback ? nlohmann::json(fmt_loopback()) : nlohmann::json(false)},
                 {"carriers_mhz", [] {
                      nlohmann::json a = nlohmann::json::array();
                      for (const auto& c : carriers()) a.push_back(c.hz / 1e6);
@@ -141,7 +139,8 @@ public:
         }
         while (Clock::now() < deadline_) {
             if (cancelled_) return 0;
-            std::this_thread::sleep_for(std::min<Clock::duration>(deadline_ - Clock::now(), std::chrono::milliseconds(20)));
+            std::this_thread::sleep_for(
+                std::min<Clock::duration>(deadline_ - Clock::now(), std::chrono::milliseconds(20)));
         }
 
         // The TX queue drains like the hardware's, whether or not a channel is read;
@@ -181,13 +180,15 @@ public:
             if (!tx_active_) throw DeviceError("TX is not started");
             if (tx_cyclic_) {
                 tx_pattern_.assign(samples, {});
-                for (std::size_t i = 0; i < samples; ++i) tx_pattern_[i] = {iq[2 * i] / 32768.0f, iq[2 * i + 1] / 32768.0f};
+                for (std::size_t i = 0; i < samples; ++i)
+                    tx_pattern_[i] = {iq[2 * i] / 32768.0f, iq[2 * i + 1] / 32768.0f};
                 tx_pos_ = 0;
                 return;
             }
             // A streaming writer that pauses longer than one buffer leaves a gap.
             const auto now = Clock::now();
-            const auto period = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(samples / rate));
+            const auto period =
+                std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(samples / rate));
             if (tx_deadline_ + period < now && tx_writes_ > 0) tx_underflow_ = true;
             if (tx_deadline_ < now) tx_deadline_ = now;
             tx_deadline_ += period;
@@ -196,14 +197,15 @@ public:
             tx_head_ = 0;
             const std::size_t old = tx_ring_.size();
             tx_ring_.resize(old + samples);
-            for (std::size_t i = 0; i < samples; ++i) tx_ring_[old + i] = {iq[2 * i] / 32768.0f, iq[2 * i + 1] / 32768.0f};
+            for (std::size_t i = 0; i < samples; ++i)
+                tx_ring_[old + i] = {iq[2 * i] / 32768.0f, iq[2 * i + 1] / 32768.0f};
             const std::size_t cap = 8 * std::max<std::size_t>(tx_samples_, samples);
             if (tx_ring_.size() > cap) tx_head_ = tx_ring_.size() - cap;
             ++tx_writes_;
         }
         // Like the hardware, writes block while the queue is a buffer ahead.
-        const auto wait_until = tx_deadline_ - std::chrono::duration_cast<Clock::duration>(
-                                                  std::chrono::duration<double>(samples / rate));
+        const auto wait_until =
+            tx_deadline_ - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(samples / rate));
         std::this_thread::sleep_until(wait_until);
     }
 
@@ -235,7 +237,8 @@ private:
 
     std::string fmt_loopback() const {
         const std::string tx = "TX" + std::to_string(options_.loopback_tx + 1);
-        return options_.loopback_split ? tx + " -> splitter -> every RX" : tx + " -> RX" + std::to_string(options_.loopback_rx + 1);
+        return options_.loopback_split ? tx + " -> splitter -> every RX"
+                                       : tx + " -> RX" + std::to_string(options_.loopback_rx + 1);
     }
 
     void set(double State::*field, double value) {
@@ -413,7 +416,8 @@ private:
     void add_tx(const State&, double gain_amp, cfloat* v, std::size_t from, std::size_t m) {
         const float amp = static_cast<float>(db_to_amp(options_.loopback_db - tx_now_atten_db_) * gain_amp);
         const cfloat* x = tx_now_.data() + from;
-        for (std::size_t i = 0; i < m; ++i) v[i] = cfloat(v[i].real() + x[i].real() * amp, v[i].imag() + x[i].imag() * amp);
+        for (std::size_t i = 0; i < m; ++i)
+            v[i] = cfloat(v[i].real() + x[i].real() * amp, v[i].imag() + x[i].imag() * amp);
     }
 
     SimOptions options_;

@@ -107,7 +107,8 @@ forge_stream_header make_header(std::string_view topic, const char* type) {
     copy(h.topic, topic);
     copy(h.type, type);
     h.time_unix_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count();
     put_trace(h, trace::current());
     return h;
 }
@@ -116,7 +117,8 @@ forge_stream_header make_header(std::string_view topic, const char* type) {
 bool send_parts(::zmq::socket_t& s, std::string_view topic, const std::string& header, const std::string& body,
                 const BlobOwner& owner, const void* data, std::size_t size, bool dontwait) {
     const bool blob = data != nullptr && size > 0;
-    const auto first = dontwait ? (::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait) : ::zmq::send_flags::sndmore;
+    const auto first =
+        dontwait ? (::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait) : ::zmq::send_flags::sndmore;
     // The first frame decides: if it is accepted, the rest follow atomically.
     if (!s.send(::zmq::buffer(topic.data(), topic.size()), first)) return false;
     s.send(::zmq::buffer(header), ::zmq::send_flags::sndmore);
@@ -136,8 +138,9 @@ bool send_parts(::zmq::socket_t& s, std::string_view topic, const std::string& h
 
 std::vector<std::string> answer(const tmtc::Registry& commands, std::string_view request) {
     std::vector<std::string> frames;
-    tmtc::Dispatcher(commands).handle({reinterpret_cast<const std::uint8_t*>(request.data()), request.size()},
-                                      [&](std::span<const std::uint8_t> m) { frames.emplace_back(m.begin(), m.end()); });
+    tmtc::Dispatcher(commands).handle(
+        {reinterpret_cast<const std::uint8_t*>(request.data()), request.size()},
+        [&](std::span<const std::uint8_t> m) { frames.emplace_back(m.begin(), m.end()); });
     return frames;
 }
 
@@ -161,9 +164,15 @@ std::string source() {
 }
 
 json to_json(const StreamInfo& i) {
-    return {{"name", i.name},         {"endpoint", i.endpoint},       {"topic", i.topic},
-            {"type", i.type},         {"policy", i.policy},           {"max_rate_hz", i.max_rate_hz},
-            {"subscribers", i.subscribers}, {"sent", i.sent},         {"dropped", i.dropped}};
+    return {{"name", i.name},
+            {"endpoint", i.endpoint},
+            {"topic", i.topic},
+            {"type", i.type},
+            {"policy", i.policy},
+            {"max_rate_hz", i.max_rate_hz},
+            {"subscribers", i.subscribers},
+            {"sent", i.sent},
+            {"dropped", i.dropped}};
 }
 
 ::zmq::context_t& context() {
@@ -387,8 +396,7 @@ bool Publisher::enqueue(Stream& s, Outgoing out) {
 // Sender
 
 Sender::Sender(Kind kind, const std::string& endpoint, bool bind, SocketOptions options)
-    : kind_(kind),
-      socket_(context(), kind == Kind::pub ? ::zmq::socket_type::xpub : ::zmq::socket_type::push) {
+    : kind_(kind), socket_(context(), kind == Kind::pub ? ::zmq::socket_type::xpub : ::zmq::socket_type::push) {
     apply(socket_, options);
     if (kind_ == Kind::pub) {
         // Report every (un)subscription so subscriptions() is accurate.
@@ -414,8 +422,8 @@ std::size_t Sender::subscriptions() {
     return static_cast<std::size_t>(subscriptions_);
 }
 
-bool Sender::send_frames(std::string_view topic, const std::string& header, const std::string& body,
-                         const void* blob, std::size_t size) {
+bool Sender::send_frames(std::string_view topic, const std::string& header, const std::string& body, const void* blob,
+                         std::size_t size) {
     poll_subscriptions();
     try {
         if (!send_parts(socket_, topic, header, body, nullptr, blob, size, true)) {
@@ -437,8 +445,8 @@ bool Sender::publish(std::string_view topic, const pb::Type& type, const void* b
     auto it = seq_.find(topic);
     if (it == seq_.end()) it = seq_.emplace(std::string(topic), 0).first;
     header.seq = ++it->second;
-    return send_frames(topic, encode_to_string(*pb::type_of<forge_stream_header>, &header), encode_to_string(type, body),
-                       blob, size);
+    return send_frames(topic, encode_to_string(*pb::type_of<forge_stream_header>, &header),
+                       encode_to_string(type, body), blob, size);
 }
 
 bool Sender::send(const Message& m) {
@@ -554,14 +562,16 @@ void Server::stop() {
 }
 
 void Server::send_reply(::zmq::socket_t& out, const Job& job, const std::vector<std::string>& frames) {
-    for (const auto& frame : job.envelope) out.send(::zmq::buffer(frame), ::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait);
+    for (const auto& frame : job.envelope)
+        out.send(::zmq::buffer(frame), ::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait);
     if (frames.empty()) {
         out.send(::zmq::const_buffer(nullptr, 0), ::zmq::send_flags::dontwait);  // a REQ client waits for something
         return;
     }
     for (std::size_t i = 0; i < frames.size(); ++i) {
-        out.send(::zmq::buffer(frames[i]),
-                 i + 1 < frames.size() ? ::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait : ::zmq::send_flags::dontwait);
+        out.send(::zmq::buffer(frames[i]), i + 1 < frames.size()
+                                               ? ::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait
+                                               : ::zmq::send_flags::dontwait);
     }
 }
 
@@ -624,8 +634,8 @@ void Server::run() {
             if (items[1].revents & ZMQ_POLLIN) {
                 while (receive_all(replies_)) {
                     for (std::size_t i = 0; i < frames.size(); ++i) {
-                        socket_.send(frames[i], i + 1 < frames.size() ? ::zmq::send_flags::sndmore
-                                                                      : ::zmq::send_flags::dontwait);
+                        socket_.send(frames[i],
+                                     i + 1 < frames.size() ? ::zmq::send_flags::sndmore : ::zmq::send_flags::dontwait);
                     }
                 }
             }
@@ -722,8 +732,7 @@ Status Client::request(std::uint16_t id, std::span<const std::uint8_t> payload,
             case c2::Kind::reply:
                 if (result.ok()) result = on_answer(m);
                 break;
-            default:
-                return Status::error(module_id::zmq, EBADMSG, "an answer that is not a reply");
+            default: return Status::error(module_id::zmq, EBADMSG, "an answer that is not a reply");
         }
     }
     if (frames.empty()) return Status::error(module_id::zmq, EBADMSG, "an empty answer");

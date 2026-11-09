@@ -58,8 +58,8 @@ std::string mutate(std::string s, std::mt19937& rng) {
 void fuzz_fail(const char* what) {
     std::fprintf(stderr, "fuzz: %s\n", what);
     if (current) {
-        std::ofstream("fuzz-failure.bin", std::ios::binary).write(current->data(),
-                                                                  static_cast<std::streamsize>(current->size()));
+        std::ofstream("fuzz-failure.bin", std::ios::binary)
+            .write(current->data(), static_cast<std::streamsize>(current->size()));
         std::fprintf(stderr, "fuzz: input saved in fuzz-failure.bin (run again: <target> fuzz-failure.bin)\n");
     }
     std::abort();

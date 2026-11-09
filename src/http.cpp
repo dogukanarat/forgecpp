@@ -72,8 +72,7 @@ Handler json_body_handler(JsonBodyHandler fn) {
 
 json parse_response(const httplib::Result& result, const char* method, const std::string& path) {
     if (!result) {
-        throw HttpError(0, std::string(method) + " " + path + " failed: " +
-                               httplib::to_string(result.error()));
+        throw HttpError(0, std::string(method) + " " + path + " failed: " + httplib::to_string(result.error()));
     }
     json body;
     if (!result->body.empty()) {
@@ -165,12 +164,8 @@ Server& Server::del(const std::string& p, Handler h) {
 
 Server& Server::get_json(const std::string& p, JsonHandler h) { return get(p, json_handler(std::move(h))); }
 Server& Server::del_json(const std::string& p, JsonHandler h) { return del(p, json_handler(std::move(h))); }
-Server& Server::post_json(const std::string& p, JsonBodyHandler h) {
-    return post(p, json_body_handler(std::move(h)));
-}
-Server& Server::put_json(const std::string& p, JsonBodyHandler h) {
-    return put(p, json_body_handler(std::move(h)));
-}
+Server& Server::post_json(const std::string& p, JsonBodyHandler h) { return post(p, json_body_handler(std::move(h))); }
+Server& Server::put_json(const std::string& p, JsonBodyHandler h) { return put(p, json_body_handler(std::move(h))); }
 Server& Server::patch_json(const std::string& p, JsonBodyHandler h) {
     return patch(p, json_body_handler(std::move(h)));
 }

@@ -62,8 +62,7 @@ public:
     Console& operator=(const Console&) = delete;
 
     /// Register a command. `help` is shown by the builtin `help` command.
-    Console& add(const std::string& name, const std::string& help, Handler handler,
-                 Completer completer = {});
+    Console& add(const std::string& name, const std::string& help, Handler handler, Completer completer = {});
     bool remove(const std::string& name);
     std::vector<std::string> commands() const;
 

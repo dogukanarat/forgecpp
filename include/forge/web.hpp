@@ -168,8 +168,7 @@ public:
 
     /// Slider between min and max.
     template <class T, class = std::enable_if_t<std::is_arithmetic_v<T>>>
-    Control slider(const std::string& id, const std::string& label, T& value, double min, double max,
-                   double step = 1) {
+    Control slider(const std::string& id, const std::string& label, T& value, double min, double max, double step = 1) {
         return numeric(Kind::slider, id, label, value).range(min, max, step);
     }
     Control slider(const std::string& id, const std::string& label, std::function<double()> get,
@@ -211,15 +210,16 @@ private:
 
     template <class T>
     Control numeric(Kind kind, const std::string& id, const std::string& label, T& value) {
-        return add(kind, id, label, [&value] { return json(value); },
-                   [&value](const json& v) {
-                       const double d = v.get<double>();
-                       if constexpr (std::is_integral_v<T>) {
-                           value = static_cast<T>(std::llround(d));
-                       } else {
-                           value = static_cast<T>(d);
-                       }
-                   });
+        return add(
+            kind, id, label, [&value] { return json(value); },
+            [&value](const json& v) {
+                const double d = v.get<double>();
+                if constexpr (std::is_integral_v<T>) {
+                    value = static_cast<T>(std::llround(d));
+                } else {
+                    value = static_cast<T>(d);
+                }
+            });
     }
     Control add(Kind kind, const std::string& id, const std::string& label, Getter get, Setter set);
     Control value_getter(const std::string& id, const std::string& label, Getter get);

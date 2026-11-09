@@ -7,8 +7,7 @@ namespace forge {
 struct EventBus::Impl {
     mutable std::shared_mutex mutex;
     std::uint64_t next_id = 1;
-    std::unordered_map<std::type_index, std::vector<std::pair<std::uint64_t, std::shared_ptr<Handler>>>>
-        handlers;
+    std::unordered_map<std::type_index, std::vector<std::pair<std::uint64_t, std::shared_ptr<Handler>>>> handlers;
 
     void remove(std::type_index type, std::uint64_t id) {
         std::unique_lock lock(mutex);

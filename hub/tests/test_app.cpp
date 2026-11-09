@@ -37,7 +37,10 @@ protected:
     }
     void on_start() override {
         if (crash_ms_ > 0) after(std::chrono::milliseconds(crash_ms_), [] { ::kill(::getpid(), SIGKILL); });
-        if (hang_ms_ > 0) after(std::chrono::milliseconds(hang_ms_), [] { for (;;) std::this_thread::sleep_for(1h); });
+        if (hang_ms_ > 0)
+            after(std::chrono::milliseconds(hang_ms_), [] {
+                for (;;) std::this_thread::sleep_for(1h);
+            });
         if (exit_ms_ > 0) after(std::chrono::milliseconds(exit_ms_), [this] { stop(exit_code_); });
     }
 

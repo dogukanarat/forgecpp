@@ -31,12 +31,9 @@ struct Preset {
 };
 const std::map<std::string, Preset>& presets() {
     static const std::map<std::string, Preset> p{
-        {"ism_433", {"ISM 433 MHz", 433.92, 2}},
-        {"ism_868", {"SRD 868 MHz", 868.0, 4}},
-        {"ism_915", {"ISM 902-928 MHz", 915.0, 26}},
-        {"gps_l1", {"GPS L1", 1575.42, 5}},
-        {"wifi_2g4", {"Wi-Fi 2.4 GHz", 2441.75, 90}},
-        {"wifi_5g", {"Wi-Fi 5 GHz", 5500.0, 700}},
+        {"ism_433", {"ISM 433 MHz", 433.92, 2}},      {"ism_868", {"SRD 868 MHz", 868.0, 4}},
+        {"ism_915", {"ISM 902-928 MHz", 915.0, 26}},  {"gps_l1", {"GPS L1", 1575.42, 5}},
+        {"wifi_2g4", {"Wi-Fi 2.4 GHz", 2441.75, 90}}, {"wifi_5g", {"Wi-Fi 5 GHz", 5500.0, 700}},
         {"full", {"Full span", 3035.0, 5930}},
     };
     return p;
@@ -67,15 +64,32 @@ std::string fmt_freq(double hz) {
 
 json settings_json(const Settings& s, double ref, double scale, bool limit_on, double limit) {
     json m = json::array();
-    for (const auto& mk : s.markers) m.push_back({{"enabled", mk.enabled}, {"freq_hz", mk.freq_hz}, {"delta", mk.delta}});
-    return {{"center_hz", s.center_hz},     {"span_hz", s.span_hz},        {"rbw_hz", s.rbw_hz},
-            {"vbw_averages", s.vbw_averages}, {"window", s.window},        {"gain_mode", s.gain_mode},
-            {"rx_gain_db", s.rx_gain_db},   {"unit", s.unit},              {"cal_offset_db", s.cal_offset_db},
-            {"trace_modes", s.trace_modes}, {"trace_average", s.trace_average}, {"detector", s.detector},
-            {"points", s.points},           {"markers", m},                {"active_marker", s.active_marker},
-            {"peak_track", s.peak_track},   {"measurement", s.measurement}, {"channel_bw_hz", s.channel_bw_hz},
-            {"obw_percent", s.obw_percent}, {"update_hz", s.update_hz},   {"ref_level", ref},
-            {"scale_db", scale},            {"limit_on", limit_on},        {"limit_level", limit}};
+    for (const auto& mk : s.markers)
+        m.push_back({{"enabled", mk.enabled}, {"freq_hz", mk.freq_hz}, {"delta", mk.delta}});
+    return {{"center_hz", s.center_hz},
+            {"span_hz", s.span_hz},
+            {"rbw_hz", s.rbw_hz},
+            {"vbw_averages", s.vbw_averages},
+            {"window", s.window},
+            {"gain_mode", s.gain_mode},
+            {"rx_gain_db", s.rx_gain_db},
+            {"unit", s.unit},
+            {"cal_offset_db", s.cal_offset_db},
+            {"trace_modes", s.trace_modes},
+            {"trace_average", s.trace_average},
+            {"detector", s.detector},
+            {"points", s.points},
+            {"markers", m},
+            {"active_marker", s.active_marker},
+            {"peak_track", s.peak_track},
+            {"measurement", s.measurement},
+            {"channel_bw_hz", s.channel_bw_hz},
+            {"obw_percent", s.obw_percent},
+            {"update_hz", s.update_hz},
+            {"ref_level", ref},
+            {"scale_db", scale},
+            {"limit_on", limit_on},
+            {"limit_level", limit}};
 }
 
 }  // namespace
@@ -98,7 +112,9 @@ void Analyzer::setup_config(forge::config::Schema& s) {
     s.boolean("analyzer.control_gain", true, "Set that channel's gain (false: radio-controller keeps it)");
     s.string("analyzer.radio_data", "tcp://127.0.0.1:5555", "radio: radio-controller [forge].data");
     s.string("analyzer.radio_control", "tcp://127.0.0.1:5557", "radio: radio-controller [forge].control");
-    s.integer("analyzer.radio_timeout_ms", 3000, "radio: no block for this long = device error").range(500, 60000).unit("ms");
+    s.integer("analyzer.radio_timeout_ms", 3000, "radio: no block for this long = device error")
+        .range(500, 60000)
+        .unit("ms");
     s.integer("analyzer.timeout_ms", 2000, "libiio timeout").range(100, 60000).unit("ms");
     s.string("analyzer.state_file", "", "Keep measurement settings across restarts (JSON)");
     s.number("analyzer.sweep_rate_hz", 61.44e6, "Sample rate of swept spans").range(2.083334e6, 61.44e6).unit("Hz");
@@ -113,7 +129,8 @@ void Analyzer::setup_config(forge::config::Schema& s) {
     s.string("analyzer.window", "blackman_harris", "FFT window")
         .choices({"rectangular", "hann", "hamming", "blackman_harris", "flat_top"});
     s.integer("analyzer.vbw_averages", 1, "FFTs averaged per capture").range(1, 64);
-    s.string("analyzer.gain_mode", "manual", "Gain control").choices({"manual", "slow_attack", "fast_attack", "hybrid"});
+    s.string("analyzer.gain_mode", "manual", "Gain control")
+        .choices({"manual", "slow_attack", "fast_attack", "hybrid"});
     s.number("analyzer.rx_gain_db", 40, "RX gain (manual)").range(-3, 71).unit("dB");
     s.string("analyzer.unit", "dBFS", "Display unit").choices({"dBFS", "dBm"});
     s.number("analyzer.cal_offset_db", 0, "dBm calibration").unit("dB");
@@ -205,7 +222,8 @@ void Analyzer::load(const forge::Config& cfg) {
     s.channel_bw_hz = std::max(1e3, j.value("channel_bw_hz", s.channel_bw_hz));
     s.obw_percent = std::clamp(j.value("obw_percent", s.obw_percent), 50.0, 99.99);
     s.update_hz = std::clamp(j.value("update_hz", s.update_hz), 1.0, 30.0);
-    s.settle_buffers = j.value("settle_buffers", backend_kind_ == "iio" ? std::size_t{3} : std::size_t{1});  // computed default
+    s.settle_buffers =
+        j.value("settle_buffers", backend_kind_ == "iio" ? std::size_t{3} : std::size_t{1});  // computed default
     // validate names early: a bad config should fail at start-up, not in the engine
     radio::dsp::parse_window(s.window);
     parse_detector(s.detector);
@@ -252,49 +270,54 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
 
     // --- frequency ---------------------------------------------------------------
     auto& fq = ui.group("Frequency");
-    fq.number("center_mhz", "Center", [this] { return mhz(settings_.center_hz); },
-              [this](double v) { set_frequency(v * 1e6, settings_.span_hz); })
+    fq.number(
+          "center_mhz", "Center", [this] { return mhz(settings_.center_hz); },
+          [this](double v) { set_frequency(v * 1e6, settings_.span_hz); })
         .range(kMinFreq / 1e6, kMaxFreq / 1e6, 0.000001)
         .unit("MHz")
         .precision(4);
-    fq.number("span_mhz", "Span", [this] { return mhz(settings_.span_hz); },
-              [this](double v) { set_frequency(settings_.center_hz, v * 1e6); })
+    fq.number(
+          "span_mhz", "Span", [this] { return mhz(settings_.span_hz); },
+          [this](double v) { set_frequency(settings_.center_hz, v * 1e6); })
         .range(0.01, (kMaxFreq - kMinFreq) / 1e6, 0.000001)
         .unit("MHz")
         .precision(4);
-    fq.number("start_mhz", "Start", [this] { return mhz(settings_.center_hz - settings_.span_hz / 2); },
-              [this](double v) {
-                  const double stop = settings_.center_hz + settings_.span_hz / 2;
-                  if (v * 1e6 >= stop) throw HttpError(400, "start must be below stop");
-                  set_frequency((v * 1e6 + stop) / 2, stop - v * 1e6);
-              })
+    fq.number(
+          "start_mhz", "Start", [this] { return mhz(settings_.center_hz - settings_.span_hz / 2); },
+          [this](double v) {
+              const double stop = settings_.center_hz + settings_.span_hz / 2;
+              if (v * 1e6 >= stop) throw HttpError(400, "start must be below stop");
+              set_frequency((v * 1e6 + stop) / 2, stop - v * 1e6);
+          })
         .range(kMinFreq / 1e6, kMaxFreq / 1e6, 0.000001)
         .unit("MHz")
         .precision(4);
-    fq.number("stop_mhz", "Stop", [this] { return mhz(settings_.center_hz + settings_.span_hz / 2); },
-              [this](double v) {
-                  const double start = settings_.center_hz - settings_.span_hz / 2;
-                  if (v * 1e6 <= start) throw HttpError(400, "stop must be above start");
-                  set_frequency((start + v * 1e6) / 2, v * 1e6 - start);
-              })
+    fq.number(
+          "stop_mhz", "Stop", [this] { return mhz(settings_.center_hz + settings_.span_hz / 2); },
+          [this](double v) {
+              const double start = settings_.center_hz - settings_.span_hz / 2;
+              if (v * 1e6 <= start) throw HttpError(400, "stop must be above start");
+              set_frequency((start + v * 1e6) / 2, v * 1e6 - start);
+          })
         .range(kMinFreq / 1e6, kMaxFreq / 1e6, 0.000001)
         .unit("MHz")
         .precision(4);
-    fq.select("preset", "Preset", preset_ids(),
-              [this] {
-                  for (const auto& [id, p] : presets()) {
-                      if (std::abs(settings_.center_hz - p.center_mhz * 1e6) < 1 &&
-                          std::abs(settings_.span_hz - p.span_mhz * 1e6) < 1) {
-                          return id;
-                      }
+    fq.select(
+          "preset", "Preset", preset_ids(),
+          [this] {
+              for (const auto& [id, p] : presets()) {
+                  if (std::abs(settings_.center_hz - p.center_mhz * 1e6) < 1 &&
+                      std::abs(settings_.span_hz - p.span_mhz * 1e6) < 1) {
+                      return id;
                   }
-                  return std::string("custom");
-              },
-              [this](const std::string& id) {
-                  if (id == "custom") return;
-                  const auto& p = presets().at(id);
-                  set_frequency(p.center_mhz * 1e6, p.span_mhz * 1e6);
-              })
+              }
+              return std::string("custom");
+          },
+          [this](const std::string& id) {
+              if (id == "custom") return;
+              const auto& p = presets().at(id);
+              set_frequency(p.center_mhz * 1e6, p.span_mhz * 1e6);
+          })
         .help("ISM 433/868/915, GPS L1, Wi-Fi 2.4/5 GHz, full span");
     fq.button("full_span", "Full span", [this] { set_frequency(3035e6, 5930e6); });
     fq.value("sweep_mode", "Mode", [this] {
@@ -309,39 +332,47 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
 
     // --- bandwidth ------------------------------------------------------------------
     auto& bw = ui.group("Bandwidth");
-    bw.toggle("rbw_auto", "Auto RBW", [this] { return settings_.rbw_hz <= 0; },
-              [this](bool on) {
-                  if (on) settings_.rbw_hz = 0;
-                  else if (auto f = latest()) settings_.rbw_hz = f->plan.rbw_hz;
-                  else settings_.rbw_hz = 100e3;
-                  changed();
-              });
-    bw.number("rbw_khz", "RBW", [this] {
-                  const auto f = latest();
-                  const double hz = settings_.rbw_hz > 0 ? settings_.rbw_hz : f ? f->plan.rbw_hz : 0.0;
-                  return std::round(hz) / 1e3;
-              },
-              [this](double khz) {
-                  settings_.rbw_hz = khz * 1e3;
-                  changed();
-              })
+    bw.toggle(
+        "rbw_auto", "Auto RBW", [this] { return settings_.rbw_hz <= 0; },
+        [this](bool on) {
+            if (on)
+                settings_.rbw_hz = 0;
+            else if (auto f = latest())
+                settings_.rbw_hz = f->plan.rbw_hz;
+            else
+                settings_.rbw_hz = 100e3;
+            changed();
+        });
+    bw.number(
+          "rbw_khz", "RBW",
+          [this] {
+              const auto f = latest();
+              const double hz = settings_.rbw_hz > 0 ? settings_.rbw_hz : f ? f->plan.rbw_hz : 0.0;
+              return std::round(hz) / 1e3;
+          },
+          [this](double khz) {
+              settings_.rbw_hz = khz * 1e3;
+              changed();
+          })
         .range(0.1, 10000, 0.001)
         .unit("kHz")
         .precision(3)
         .help("Set a value to switch to manual RBW; the actual RBW depends on the FFT size");
-    bw.number("vbw_averages", "Video averaging", [this] { return double(settings_.vbw_averages); },
-              [this](double v) {
-                  settings_.vbw_averages = static_cast<std::size_t>(v);
-                  changed();
-              })
+    bw.number(
+          "vbw_averages", "Video averaging", [this] { return double(settings_.vbw_averages); },
+          [this](double v) {
+              settings_.vbw_averages = static_cast<std::size_t>(v);
+              changed();
+          })
         .range(1, 64, 1)
         .unit("FFTs")
         .help("FFTs averaged per capture: smoother noise, slower sweep");
-    bw.select("window", "Window", radio::dsp::window_names(), [this] { return settings_.window; },
-              [this](const std::string& w) {
-                  settings_.window = w;
-                  changed();
-              });
+    bw.select(
+        "window", "Window", radio::dsp::window_names(), [this] { return settings_.window; },
+        [this](const std::string& w) {
+            settings_.window = w;
+            changed();
+        });
     bw.value("rbw_actual", "Actual RBW", [this] {
         const auto f = latest();
         return f ? fmt_freq(f->plan.rbw_hz) : std::string("-");
@@ -358,45 +389,51 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
     // --- amplitude -----------------------------------------------------------------
     auto& am = ui.group("Amplitude");
     am.number("ref_level", "Reference level", ref_level_).range(-150, 30, 0.1).unit("dB").precision(1);
-    am.select("scale_db", "Scale", {"1", "2", "5", "10", "20"},
-              [this] { return std::format("{}", static_cast<int>(scale_db_)); },
-              [this](const std::string& v) {
-                  scale_db_ = std::stod(v);
-                  dirty_ = true;
-              })
+    am.select(
+          "scale_db", "Scale", {"1", "2", "5", "10", "20"},
+          [this] { return std::format("{}", static_cast<int>(scale_db_)); },
+          [this](const std::string& v) {
+              scale_db_ = std::stod(v);
+              dirty_ = true;
+          })
         .help("dB per division (10 divisions)");
-    am.select("unit", "Unit", {"dBFS", "dBm"}, [this] { return settings_.unit; },
-              [this](const std::string& u) {
-                  settings_.unit = u;
-                  changed();
-              });
-    am.number("cal_offset_db", "dBm calibration", [this] { return settings_.cal_offset_db; },
-              [this](double v) {
-                  settings_.cal_offset_db = v;
-                  changed();
-              })
+    am.select(
+        "unit", "Unit", {"dBFS", "dBm"}, [this] { return settings_.unit; },
+        [this](const std::string& u) {
+            settings_.unit = u;
+            changed();
+        });
+    am.number(
+          "cal_offset_db", "dBm calibration", [this] { return settings_.cal_offset_db; },
+          [this](double v) {
+              settings_.cal_offset_db = v;
+              changed();
+          })
         .range(-100, 100, 0.1)
         .unit("dB")
         .help("dBm = dBFS - RX gain + calibration (measure a known signal to find it)");
-    am.select("gain_mode", "Gain control", radio::gain_modes(), [this] { return settings_.gain_mode; },
-              [this](const std::string& m) {
-                  require_gain_control();
-                  settings_.gain_mode = m;
-                  changed();
-              })
+    am.select(
+          "gain_mode", "Gain control", radio::gain_modes(), [this] { return settings_.gain_mode; },
+          [this](const std::string& m) {
+              require_gain_control();
+              settings_.gain_mode = m;
+              changed();
+          })
         .help("Manual gain keeps levels comparable between sweeps");
-    am.slider("rx_gain_db", "RX gain", [this] {
-                  if (control_gain_) return settings_.rx_gain_db;
-                  const auto f = latest();  // someone else's: show what it is
-                  return f ? f->rx_gain_db : settings_.rx_gain_db;
-              },
-              [this](double v) {
-                  require_gain_control();
-                  if (settings_.gain_mode != "manual") throw HttpError(409, "set gain control to manual first");
-                  settings_.rx_gain_db = v;
-                  changed();
-              },
-              -3, 71, 1)
+    am.slider(
+          "rx_gain_db", "RX gain",
+          [this] {
+              if (control_gain_) return settings_.rx_gain_db;
+              const auto f = latest();  // someone else's: show what it is
+              return f ? f->rx_gain_db : settings_.rx_gain_db;
+          },
+          [this](double v) {
+              require_gain_control();
+              if (settings_.gain_mode != "manual") throw HttpError(409, "set gain control to manual first");
+              settings_.rx_gain_db = v;
+              changed();
+          },
+          -3, 71, 1)
         .unit("dB")
         .precision(0);
     am.value("overload", "ADC overload", [this] {
@@ -407,92 +444,102 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
     // --- traces --------------------------------------------------------------------
     auto& tr = ui.group("Traces");
     for (std::size_t i = 0; i < kTraces; ++i) {
-        tr.select(std::format("trace{}_mode", i + 1), std::format("Trace {}", i + 1), trace_mode_names(),
-                  [this, i] { return settings_.trace_modes[i]; },
-                  [this, i](const std::string& m) {
-                      settings_.trace_modes[i] = m;
-                      changed();
-                  });
+        tr.select(
+            std::format("trace{}_mode", i + 1), std::format("Trace {}", i + 1), trace_mode_names(),
+            [this, i] { return settings_.trace_modes[i]; },
+            [this, i](const std::string& m) {
+                settings_.trace_modes[i] = m;
+                changed();
+            });
     }
-    tr.number("trace_average", "Average count", [this] { return double(settings_.trace_average); },
-              [this](double v) {
-                  settings_.trace_average = static_cast<std::size_t>(v);
-                  changed();
-              })
+    tr.number(
+          "trace_average", "Average count", [this] { return double(settings_.trace_average); },
+          [this](double v) {
+              settings_.trace_average = static_cast<std::size_t>(v);
+              changed();
+          })
         .range(2, 1000, 1)
         .unit("sweeps");
-    tr.select("detector", "Detector", detector_names(), [this] { return settings_.detector; },
-              [this](const std::string& d) {
-                  settings_.detector = d;
-                  changed();
-              });
-    tr.select("points", "Display points", {"401", "801", "1001", "2001", "4001"},
-              [this] { return std::to_string(settings_.points); },
-              [this](const std::string& p) {
-                  settings_.points = std::stoul(p);
-                  changed();
-              });
+    tr.select(
+        "detector", "Detector", detector_names(), [this] { return settings_.detector; },
+        [this](const std::string& d) {
+            settings_.detector = d;
+            changed();
+        });
+    tr.select(
+        "points", "Display points", {"401", "801", "1001", "2001", "4001"},
+        [this] { return std::to_string(settings_.points); },
+        [this](const std::string& p) {
+            settings_.points = std::stoul(p);
+            changed();
+        });
     tr.button("reset_traces", "Restart traces", [this] {
         if (engine_) engine_->reset_traces();
     });
 
     // --- markers -------------------------------------------------------------------
     auto& mk = ui.group("Markers");
-    mk.select("active_marker", "Active marker", {"1", "2", "3", "4"},
-              [this] { return std::to_string(settings_.active_marker + 1); },
-              [this](const std::string& v) {
-                  settings_.active_marker = std::stoul(v) - 1;
-                  changed();
-              });
-    mk.select("marker_trace", "Marker trace", {"1", "2", "3"},
-              [this] { return std::to_string(settings_.marker_trace + 1); },
-              [this](const std::string& v) {
-                  settings_.marker_trace = std::stoul(v) - 1;
-                  changed();
-              });
+    mk.select(
+        "active_marker", "Active marker", {"1", "2", "3", "4"},
+        [this] { return std::to_string(settings_.active_marker + 1); },
+        [this](const std::string& v) {
+            settings_.active_marker = std::stoul(v) - 1;
+            changed();
+        });
+    mk.select(
+        "marker_trace", "Marker trace", {"1", "2", "3"}, [this] { return std::to_string(settings_.marker_trace + 1); },
+        [this](const std::string& v) {
+            settings_.marker_trace = std::stoul(v) - 1;
+            changed();
+        });
     for (std::size_t i = 0; i < kMarkers; ++i) {
-        mk.toggle(std::format("m{}_on", i + 1), std::format("Marker {}", i + 1),
-                  [this, i] { return settings_.markers[i].enabled; },
-                  [this, i](bool on) {
-                      auto& m = settings_.markers[i];
-                      if (on && !m.enabled) {
+        mk.toggle(
+            std::format("m{}_on", i + 1), std::format("Marker {}", i + 1),
+            [this, i] { return settings_.markers[i].enabled; },
+            [this, i](bool on) {
+                auto& m = settings_.markers[i];
+                if (on && !m.enabled) {
                           // start on the strongest peak no other marker sits on
-                          m.freq_hz = settings_.center_hz;
-                          if (const auto f = latest()) {
-                              const double tol = std::max(f->plan.rbw_hz, (f->stop_hz - f->start_hz) / double(f->points));
-                              for (const auto& p : f->peaks) {
-                                  const bool taken = std::any_of(settings_.markers.begin(), settings_.markers.end(),
-                                      [&](const MarkerSettings& o) { return o.enabled && std::abs(o.freq_hz - p.freq_hz) <= tol; });
-                                  if (!taken) {
-                                      m.freq_hz = p.freq_hz;
-                                      break;
-                                  }
-                              }
-                          }
-                          settings_.active_marker = i;
-                      }
-                      m.enabled = on;
-                      changed();
-                  });
-        mk.number(std::format("m{}_mhz", i + 1), std::format("Marker {} frequency", i + 1),
-                  [this, i] { return mhz(settings_.markers[i].freq_hz); },
-                  [this, i](double v) {
-                      auto& m = settings_.markers[i];
-                      m.freq_hz = v * 1e6;
-                      m.enabled = true;
-                      settings_.active_marker = i;
-                      changed();
-                  })
+                    m.freq_hz = settings_.center_hz;
+                    if (const auto f = latest()) {
+                        const double tol = std::max(f->plan.rbw_hz, (f->stop_hz - f->start_hz) / double(f->points));
+                        for (const auto& p : f->peaks) {
+                            const bool taken = std::any_of(
+                                settings_.markers.begin(), settings_.markers.end(), [&](const MarkerSettings& o) {
+                                    return o.enabled && std::abs(o.freq_hz - p.freq_hz) <= tol;
+                                });
+                            if (!taken) {
+                                m.freq_hz = p.freq_hz;
+                                break;
+                            }
+                        }
+                    }
+                    settings_.active_marker = i;
+                }
+                m.enabled = on;
+                changed();
+            });
+        mk.number(
+              std::format("m{}_mhz", i + 1), std::format("Marker {} frequency", i + 1),
+              [this, i] { return mhz(settings_.markers[i].freq_hz); },
+              [this, i](double v) {
+                  auto& m = settings_.markers[i];
+                  m.freq_hz = v * 1e6;
+                  m.enabled = true;
+                  settings_.active_marker = i;
+                  changed();
+              })
             .range(kMinFreq / 1e6, kMaxFreq / 1e6, 0.000001)
             .unit("MHz")
             .precision(4);
         if (i > 0) {
-            mk.toggle(std::format("m{}_delta", i + 1), std::format("Marker {} delta", i + 1),
-                      [this, i] { return settings_.markers[i].delta; },
-                      [this, i](bool on) {
-                          settings_.markers[i].delta = on;
-                          changed();
-                      })
+            mk.toggle(
+                  std::format("m{}_delta", i + 1), std::format("Marker {} delta", i + 1),
+                  [this, i] { return settings_.markers[i].delta; },
+                  [this, i](bool on) {
+                      settings_.markers[i].delta = on;
+                      changed();
+                  })
                 .help("Show frequency and level relative to marker 1");
         }
     }
@@ -505,40 +552,45 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
         if (!m.enabled) throw HttpError(409, "the active marker is off");
         set_frequency(m.freq_hz, settings_.span_hz);
     });
-    mk.toggle("peak_track", "Peak track", [this] { return settings_.peak_track; },
-              [this](bool on) {
-                  settings_.peak_track = on;
-                  if (on) active().enabled = true;
-                  changed();
-              })
+    mk.toggle(
+          "peak_track", "Peak track", [this] { return settings_.peak_track; },
+          [this](bool on) {
+              settings_.peak_track = on;
+              if (on) active().enabled = true;
+              changed();
+          })
         .help("The active marker follows the strongest signal");
-    mk.toggle("signal_track", "Signal track", [this] { return settings_.signal_track; },
-              [this](bool on) {
-                  settings_.signal_track = on;
-                  changed();
-              })
+    mk.toggle(
+          "signal_track", "Signal track", [this] { return settings_.signal_track; },
+          [this](bool on) {
+              settings_.signal_track = on;
+              changed();
+          })
         .help("Retune so the strongest signal stays at the center");
 
     // --- measurements -----------------------------------------------------------------
     auto& ms = ui.group("Measurements");
-    ms.select("measurement", "Measurement", {"off", "channel_power", "obw"}, [this] { return settings_.measurement; },
-              [this](const std::string& m) {
-                  settings_.measurement = m;
-                  changed();
-              });
-    ms.number("channel_bw_mhz", "Channel bandwidth", [this] { return settings_.channel_bw_hz / 1e6; },
-              [this](double v) {
-                  settings_.channel_bw_hz = v * 1e6;
-                  changed();
-              })
+    ms.select(
+        "measurement", "Measurement", {"off", "channel_power", "obw"}, [this] { return settings_.measurement; },
+        [this](const std::string& m) {
+            settings_.measurement = m;
+            changed();
+        });
+    ms.number(
+          "channel_bw_mhz", "Channel bandwidth", [this] { return settings_.channel_bw_hz / 1e6; },
+          [this](double v) {
+              settings_.channel_bw_hz = v * 1e6;
+              changed();
+          })
         .range(0.001, 6000, 0.001)
         .unit("MHz")
         .precision(3);
-    ms.number("obw_percent", "OBW power", [this] { return settings_.obw_percent; },
-              [this](double v) {
-                  settings_.obw_percent = v;
-                  changed();
-              })
+    ms.number(
+          "obw_percent", "OBW power", [this] { return settings_.obw_percent; },
+          [this](double v) {
+              settings_.obw_percent = v;
+              changed();
+          })
         .range(50, 99.99, 0.01)
         .unit("%");
     ms.value("result", "Result", [this] {
@@ -550,31 +602,34 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
     });
     ms.toggle("limit_on", "Limit line", limit_on_).help("Raise an alarm when the live trace crosses the line");
     ms.number("limit_level", "Limit level", limit_level_).range(-200, 50, 0.1).unit("dB").precision(1);
-    ms.number("peak_threshold", "Peak table threshold", [this] { return settings_.peak_threshold_db; },
-              [this](double v) {
-                  settings_.peak_threshold_db = v;
-                  changed();
-              })
+    ms.number(
+          "peak_threshold", "Peak table threshold", [this] { return settings_.peak_threshold_db; },
+          [this](double v) {
+              settings_.peak_threshold_db = v;
+              changed();
+          })
         .range(-200, 50, 1)
         .unit("dB");
 
     // --- sweep / device ----------------------------------------------------------------
     auto& sw = ui.group("Sweep");
-    sw.toggle("run", "Run", [this] { return settings_.run; },
-              [this](bool on) {
-                  settings_.run = on;
-                  changed();
-              });
+    sw.toggle(
+        "run", "Run", [this] { return settings_.run; },
+        [this](bool on) {
+            settings_.run = on;
+            changed();
+        });
     sw.button("single", "Single sweep", [this] {
         settings_.run = false;
         changed();
         if (engine_) engine_->single();
     });
-    sw.number("update_hz", "Max update rate", [this] { return settings_.update_hz; },
-              [this](double v) {
-                  settings_.update_hz = v;
-                  changed();
-              })
+    sw.number(
+          "update_hz", "Max update rate", [this] { return settings_.update_hz; },
+          [this](double v) {
+              settings_.update_hz = v;
+              changed();
+          })
         .range(1, 30, 1)
         .unit("Hz");
     sw.value("sweep_time", "Sweep time", [this] {
@@ -582,10 +637,12 @@ void Analyzer::setup_web(forge::web::Dashboard& ui) {
         return f ? std::format("{:.1f} ms", f->sweep_ms) : std::string("-");
     });
     sw.value("connected", "Connected", [this] { return status_.connected; });
-    sw.value("backend", "Backend", [this] { return status_.connected ? status_.backend : backend_kind_ + " (not connected)"; });
-    sw.value("temperature_c", "Temperature", [this] {
-        return status_.temperature_c ? json(*status_.temperature_c) : json(nullptr);
-    }).unit("°C").precision(1);
+    sw.value("backend", "Backend",
+             [this] { return status_.connected ? status_.backend : backend_kind_ + " (not connected)"; });
+    sw.value("temperature_c", "Temperature",
+             [this] { return status_.temperature_c ? json(*status_.temperature_c) : json(nullptr); })
+        .unit("°C")
+        .precision(1);
     sw.button("reconnect", "Reconnect", [this] {
         if (engine_) engine_->reconnect();
     });
@@ -623,7 +680,8 @@ void Analyzer::peak_search() {
 void Analyzer::next_peak(int direction) {
     const auto f = require_frame();
     auto& m = active();
-    if (!m.enabled || f->markers[settings_.active_marker].outside || m.freq_hz < f->start_hz || m.freq_hz > f->stop_hz) {
+    if (!m.enabled || f->markers[settings_.active_marker].outside || m.freq_hz < f->start_hz ||
+        m.freq_hz > f->stop_hz) {
         return peak_search();
     }
     // Use the marker as set now (the frame may predate the last move) and the
@@ -708,12 +766,17 @@ json Analyzer::frame_json(const Frame& f) const {
            {"limit", {{"on", limit_on_}, {"level", limit_level_}}},
            {"run", settings_.run}};
     if (f.channel_power) {
-        j["measurement"] = {{"type", "channel_power"}, {"value", *f.channel_power}, {"bw", settings_.channel_bw_hz},
+        j["measurement"] = {{"type", "channel_power"},
+                            {"value", *f.channel_power},
+                            {"bw", settings_.channel_bw_hz},
                             {"center", settings_.center_hz}};
     }
     if (f.obw) {
-        j["measurement"] = {{"type", "obw"}, {"bw", f.obw->bandwidth_hz}, {"from", f.obw->from_hz},
-                            {"to", f.obw->to_hz}, {"percent", settings_.obw_percent}};
+        j["measurement"] = {{"type", "obw"},
+                            {"bw", f.obw->bandwidth_hz},
+                            {"from", f.obw->from_hz},
+                            {"to", f.obw->to_hz},
+                            {"percent", settings_.obw_percent}};
     }
     return j;
 }
@@ -874,8 +937,8 @@ void Analyzer::publish_frame() {
             limit_alarm_ = true;
             alarms().raise(kLimitAlarm, forge::Severity::warning,
                            std::format("Signal at {} is {:.1f} dB above the limit ({:.1f} {})",
-                                       fmt_freq(point_freq(i, f->start_hz, f->stop_hz, f->points)),
-                                       *it - limit_level_, limit_level_, f->unit));
+                                       fmt_freq(point_freq(i, f->start_hz, f->stop_hz, f->points)), *it - limit_level_,
+                                       limit_level_, f->unit));
         } else if (limit_alarm_ && *it < limit_level_ - 1) {
             limit_alarm_ = false;
             alarms().clear(kLimitAlarm);

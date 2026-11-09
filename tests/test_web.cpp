@@ -245,8 +245,8 @@ TEST_CASE("application: web dashboard API end to end") {
         }
     };
 
-    std::vector<std::string> args{"webapp", "--http", "127.0.0.1:0", "-D", "log.console=false",
-                                  "-D", "web.refresh_ms=50"};
+    std::vector<std::string> args{"webapp", "--http",           "127.0.0.1:0", "-D", "log.console=false",
+                                  "-D",     "web.refresh_ms=50"};
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
 

@@ -83,8 +83,7 @@ std::size_t bytes_capacity(const pb_field_iter_t& it) {
 json value_to_json(const Field& f, const pb_field_iter_t& it, const void* p) {
     const std::size_t size = it.data_size;
     switch (f.kind) {
-        case FieldKind::boolean:
-            return *static_cast<const bool*>(p);
+        case FieldKind::boolean: return *static_cast<const bool*>(p);
         case FieldKind::signed_int: {
             const auto v = read_signed(p, size);
             return size == 8 ? json(std::to_string(v)) : json(v);  // proto3 JSON: 64-bit as text
@@ -113,8 +112,7 @@ json value_to_json(const Field& f, const pb_field_iter_t& it, const void* p) {
             }
             return v;  // a value from a newer peer
         }
-        case FieldKind::message:
-            return to_json(*f.message, p);
+        case FieldKind::message: return to_json(*f.message, p);
     }
     return nullptr;
 }

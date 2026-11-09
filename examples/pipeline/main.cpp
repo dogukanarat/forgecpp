@@ -103,7 +103,9 @@ protected:
         ui.title("Processing pipeline");
 
         auto& flow = ui.group("Throughput");
-        flow.value("produced_per_s", "Produced", [this] { return produced_rate_.per_second(); }).unit("jobs/s").precision(0);
+        flow.value("produced_per_s", "Produced", [this] { return produced_rate_.per_second(); })
+            .unit("jobs/s")
+            .precision(0);
         flow.value("done_per_s", "Completed", [this] { return done_rate_.per_second(); }).unit("jobs/s").precision(0);
         flow.value("queue", "Queue depth", [this] { return input_.size_approx(); }).unit("jobs");
         flow.value("in_flight", "In flight", [this] { return in_flight_.load(); }).unit("jobs");
@@ -115,28 +117,33 @@ protected:
         auto& prod = ui.group("Producers");
         prod.value("producers", "Threads", producer_count_);
         prod.toggle("paused", "Paused", [this] { return paused_.load(); }, [this](bool v) { paused_ = v; });
-        prod.slider("rate", "Rate per producer", [this] { return double(rate_per_producer_.load()); },
-                    [this](double v) { rate_per_producer_ = static_cast<int>(v); }, 1, 5000, 1)
+        prod.slider(
+                "rate", "Rate per producer", [this] { return double(rate_per_producer_.load()); },
+                [this](double v) { rate_per_producer_ = static_cast<int>(v); }, 1, 5000, 1)
             .unit("jobs/s");
-        prod.slider("job_size", "Job size", [this] { return double(job_size_.load()); },
-                    [this](double v) { job_size_ = static_cast<std::uint32_t>(v); }, 100, 200000, 100)
+        prod.slider(
+                "job_size", "Job size", [this] { return double(job_size_.load()); },
+                [this](double v) { job_size_ = static_cast<std::uint32_t>(v); }, 100, 200000, 100)
             .unit("rounds");
         prod.button("burst", "Burst 10 000 jobs", [this] { burst(10000); }).primary();
 
         auto& work = ui.group("Workers");
         work.value("workers", "Pool threads", [this] { return pool().get_thread_count(); });
-        work.slider("failure_rate", "Simulated failures", [this] { return failure_rate_.load() * 100; },
-                    [this](double pct) { failure_rate_ = pct / 100; }, 0, 50, 0.5)
+        work.slider(
+                "failure_rate", "Simulated failures", [this] { return failure_rate_.load() * 100; },
+                [this](double pct) { failure_rate_ = pct / 100; }, 0, 50, 0.5)
             .unit("%")
             .precision(1);
-        work.number("queue_limit", "Backlog alarm at", [this] { return double(queue_limit_.load()); },
-                    [this](double v) { queue_limit_ = static_cast<std::size_t>(v); })
+        work.number(
+                "queue_limit", "Backlog alarm at", [this] { return double(queue_limit_.load()); },
+                [this](double v) { queue_limit_ = static_cast<std::size_t>(v); })
             .range(100, 1000000, 100)
             .unit("jobs");
-        work.button("reset", "Reset counters", [this] {
-                completed_ = failed_ = 0;
-                latency_avg_ = latency_max_ = 0;
-            })
+        work.button("reset", "Reset counters",
+                    [this] {
+                        completed_ = failed_ = 0;
+                        latency_avg_ = latency_max_ = 0;
+                    })
             .confirm("Reset all counters?");
     }
 

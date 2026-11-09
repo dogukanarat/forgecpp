@@ -20,12 +20,11 @@ public:
     Pump() : Application({"pump", "1.0.0", "Tutorial pump controller"}) {
         // A command of its own (pump.proto): binary on the link, JSON on
         // POST /forge/api/tmtc/history. The handler runs on the main loop.
-        command<pump_history_request, pump_history_reply>(pump_msg_id_history, "history",
-                                                          [this](const auto& req, auto& rsp) {
-                                                              const auto n = std::min<std::size_t>(req.count, history.size());
-                                                              return forge::pb::assign(rsp.pressure_bar, rsp.pressure_bar_count,
-                                                                                       std::span(history).last(n));
-                                                          });
+        command<pump_history_request, pump_history_reply>(
+            pump_msg_id_history, "history", [this](const auto& req, auto& rsp) {
+                const auto n = std::min<std::size_t>(req.count, history.size());
+                return forge::pb::assign(rsp.pressure_bar, rsp.pressure_bar_count, std::span(history).last(n));
+            });
     }
 
     // State: on the main loop only (docs/threading.md).
@@ -59,14 +58,13 @@ protected:
         readings.number("limit_bar", "Alarm limit", limit_bar).range(1, 20, 0.1).unit("bar");
 
         // A command with typed parameters: forgectl call flush seconds=5
-        ui.group("Service").command("flush", "Flush", {forge::web::number_param("seconds", 10).range(1, 60)},
-                                    [this](const forge::json& a) {
-                                        running = true;
-                                        const auto s = a["seconds"].get<double>();
-                                        after(std::chrono::milliseconds(static_cast<int>(s * 1000)),
-                                              [this] { running = false; });
-                                        return forge::json{{"flushing_s", s}};
-                                    });
+        ui.group("Service").command(
+            "flush", "Flush", {forge::web::number_param("seconds", 10).range(1, 60)}, [this](const forge::json& a) {
+                running = true;
+                const auto s = a["seconds"].get<double>();
+                after(std::chrono::milliseconds(static_cast<int>(s * 1000)), [this] { running = false; });
+                return forge::json{{"flushing_s", s}};
+            });
         ui.group("Service").button("export", "Export history", [this] { export_history(); });
     }
 

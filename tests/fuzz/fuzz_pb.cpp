@@ -74,7 +74,8 @@ const std::vector<std::string>& seeds() {
         return std::vector<std::string>{
             std::string(1, '\0') + std::string(reinterpret_cast<const char*>(buf.data()), n),
             std::string(1, '\1') + pb::to_json(m).dump(),
-            std::string(1, '\1') + R"({"text": "abcdefghijklmnopqrstuvwxyz", "list": [1, 2, 3, 4, 5], "colour": "nope"})",
+            std::string(1, '\1') +
+                R"({"text": "abcdefghijklmnopqrstuvwxyz", "list": [1, 2, 3, 4, 5], "colour": "nope"})",
         };
     }();
     return s;

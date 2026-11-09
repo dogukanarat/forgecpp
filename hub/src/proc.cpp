@@ -14,8 +14,8 @@
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <vector>
 #include <thread>
+#include <vector>
 
 namespace forgehub {
 namespace {
@@ -30,7 +30,6 @@ std::optional<std::string> read_file(const std::string& path) {
     if (in.bad()) return std::nullopt;
     return ss.str();
 }
-
 
 /// Fields of /proc/<pid>/stat after the command name (field 3 = state is [0]).
 std::vector<std::string> stat_fields(int pid) {
@@ -50,7 +49,6 @@ std::uint64_t number(const std::string& s) {
     const auto [end, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
     return ec == std::errc() && end == s.data() + s.size() ? v : 0;
 }
-
 
 }  // namespace
 
@@ -131,7 +129,8 @@ CommandResult run_command(const std::vector<std::string>& args, std::chrono::mil
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     char buf[1024];
     for (;;) {
-        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+        const auto left =
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
         if (left.count() <= 0) break;
         pollfd p{out[0], POLLIN, 0};
         if (::poll(&p, 1, static_cast<int>(left.count())) <= 0) break;
@@ -160,8 +159,8 @@ bool valid_unit_name(const std::string& unit) {
     if (unit.size() < 9 || unit.size() > 256 || unit[0] == '-') return false;
     if (unit.compare(unit.size() - 8, 8, ".service") != 0) return false;
     for (const char c : unit) {
-        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.' || c == '@' ||
-              c == ':' || c == '\\')) {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.' || c == '@' || c == ':' ||
+              c == '\\')) {
             return false;
         }
     }

@@ -106,7 +106,8 @@ void Client::stop(forge_hub_unregister_reason reason, int exit_code) {
     req.reason = reason;
     req.exit_code = exit_code;
     if (unregister_app(endpoint_, req, timeout_).ok()) {
-        log::debug("hub: unregistered ({})", reason == forge_hub_unregister_reason_REASON_SIGNAL ? "stop request" : "exit");
+        log::debug("hub: unregistered ({})",
+                   reason == forge_hub_unregister_reason_REASON_SIGNAL ? "stop request" : "exit");
     }
     registered_ = false;
 }

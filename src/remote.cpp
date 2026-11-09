@@ -12,7 +12,8 @@ void check(const Status& s, const std::string& id) {
 
 template <std::size_t N>
 void put(char (&dst)[N], const std::string& text, const std::string& id) {
-    if (!pb::assign(dst, text).ok()) throw Error(400, id + ": too long for the link (max " + std::to_string(N - 1) + ")");
+    if (!pb::assign(dst, text).ok())
+        throw Error(400, id + ": too long for the link (max " + std::to_string(N - 1) + ")");
 }
 
 json parse(const char* text) { return text[0] == '\0' ? json() : json::parse(text); }

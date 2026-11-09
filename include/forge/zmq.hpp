@@ -397,9 +397,8 @@ public:
     template <pb::Message Req, pb::Message Rsp>
     Status call(std::uint16_t id, const Req& req, Rsp& rsp) {
         rsp = Rsp{};
-        return call(id, *pb::type_of<Req>, &req, [&](const c2::Message& m) {
-            return m.payload.empty() ? Status() : pb::decode(m.payload, rsp);
-        });
+        return call(id, *pb::type_of<Req>, &req,
+                    [&](const c2::Message& m) { return m.payload.empty() ? Status() : pb::decode(m.payload, rsp); });
     }
     /// A command that answers in parts: `each` gets every part.
     template <pb::Message Req, pb::Message Rsp>

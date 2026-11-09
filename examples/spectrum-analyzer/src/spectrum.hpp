@@ -66,8 +66,8 @@ struct Bins {
 };
 
 /// Append the bins of a capture (fftshifted linear power at `lo_hz`) that fall in [from, to).
-void append_bins(Bins& bins, const std::vector<double>& spectrum, double lo_hz, double sample_rate_hz,
-                 double from_hz, double to_hz);
+void append_bins(Bins& bins, const std::vector<double>& spectrum, double lo_hz, double sample_rate_hz, double from_hz,
+                 double to_hz);
 
 enum class Detector { peak, sample, average, negative_peak };
 Detector parse_detector(const std::string& name);
@@ -109,8 +109,8 @@ struct PeakPoint {
 
 /// Local maxima above `threshold_db` that stand out by at least `excursion_db`
 /// from the surrounding valleys, strongest first, at most `max_peaks`.
-std::vector<PeakPoint> find_peaks(const std::vector<double>& db, double start_hz, double stop_hz,
-                                  double threshold_db, double excursion_db, std::size_t max_peaks);
+std::vector<PeakPoint> find_peaks(const std::vector<double>& db, double start_hz, double stop_hz, double threshold_db,
+                                  double excursion_db, std::size_t max_peaks);
 
 /// Frequency of display point i.
 inline double point_freq(std::size_t i, double start_hz, double stop_hz, std::size_t points) {

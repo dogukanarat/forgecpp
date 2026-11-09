@@ -1,11 +1,11 @@
 #include "forge/systemd.hpp"
 
-#include <cstdlib>
-#include <cstring>
-#include <string>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <cstdlib>
+#include <cstring>
+#include <string>
 
 namespace forge::systemd {
 
@@ -28,8 +28,8 @@ bool notify(std::string_view state) {
     const int fd = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     if (fd < 0) return false;
     const auto addr_len = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + len);
-    const auto sent = ::sendto(fd, state.data(), state.size(), MSG_NOSIGNAL,
-                               reinterpret_cast<const sockaddr*>(&addr), addr_len);
+    const auto sent =
+        ::sendto(fd, state.data(), state.size(), MSG_NOSIGNAL, reinterpret_cast<const sockaddr*>(&addr), addr_len);
     ::close(fd);
     return sent == static_cast<ssize_t>(state.size());
 }

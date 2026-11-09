@@ -26,7 +26,7 @@
 
 namespace forge {
 class Config;
-}
+}  // namespace forge
 
 namespace forge::config {
 

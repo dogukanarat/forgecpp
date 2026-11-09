@@ -28,8 +28,7 @@ std::vector<std::string> split_dotted(std::string_view path) {
 
 std::string error_text(const toml::parse_error& err, std::string_view source) {
     std::ostringstream os;
-    os << source << ":" << err.source().begin.line << ":" << err.source().begin.column << ": "
-       << err.description();
+    os << source << ":" << err.source().begin.line << ":" << err.source().begin.column << ": " << err.description();
     return os.str();
 }
 

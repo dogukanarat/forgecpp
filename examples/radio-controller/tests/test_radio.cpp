@@ -1,7 +1,7 @@
 #include "backend.hpp"
 #include "dsp.hpp"
-#include "radio_controller.hpp"
 #include "radio/radio.forge.hpp"
+#include "radio_controller.hpp"
 
 #include <forge/remote.hpp>
 #include <forge/testing.hpp>
@@ -192,7 +192,8 @@ TEST_CASE("radio: simulated AD9361 streams RX1 and RX2 with per-channel gain") {
     const auto s2 = radio::dsp::spectrum_dbfs(rx2.data(), n);
     auto level_at = [&](const std::vector<float>& sp, double offset) {
         const auto i = static_cast<std::size_t>(std::lround(offset / 10e6 * n + n / 2.0));
-        return *std::max_element(sp.begin() + static_cast<std::ptrdiff_t>(i) - 3, sp.begin() + static_cast<std::ptrdiff_t>(i) + 4);
+        return *std::max_element(sp.begin() + static_cast<std::ptrdiff_t>(i) - 3,
+                                 sp.begin() + static_cast<std::ptrdiff_t>(i) + 4);
     };
     // same air on both channels, 20 dB apart (gain)
     CHECK(level_at(s1, 2e6) - level_at(s2, 2e6) == doctest::Approx(20).epsilon(0.05));
@@ -244,19 +245,32 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
     forge::testing::TempDir dir;
     const auto state = (dir / "state.json").string();
     std::vector<std::string> args{"radio-controller",
-                                  "-c", std::string(RADIO_TEST_DATA_DIR) + "/empty.toml",
-                                  "--backend", "sim",
-                                  "-D", "log.console=false",
-                                  "-D", "http.enabled=false",
-                                  "-D", "forge.data=tcp://127.0.0.1:*",
-                                  "-D", "zmq.tx=tcp://127.0.0.1:*",
-                                  "-D", "forge.control=tcp://127.0.0.1:*",
-                                  "-D", "radio.rx_lo_hz=2410e6",
-                                  "-D", "radio.tx_lo_hz=2410e6",
-                                  "-D", "radio.sample_rate_hz=5e6",
-                                  "-D", "radio.rx_bandwidth_hz=5e6",
-                                  "-D", "radio.buffer_size=16384",
-                                  "-D", "radio.state_file=" + state};
+                                  "-c",
+                                  std::string(RADIO_TEST_DATA_DIR) + "/empty.toml",
+                                  "--backend",
+                                  "sim",
+                                  "-D",
+                                  "log.console=false",
+                                  "-D",
+                                  "http.enabled=false",
+                                  "-D",
+                                  "forge.data=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "zmq.tx=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "forge.control=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "radio.rx_lo_hz=2410e6",
+                                  "-D",
+                                  "radio.tx_lo_hz=2410e6",
+                                  "-D",
+                                  "radio.sample_rate_hz=5e6",
+                                  "-D",
+                                  "radio.rx_bandwidth_hz=5e6",
+                                  "-D",
+                                  "radio.buffer_size=16384",
+                                  "-D",
+                                  "radio.state_file=" + state};
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
 
@@ -271,11 +285,19 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
     std::vector<fz::Message> frames;
     fz::Receiver::Options opts;
     opts.topics = {"iq"};
-    fz::Receiver sub(fz::Receiver::Kind::sub, app.data_endpoint(), [&](fz::Message&& msg) {
-        std::lock_guard lock(m);
-        if (frames.size() < 64) frames.push_back(std::move(msg));
-    }, opts);
-    REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return frames.size() >= 3; }, 10s));
+    fz::Receiver sub(
+        fz::Receiver::Kind::sub, app.data_endpoint(),
+        [&](fz::Message&& msg) {
+            std::lock_guard lock(m);
+            if (frames.size() < 64) frames.push_back(std::move(msg));
+        },
+        opts);
+    REQUIRE(forge::testing::wait_until(
+        [&] {
+            std::lock_guard lock(m);
+            return frames.size() >= 3;
+        },
+        10s));
     {
         std::lock_guard lock(m);
         const auto h = block_of(frames.back());
@@ -304,10 +326,12 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
         return 0;
     };
     latest();
-    REQUIRE(forge::testing::wait_until([&] {
-        std::lock_guard lock(m);
-        return !frames.empty() && block_of(frames.back()).center_freq == 2411.5e6;
-    }, 10s));
+    REQUIRE(forge::testing::wait_until(
+        [&] {
+            std::lock_guard lock(m);
+            return !frames.empty() && block_of(frames.back()).center_freq == 2411.5e6;
+        },
+        10s));
 
     // --- TX: disabled drops, enabled loops back into RX --------------------------
     fz::Sender push(fz::Sender::Kind::push, app.tx_endpoint(), false);
@@ -322,11 +346,13 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
     CHECK(forge::testing::wait_until([&] { return ctl.get("tx_mode") == "cyclic"; }));
 
     latest();
-    REQUIRE(forge::testing::wait_until([&] {
-        std::lock_guard lock(m);
-        if (frames.empty()) return false;
-        return std::abs(peak_offset(samples_of(frames.back()), 8192, 5e6) - 1.25e6) < 5e3;
-    }, 10s));
+    REQUIRE(forge::testing::wait_until(
+        [&] {
+            std::lock_guard lock(m);
+            if (frames.empty()) return false;
+            return std::abs(peak_offset(samples_of(frames.back()), 8192, 5e6) - 1.25e6) < 5e3;
+        },
+        10s));
 
     ctl.press("tx_stop");
     CHECK(ctl.get("tx_mode") == "idle");
@@ -344,10 +370,21 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
 namespace {
 struct RunningRadio {
     explicit RunningRadio(std::vector<std::string> extra) {
-        args = {"radio-controller", "-c", std::string(RADIO_TEST_DATA_DIR) + "/empty.toml", "--backend", "sim",
-                "-D", "log.console=false", "-D", "http.enabled=false",
-                "-D", "forge.data=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-                "-D", "forge.control=tcp://127.0.0.1:*"};
+        args = {"radio-controller",
+                "-c",
+                std::string(RADIO_TEST_DATA_DIR) + "/empty.toml",
+                "--backend",
+                "sim",
+                "-D",
+                "log.console=false",
+                "-D",
+                "http.enabled=false",
+                "-D",
+                "forge.data=tcp://127.0.0.1:*",
+                "-D",
+                "zmq.tx=tcp://127.0.0.1:*",
+                "-D",
+                "forge.control=tcp://127.0.0.1:*"};
         args.insert(args.end(), extra.begin(), extra.end());
         for (auto& a : args) argv.push_back(a.data());
         std::promise<void> started;
@@ -367,27 +404,38 @@ struct RunningRadio {
 }  // namespace
 
 TEST_CASE("radio-controller: channel roles from the configuration (AD9361: RX1 own, RX2 shared, TX1 -> RX2 cable)") {
-    RunningRadio r({"-D", "radio.sim.channels=2", "-D", "radio.sim.loopback_tx=1", "-D", "radio.sim.loopback_rx=2",
-                    "-D", "radio.rx_channels=[1]", "-D", "radio.tx_channel=1", "-D", "radio.tap_rx=[2]",
-                    "-D", "radio.tap_samples=16384", "-D", "radio.tap_hz=50",
-                    "-D", "radio.rx_lo_hz=2410e6", "-D", "radio.tx_lo_hz=2410e6",
-                    "-D", "radio.sample_rate_hz=5e6", "-D", "radio.rx_bandwidth_hz=5e6",
-                    "-D", "radio.buffer_size=32768"});
+    RunningRadio r(
+        {"-D", "radio.sim.channels=2",    "-D", "radio.sim.loopback_tx=1",  "-D", "radio.sim.loopback_rx=2",
+         "-D", "radio.rx_channels=[1]",   "-D", "radio.tx_channel=1",       "-D", "radio.tap_rx=[2]",
+         "-D", "radio.tap_samples=16384", "-D", "radio.tap_hz=50",          "-D", "radio.rx_lo_hz=2410e6",
+         "-D", "radio.tx_lo_hz=2410e6",   "-D", "radio.sample_rate_hz=5e6", "-D", "radio.rx_bandwidth_hz=5e6",
+         "-D", "radio.buffer_size=32768"});
     std::mutex m;
     std::vector<fz::Message> tap, rx1;
     fz::Receiver::Options tap_opts;
     tap_opts.topics = {"rx2"};
-    fz::Receiver sub2(fz::Receiver::Kind::sub, r.app.data_endpoint(), [&](fz::Message&& msg) {
-        std::lock_guard lock(m);
-        if (tap.size() < 400) tap.push_back(std::move(msg));
-    }, tap_opts);
+    fz::Receiver sub2(
+        fz::Receiver::Kind::sub, r.app.data_endpoint(),
+        [&](fz::Message&& msg) {
+            std::lock_guard lock(m);
+            if (tap.size() < 400) tap.push_back(std::move(msg));
+        },
+        tap_opts);
     fz::Receiver::Options opts;
     opts.topics = {"iq"};
-    fz::Receiver sub1(fz::Receiver::Kind::sub, r.app.data_endpoint(), [&](fz::Message&& msg) {
-        std::lock_guard lock(m);
-        if (rx1.size() < 400) rx1.push_back(std::move(msg));
-    }, opts);
-    REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return tap.size() >= 2 && !rx1.empty(); }, 10s));
+    fz::Receiver sub1(
+        fz::Receiver::Kind::sub, r.app.data_endpoint(),
+        [&](fz::Message&& msg) {
+            std::lock_guard lock(m);
+            if (rx1.size() < 400) rx1.push_back(std::move(msg));
+        },
+        opts);
+    REQUIRE(forge::testing::wait_until(
+        [&] {
+            std::lock_guard lock(m);
+            return tap.size() >= 2 && !rx1.empty();
+        },
+        10s));
     {
         std::lock_guard lock(m);
         const auto h = block_of(tap.back());
@@ -429,14 +477,14 @@ TEST_CASE("radio-controller: channel roles from the configuration (AD9361: RX1 o
     fz::Sender push(fz::Sender::Kind::push, r.app.tx_endpoint(), false);
     const auto tx = tone(4000, 1.25e6, 5e6, 0.5);
     REQUIRE(forge::testing::wait_until([&] { return send_tx(push, tx, true); }));
-    auto peak_of = [&](const fz::Message& msg, std::size_t n) {
-        return peak_offset(samples_of(msg), n, 5e6);
-    };
+    auto peak_of = [&](const fz::Message& msg, std::size_t n) { return peak_offset(samples_of(msg), n, 5e6); };
     clear();
-    CHECK(forge::testing::wait_until([&] {
-        const auto b = newest(tap);
-        return !b.blob.empty() && std::abs(peak_of(b, 16384) - 1.25e6) < 5e3;
-    }, 10s));
+    CHECK(forge::testing::wait_until(
+        [&] {
+            const auto b = newest(tap);
+            return !b.blob.empty() && std::abs(peak_of(b, 16384) - 1.25e6) < 5e3;
+        },
+        10s));
     clear();
     REQUIRE(forge::testing::wait_until([&] { return !newest(rx1).blob.empty(); }));
     CHECK(std::abs(peak_of(newest(rx1), 8192) - 2e6) < 5e3);  // RX1: the strongest is the 2412 MHz carrier
@@ -447,20 +495,22 @@ TEST_CASE("radio-controller: channel roles from the configuration (AD9361: RX1 o
 }
 
 TEST_CASE("radio-controller: listens to both RX channels and drives TX2") {
-    RunningRadio r({"-D", "radio.sim.channels=2", "-D", "radio.sim.loopback_tx=2", "-D", "radio.sim.loopback_rx=1",
-                    "-D", "radio.rx_channels=[1, 2]", "-D", "radio.tx_channel=2",
-                    "-D", "radio.rx_lo_hz=2410e6", "-D", "radio.tx_lo_hz=2410e6",
-                    "-D", "radio.sample_rate_hz=5e6", "-D", "radio.rx_bandwidth_hz=5e6",
-                    "-D", "radio.buffer_size=8192", "-D", "radio.tx_enabled=true",
-                    "-D", "radio.tx_attenuation_db=0"});
+    RunningRadio r(
+        {"-D", "radio.sim.channels=2",     "-D", "radio.sim.loopback_tx=2",  "-D", "radio.sim.loopback_rx=1",
+         "-D", "radio.rx_channels=[1, 2]", "-D", "radio.tx_channel=2",       "-D", "radio.rx_lo_hz=2410e6",
+         "-D", "radio.tx_lo_hz=2410e6",    "-D", "radio.sample_rate_hz=5e6", "-D", "radio.rx_bandwidth_hz=5e6",
+         "-D", "radio.buffer_size=8192",   "-D", "radio.tx_enabled=true",    "-D", "radio.tx_attenuation_db=0"});
     std::mutex m;
     std::map<int, fz::Message> last;
     fz::Receiver::Options opts;
     opts.topics = {"iq"};
-    fz::Receiver sub(fz::Receiver::Kind::sub, r.app.data_endpoint(), [&](fz::Message&& msg) {
-        std::lock_guard lock(m);
-        last[static_cast<int>(block_of(msg).channel)] = std::move(msg);
-    }, opts);
+    fz::Receiver sub(
+        fz::Receiver::Kind::sub, r.app.data_endpoint(),
+        [&](fz::Message&& msg) {
+            std::lock_guard lock(m);
+            last[static_cast<int>(block_of(msg).channel)] = std::move(msg);
+        },
+        opts);
     fz::Sender push(fz::Sender::Kind::push, r.app.tx_endpoint(), false);
     const auto tx = tone(4000, 1.25e6, 5e6, 0.5);
     REQUIRE(forge::testing::wait_until([&] { return send_tx(push, tx, true); }));
@@ -581,12 +631,23 @@ TEST_CASE("radio: libiio backend explains what it found when the AD936x is missi
 }
 
 TEST_CASE("radio-controller: keeps running and raises an alarm when the radio is unusable") {
-    std::vector<std::string> args{"radio-controller", "-c", std::string(RADIO_TEST_DATA_DIR) + "/empty.toml",
-                                  "--backend", "iio",
-                                  "--uri", std::string("xml:") + RADIO_TEST_DATA_DIR + "/ad9364.xml",
-                                  "-D", "log.console=false", "-D", "http.enabled=false",
-                                  "-D", "forge.data=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-                                  "-D", "forge.control=tcp://127.0.0.1:*"};
+    std::vector<std::string> args{"radio-controller",
+                                  "-c",
+                                  std::string(RADIO_TEST_DATA_DIR) + "/empty.toml",
+                                  "--backend",
+                                  "iio",
+                                  "--uri",
+                                  std::string("xml:") + RADIO_TEST_DATA_DIR + "/ad9364.xml",
+                                  "-D",
+                                  "log.console=false",
+                                  "-D",
+                                  "http.enabled=false",
+                                  "-D",
+                                  "forge.data=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "zmq.tx=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "forge.control=tcp://127.0.0.1:*"};
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
 
