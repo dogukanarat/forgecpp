@@ -68,10 +68,17 @@ Pump() : Application({"pump", "1.0.0", "Tutorial pump controller"}) {
                                                       [this](const auto& req, auto& rsp) {
         const auto n = std::min<std::size_t>(req.count, history.size());
         return forge::pb::assign(rsp.pressure_bar, rsp.pressure_bar_count, std::span(history).last(n));
-    });
+    }, forge::Role::viewer);  // a query: no role needed, nothing to audit
 }
 ```
 
+- **Roles and the audit trail**, as for the controls: by default the caller
+  needs the `operator` role and every call is recorded (who, the request, the
+  result; refusals too). A query passes `forge::Role::viewer` as the last
+  argument: no role needed, no record, as `history` does. A command for admins
+  only passes `forge::Role::admin`. Without `[auth]` everyone is admin; a link
+  carries no credentials, so with `[auth]` on, link callers have
+  `[auth].default_role`.
 - The handler runs **on the main loop**, like the controls: it may read and
   change the application's state. If the loop is busy for longer than
   `[forge].request_timeout_ms`, the request is refused with `EAGAIN` and the

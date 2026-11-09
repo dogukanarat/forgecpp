@@ -55,7 +55,7 @@ message history_reply { repeated double pressure_bar = 1 [(nanopb).max_count = 3
 command<pump_history_request, pump_history_reply>(pump_msg_id_history, "history", [this](const auto& req, auto& rsp) {
     const auto n = std::min<std::size_t>(req.count, history.size());
     return forge::pb::assign(rsp.pressure_bar, rsp.pressure_bar_count, std::span(history).last(n));  // E2BIG above 32
-});
+}, forge::Role::viewer);  // a query; a command that changes something needs operator and is audited
 ```
 
 ```sh

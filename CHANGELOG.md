@@ -168,6 +168,12 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
     more.
   - `Application(info, installed_config)` and `zmq::Receiver(..., options)`
   take `const std::string&` / `const Options&` (were by value).
+- `Application::command()` takes a role (default operator): the caller
+  needs it, and every call is written to the audit trail with its request.
+  `forge::Role::viewer` marks a query (no check, no record). Before, the
+  program's own commands were neither checked nor recorded.
+- `forge::testing::AppRunner` reports at once when the application ends
+  before it starts (it waited 20 s, then terminated the test program).
 - `Application::command()` throws when it is called after the links
     started: add commands in the constructor or `setup_web()`.
 - `install.sh --profile embedded` keeps the libraries shared (it built them

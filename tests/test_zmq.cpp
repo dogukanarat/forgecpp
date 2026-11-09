@@ -9,8 +9,10 @@
 
 #include <zmq_addon.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <fstream>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -287,10 +289,24 @@ TEST_CASE("zmq: requests that waited too long for a worker are refused, not hand
 }
 
 namespace {
+// Commands of its own: one that changes something, one query.
+constexpr std::uint16_t kKick = 0x0100, kPeek = 0x0101;
+
 struct ControlledApp : forge::Application {
-    ControlledApp() : Application({"zmqapp", "3.0.0"}) {}
+    ControlledApp() : Application({"zmqapp", "3.0.0"}) {
+        command<forge_ping_request, forge_ping_reply>(kKick, "kick", [this](const auto& req, auto& rsp) {
+            kicks += static_cast<int>(req.token);
+            rsp.token = static_cast<std::uint32_t>(kicks);
+            return forge::Status();
+        });
+        command<forge_ping_request, forge_ping_reply>(kPeek, "peek", [this](const auto&, auto& rsp) {
+            rsp.token = static_cast<std::uint32_t>(kicks);
+            return forge::Status();
+        }, forge::Role::viewer);
+    }
     double freq = 100.0;
     int presses = 0;
+    int kicks = 0;
 
 protected:
     void setup_web(forge::web::Dashboard& ui) override {
@@ -408,6 +424,41 @@ TEST_CASE("zmq: an application's command endpoint and its events") {
     r.stop();
     CHECK(r->freq == 2400.0);
     CHECK(r->presses == 1);
+}
+
+TEST_CASE("zmq: the program's own commands: a role to run them, an audit record when they change something") {
+    forge::testing::AppRunner<ControlledApp> r({"-D", "forge.control=tcp://127.0.0.1:*"});
+    fz::Client c(r->endpoints().at("control"));
+    forge_ping_request req{};
+    req.token = 3;
+    forge_ping_reply rsp{};
+    REQUIRE(c.call(kKick, req, rsp).ok());
+    CHECK(rsp.token == 3);
+    REQUIRE(c.call(kPeek, req, rsp).ok());
+    CHECK(rsp.token == 3);
+    const auto audit = r->audit().list();
+    const auto kicked = std::count_if(audit.begin(), audit.end(), [](const forge::Audit::Record& a) {
+        return a.action == "command" && a.target == "kick" && a.ok && a.new_value["token"] == 3;
+    });
+    CHECK(kicked == 1);
+    CHECK(std::none_of(audit.begin(), audit.end(), [](const forge::Audit::Record& a) { return a.target == "peek"; }));
+}
+
+TEST_CASE("zmq: with [auth], a command that changes something needs more than the default role") {
+    forge::testing::AppRunner<ControlledApp> r({"-D", "auth.enabled=true", "-D", "auth.default_role=viewer", "-D",
+                                                "auth.users.ops.token=t", "-D", "auth.users.ops.role=operator", "-D",
+                                                "forge.control=tcp://127.0.0.1:*"});
+    fz::Client c(r->endpoints().at("control"));  // a link carries no credentials: viewer
+    forge_ping_request req{};
+    req.token = 1;
+    forge_ping_reply rsp{};
+    CHECK(c.call(kKick, req, rsp).errno_code() == EACCES);
+    CHECK(c.call(kPeek, req, rsp).ok());  // a query is fine
+    CHECK(r->invoke([&] { return r->kicks; }) == 0);
+    const auto audit = r->audit().list();
+    CHECK(std::any_of(audit.begin(), audit.end(), [](const forge::Audit::Record& a) {
+        return a.action == "command" && a.target == "kick" && !a.ok;  // refusals are recorded too
+    }));
 }
 
 TEST_CASE("zmq: the same commands answer JSON over HTTP") {

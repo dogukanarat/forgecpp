@@ -329,15 +329,20 @@ public:
     /// The commands this program answers, by number (links) and by name (web).
     /// The built-in ones (proto/forge/messages.proto) use 0x0001..0x00FF.
     tmtc::Registry& commands() { return commands_; }
-    /// A command whose handler runs on the main loop (like the controls); a
-    /// busy loop refuses it with EAGAIN after [forge].request_timeout_ms.
+    /// A command (docs/commands.md). Its handler runs on the main loop, like
+    /// the controls; a busy loop refuses it with EAGAIN after
+    /// [forge].request_timeout_ms. The caller needs `role`: the default,
+    /// operator, is for a command that changes something, and those are
+    /// written to the audit trail with their request; Role::viewer is for a
+    /// query (no check, no audit record).
     /// Add commands in the constructor or setup_web(): the links read the
     /// registry from their own threads once they run.
     template <pb::Message Req, pb::Message Rsp>
-    void command(std::uint16_t id, std::string name, tmtc::Handler<Req, Rsp> handler) {
+    void command(std::uint16_t id, std::string name, tmtc::Handler<Req, Rsp> handler, Role role = Role::operator_) {
         if (commands_closed_) throw std::logic_error("command '" + name + "': add commands before the start");
-        commands_.add<Req, Rsp>(id, std::move(name), [this, h = std::move(handler)](const Req& req, Rsp& rsp) {
-            return invoke_for(request_timeout(), [&] { return h(req, rsp); });
+        commands_.add<Req, Rsp>(id, name, [this, name, role, h = std::move(handler)](const Req& req, Rsp& rsp) {
+            return run_command(name, role, [&] { return pb::to_json(req); },
+                               [&] { return invoke_for(request_timeout(), [&] { return h(req, rsp); }); });
         });
     }
     /// Endpoints this application serves (control, events, data, http, telnet).
@@ -487,6 +492,10 @@ private:
     friend class detail::RemoteConsole;
     friend class detail::HttpFrontend;
     friend void detail::register_builtin_commands(Application& app);
+
+    /// The role check and the audit record around a command's handler.
+    Status run_command(const std::string& name, Role role, const std::function<json()>& request,
+                       const std::function<Status()>& run);
     friend class ControlService;
 
     /// After a control changed (live updates, persistence, "state" event).

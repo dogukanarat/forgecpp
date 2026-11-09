@@ -24,7 +24,7 @@ public:
                                                           [this](const auto& req, auto& rsp) {
             const auto n = std::min<std::size_t>(req.count, history.size());
             return forge::pb::assign(rsp.pressure_bar, rsp.pressure_bar_count, std::span(history).last(n));
-        });
+        }, forge::Role::viewer);  // a query: no role needed, nothing to audit
     }
 
     // State: on the main loop only (docs/threading.md).

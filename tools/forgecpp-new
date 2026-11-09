@@ -175,7 +175,8 @@ public:
                                                                 rsp.ticks = ticks_;
                                                                 rsp.paused = paused_;
                                                                 return forge::pb::assign(rsp.message, message_);
-                                                            });
+                                                            },
+                                                            forge::Role::viewer);  // a query: nothing to audit
     }
 
     std::uint64_t ticks() const { return ticks_; }

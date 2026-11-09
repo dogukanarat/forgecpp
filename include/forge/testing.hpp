@@ -12,6 +12,7 @@
 
 #include <doctest/doctest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -116,12 +117,35 @@ public:
                  "web.layout_file=" + (dir_ / "web-layout.json").string()};
         args_.insert(args_.end(), args.begin(), args.end());
         for (auto& a : args_) argv_.push_back(a.data());
-        auto started = std::make_shared<std::promise<void>>();
-        auto future = started->get_future();
-        app_->hook_start([started](auto& a) { a.post([started] { started->set_value(); }); });
-        thread_ = std::thread([this] { exit_code_ = app_->run(static_cast<int>(argv_.size()), argv_.data()); });
+        // Settled once: by the start, or by run() returning first (a bad configuration).
+        struct Start {
+            std::promise<void> promise;
+            std::atomic<bool> settled{false};
+        };
+        auto start = std::make_shared<Start>();
+        auto future = start->promise.get_future();
+        app_->hook_start([start](auto& a) {
+            a.post([start] {
+                if (!start->settled.exchange(true)) start->promise.set_value();
+            });
+        });
+        thread_ = std::thread([this, start] {
+            exit_code_ = app_->run(static_cast<int>(argv_.size()), argv_.data());
+            if (!start->settled.exchange(true)) {
+                start->promise.set_exception(std::make_exception_ptr(
+                    std::runtime_error("the application ended with code " + std::to_string(exit_code_) +
+                                       " before it started (-D log.console=true shows why)")));
+            }
+        });
         if (future.wait_for(std::chrono::seconds(20)) != std::future_status::ready) {
-            throw std::runtime_error("application did not start within 20 s");
+            stop();
+            throw std::runtime_error("the application did not start within 20 s");
+        }
+        try {
+            future.get();
+        } catch (...) {
+            thread_.join();
+            throw;
         }
     }
     ~AppRunner() { stop(); }

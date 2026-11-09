@@ -240,6 +240,13 @@ TEST_CASE("control: roles, leases, audit, commands and persistence") {
     CHECK(again->power == 1);
 }
 
+TEST_CASE("testing: AppRunner says at once when the application does not start") {
+    const auto t0 = std::chrono::steady_clock::now();
+    CHECK_THROWS_WITH(forge::testing::AppRunner<RolesApp>({"-D", "log.level=loud"}),
+                      doctest::Contains("ended with code 1 before it started"));
+    CHECK(std::chrono::steady_clock::now() - t0 < 5s);  // not the 20 s start timeout
+}
+
 TEST_CASE("config: an invalid configuration stops the start with the reason") {
     forge::testing::TempDir dir;
     const auto cfg = (dir / "bad.toml").string();

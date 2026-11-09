@@ -706,6 +706,11 @@ zmq::Stream& Application::stream(const std::string& name, const pb::Type& type, 
     return messaging_->stream(name, type, o);
 }
 
+Status Application::run_command(const std::string& name, Role role, const std::function<json()>& request,
+                                const std::function<Status()>& run) {
+    return control().run_command(name, role, request, run, current_caller());
+}
+
 std::vector<zmq::StreamInfo> Application::stream_list() const { return messaging_->stream_list(); }
 
 std::map<std::string, std::string> Application::endpoints() const {

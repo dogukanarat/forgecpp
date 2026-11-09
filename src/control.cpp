@@ -42,6 +42,20 @@ Caller ControlService::identify(std::string channel, std::string client, std::st
     return c;
 }
 
+Status ControlService::run_command(const std::string& name, Role role, const std::function<json()>& request,
+                                   const std::function<Status()>& run, const Caller& caller) {
+    const bool audited = role != Role::viewer;  // a query changes nothing: no record, like reading a control
+    try {
+        require(role, caller, "command '" + name + "'");
+        const Status s = run();
+        if (audited) audit(caller, "command", name, nullptr, request(), s.ok(), s.ok() ? "" : s.to_string());
+        return s;
+    } catch (const Error& e) {
+        if (audited) audit(caller, "command", name, nullptr, request(), false, e.what());
+        throw;
+    }
+}
+
 void ControlService::require(Role needed, const Caller& caller, const std::string& what) const {
     if (static_cast<int>(caller.role) >= static_cast<int>(needed)) return;
     throw Error(

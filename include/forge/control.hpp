@@ -14,8 +14,10 @@
 #include "forge/auth.hpp"
 #include "forge/error.hpp"
 #include "forge/json.hpp"
+#include "forge/status.hpp"
 
 #include <chrono>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <string>
@@ -44,6 +46,10 @@ public:
     std::chrono::seconds lease(const std::string& id, unsigned seconds, const Caller& caller);
     void release(const std::string& id, const Caller& caller);
     void set_log_level(const std::string& logger, const std::string& level, const Caller& caller);
+    /// A command of the program (Application::command): the role check, `run`,
+    /// and an audit record with the request unless `role` is viewer (a query).
+    Status run_command(const std::string& name, Role role, const std::function<json()>& request,
+                       const std::function<Status()>& run, const Caller& caller);
 
     /// Holder of a lease covering control `id` (empty: none).
     std::string lease_holder(const std::string& id) const;
