@@ -8,6 +8,7 @@
   <script src="forge.js"></script>
   <script src="dashboard.js" defer></script>
   <script src="system.js" defer></script>
+  <script src="tools.js" defer></script>
 </head>
 <body class="forge">
   <header class="forge-header">
@@ -26,6 +27,7 @@
 
   <nav class="forge-tabs" id="forge-tabs" role="tablist">
     <button type="button" role="tab" data-tab="controls" aria-selected="true">Controls</button>
+    <button type="button" role="tab" data-tab="commands">Commands</button>
     <button type="button" role="tab" data-tab="health">Health</button>
     <button type="button" role="tab" data-tab="metrics">Metrics</button>
     <button type="button" role="tab" data-tab="streams">Streams</button>
@@ -41,6 +43,22 @@
     <div id="forge-groups" class="forge-grid" data-pane="controls">
       <div class="forge-empty forge-wide">Loading…</div>
     </div>
+
+    <section class="forge-card forge-pane" data-pane="commands" hidden>
+      <header><h2>Commands</h2><span class="forge-muted">the program's commands: binary on a link, JSON here</span></header>
+      <div class="forge-split">
+        <table class="forge-table forge-pick"><thead><tr><th>Number</th><th>Name</th><th>Request</th></tr></thead>
+          <tbody id="forge-tmtc-rows"></tbody></table>
+        <div id="forge-tmtc-form" class="forge-tmtc-form" hidden>
+          <h3 id="forge-tmtc-title"></h3>
+          <div id="forge-tmtc-fields"></div>
+          <label class="forge-muted" for="forge-tmtc-json">Request (JSON, what is sent)</label>
+          <textarea id="forge-tmtc-json" class="forge-mono" rows="4" spellcheck="false"></textarea>
+          <div class="forge-actions"><button class="forge-btn primary" type="button" id="forge-tmtc-send">Send</button></div>
+          <pre id="forge-tmtc-reply" class="forge-mono forge-reply" aria-live="polite"></pre>
+        </div>
+      </div>
+    </section>
 
     <section class="forge-card forge-pane" data-pane="health" hidden>
       <header><h2>Health</h2><span id="forge-health-overall"></span></header>
@@ -60,8 +78,13 @@
       <header><h2>Endpoints and streams</h2></header>
       <div id="forge-endpoints"></div>
       <table class="forge-table"><thead><tr><th>Stream</th><th>Type</th><th>Endpoint</th><th>Policy</th>
-        <th>Subscribers</th><th>Sent</th><th>Dropped</th></tr></thead>
+        <th>Subscribers</th><th>Sent</th><th>Dropped</th><th></th></tr></thead>
         <tbody id="forge-streams-rows"></tbody></table>
+      <div id="forge-watch" hidden>
+        <header class="forge-watch-head"><h3 id="forge-watch-title"></h3>
+          <button class="forge-btn" type="button" id="forge-watch-stop">Stop</button></header>
+        <pre id="forge-watch-lines" class="forge-mono forge-reply" aria-live="polite"></pre>
+      </div>
     </section>
 
     <section class="forge-card forge-pane" data-pane="audit" hidden>

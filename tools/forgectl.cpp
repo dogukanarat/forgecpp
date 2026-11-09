@@ -6,6 +6,9 @@
 //   forgectl -e tcp://board:5557 call capture seconds=2
 //   forgectl -e tcp://board:5557 watch            # events: state, alarms, log, audit, health
 //   forgectl -e tcp://board:5557 trace -s 5 -o trace.json
+//   forgectl -e tcp://board:5557 tmtc                    # every command, with its number
+//   forgectl -e tcp://board:5557 tmtc history '{"count": 3}'   # any command, in JSON
+//   forgectl -e tcp://board:5557 stream spectrum -n 5    # messages of a stream, in JSON
 //   forgectl -e http://board:8080 state           # the same commands over HTTP (JSON)
 //
 // Endpoint: tcp://host:port ([forge].control, c2 frames) or http://host:port
@@ -21,6 +24,7 @@
 
 #include <atomic>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
@@ -172,7 +176,7 @@ int main(int argc, char** argv) {
 
     std::string id, value, logger_name, level, out_file, prefix, events_endpoint;
     std::vector<std::string> args, topics;
-    unsigned limit = 50, seconds = 0, lease_seconds = 60;
+    unsigned limit = 50, seconds = 0, lease_seconds = 60, count = 0;
 
     auto* info = app.add_subcommand("info", "Application, version, endpoints");
     auto* controls = app.add_subcommand("controls", "Controls and commands with their values");
@@ -212,6 +216,12 @@ int main(int argc, char** argv) {
     auto* watch = app.add_subcommand("watch", "Follow the events: state, alarms, log, audit, health, metrics");
     watch->add_option("topics", topics, "Topics (default: all but metrics)");
     watch->add_option("--events", events_endpoint, "Events endpoint (default: from info)");
+    auto* tmtc = app.add_subcommand("tmtc", "List the commands, or run one: tmtc <name|number> ['{json}'] (over HTTP)");
+    tmtc->add_option("name", id);
+    tmtc->add_option("request", value, "The request as JSON (default {})");
+    auto* stream = app.add_subcommand("stream", "Print the messages of a stream as they go out (a few per second)");
+    stream->add_option("name", id)->required();
+    stream->add_option("-n,--count", count, "Stop after this many (0: until Ctrl-C)");
 
     CLI11_PARSE(app, argc, argv);
     if (t.endpoint.empty()) {
@@ -392,6 +402,57 @@ int main(int argc, char** argv) {
                 set_text(req.level, level);
             }
             link.one<forge_log_level_request, forge_log_level_reply>(forge_msg_id_log_level, "log_level", req);
+        } else if (tmtc->parsed()) {
+            // Any command by name, in JSON: over HTTP, where the program knows the types.
+            httplib::Client http(link.is_http() ? t.endpoint : endpoint_of("http"));
+            http.set_read_timeout(std::chrono::milliseconds(t.timeout_ms));
+            httplib::Headers h;
+            if (!t.token.empty()) h.emplace("Authorization", "Bearer " + t.token);
+            auto res = id.empty()
+                           ? http.Get("/forge/api/tmtc", h)
+                           : http.Post("/forge/api/tmtc/" + id, h, value.empty() ? "{}" : value, "application/json");
+            if (!res) throw std::runtime_error("no answer over HTTP");
+            const auto body = json::parse(res->body, nullptr, false);
+            if (res->status != 200) {
+                throw std::runtime_error("HTTP " + std::to_string(res->status) + ": " +
+                                         (body.is_object() ? body.value("error", res->body) : res->body));
+            }
+            if (!id.empty() || t.as_json) {
+                std::cout << body.dump(2) << "\n";
+            } else {
+                for (const auto& c : body) {
+                    std::printf("0x%04x  %-16s %s%s\n", c["id"].get<unsigned>(), c["name"].get<std::string>().c_str(),
+                                c["push"].get<bool>() ? "report " : "",
+                                c["request"].is_string() ? c["request"].get<std::string>().c_str() : "");
+                }
+            }
+        } else if (stream->parsed()) {
+            httplib::Client http(link.is_http() ? t.endpoint : endpoint_of("http"));
+            http.set_read_timeout(std::chrono::seconds(30));
+            unsigned seen = 0;
+            std::string pending;
+            auto res = http.Get("/forge/api/streams/" + id + "/watch", [&](const char* data, std::size_t n) {
+                pending.append(data, n);
+                for (auto end = pending.find("\n\n"); end != std::string::npos; end = pending.find("\n\n")) {
+                    const auto event = pending.substr(0, end);
+                    pending.erase(0, end + 2);
+                    const auto at = event.find("data: ");
+                    if (event.find("event: message") == std::string::npos || at == std::string::npos) continue;
+                    const auto m = json::parse(event.substr(at + 6), nullptr, false);
+                    if (m.is_discarded()) continue;
+                    if (t.as_json) {
+                        std::cout << m.dump() << std::endl;
+                    } else {
+                        std::cout << clock_time(m["time_unix_ns"].get<std::int64_t>()) << "  #" << m["seq"] << "  "
+                                  << m["body"].dump() << std::endl;
+                    }
+                    if (count && ++seen >= count) return false;
+                }
+                return !g_stop;
+            });
+            if (!res && seen == 0) throw std::runtime_error("cannot watch stream '" + id + "' over HTTP");
+            if (res && res->status != 200)
+                throw std::runtime_error("HTTP " + std::to_string(res->status) + ": " + res->body);
         } else if (watch->parsed()) {
             if (events_endpoint.empty()) events_endpoint = endpoint_of("events");
             if (topics.empty()) topics = {"state", "alarms", "log", "audit", "health"};

@@ -34,6 +34,7 @@
 #include "forge/messages.forge.hpp"
 #include "forge/pb.hpp"
 #include "forge/status.hpp"
+#include "forge/subscription.hpp"
 #include "forge/tmtc.hpp"
 
 #include <zmq.hpp>
@@ -162,9 +163,18 @@ public:
     /// Send a received message on, with its header (source, time, trace) but our sequence.
     bool forward(const Message& message);
 
+    /// Look at the messages from inside the program (the panel's stream
+    /// inspector): at most watch_rate_hz of them, without the blob. While
+    /// someone watches, wanted() is true that often even without subscribers.
+    /// `fn` runs on the publishing thread: keep it short.
+    [[nodiscard]] Subscription watch(std::function<void(const Message&)> fn);
+    static constexpr double watch_rate_hz = 5;
+
     StreamInfo info() const;
 
 private:
+    bool watch_due(bool take);
+
     friend class Publisher;
     Stream(Publisher& owner, std::string name, const pb::Type& type, StreamOptions options);
     bool enqueue(forge_stream_header header, std::string body, BlobOwner owner, const void* data, std::size_t size);
@@ -177,6 +187,9 @@ private:
     std::atomic<std::size_t> subscribers_{0};
     std::mutex rate_mutex_;
     std::chrono::steady_clock::time_point next_{};
+    Listeners<Message> watchers_;
+    std::shared_ptr<std::atomic<int>> watching_ = std::make_shared<std::atomic<int>>(0);
+    std::atomic<std::int64_t> next_watch_ns_{0};
 };
 
 /// PUB socket with an I/O thread: thread-safe streams on one endpoint.

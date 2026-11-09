@@ -96,6 +96,14 @@ json to_json(const Type& type, const void* msg);
 /// Throws forge::Error(400) with the path of the field that is wrong. `msg` is reset first.
 void from_json(const Type& type, const json& j, void* msg);
 
+/// What a message looks like, for a client that builds one (the panel's
+/// command forms): {"name", "fields": [{"name", "tag", "kind", "bits",
+/// "repeated", "max_count", "max_length" (characters of a string: one less
+/// than its nanopb max_size, which counts the NUL), "max_size" (bytes),
+/// "values" (enum names), "fields" (a message)}]}.
+/// kind: bool, int, uint, float, string, bytes, enum, message.
+json schema(const Type& type);
+
 template <Message T>
 json to_json(const T& msg) {
     return to_json(*type_of<T>, &msg);

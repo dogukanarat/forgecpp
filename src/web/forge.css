@@ -542,3 +542,21 @@ a.forge-btn { display: inline-block; text-decoration: none; font-size: 14px; }
 .forge-layout.forge-layout-list .forge-card { height: auto !important; overflow: visible !important; }
 .forge-layout.forge-layout-list .ui-resizable-handle { display: none !important; }
 .forge-layout.forge-layout-list .forge-card > h2, .forge-layout.forge-layout-list .forge-card > header { cursor: auto; }
+
+/* Commands page and stream inspector */
+.forge-split { display: grid; grid-template-columns: minmax(260px, 2fr) 3fr; gap: 16px; }
+@media (max-width: 800px) { .forge-split { grid-template-columns: 1fr; } }
+.forge-pick tbody tr { cursor: pointer; }
+.forge-pick tbody tr:hover, .forge-pick tbody tr.selected { background: var(--forge-hover, rgba(127, 127, 127, 0.12)); }
+.forge-tmtc-form { position: sticky; top: 12px; align-self: start; }
+.forge-tmtc-form h3, .forge-watch-head h3 { margin: 0 0 8px; font-size: 15px; }
+.forge-pick tbody tr.forge-group-row { cursor: default; background: none; }
+.forge-group-row td { color: var(--forge-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding-top: 12px; }
+.forge-tmtc-form .forge-row { margin-bottom: 6px; }
+.forge-tmtc-form fieldset { border: 1px solid var(--forge-border); border-radius: 6px; margin: 4px 0 8px; padding: 6px 10px; }
+.forge-tmtc-form textarea { width: 100%; box-sizing: border-box; font-size: 12px; }
+.forge-reply { margin: 8px 0 0; padding: 8px; font-size: 12px; white-space: pre-wrap; max-height: 360px; overflow: auto;
+  background: var(--forge-code-bg, rgba(127, 127, 127, 0.08)); border-radius: 6px; }
+.forge-reply:empty { display: none; }
+.forge-reply.error { color: var(--forge-error, #c0392b); }
+.forge-watch-head { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }

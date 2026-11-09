@@ -59,6 +59,16 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   check (`tools/git-hooks/pre-commit`).
 - `.clang-format`, `.clang-tidy`, `.editorconfig`; `CMakePresets.json`
   (dev, release, asan, tsan, fuzz, armhf; libraries from `FORGECPP_DEPS`).
+- Panel: a **Commands** page (every command with a form built from its
+  request message; the reply as JSON) and a **Watch** button per stream on
+  the Streams page (its messages as they go out, at most 5 a second, without
+  the blob). HTTP: `GET /forge/api/tmtc/<name>` (the request and reply
+  schemas), `GET /forge/api/streams/<name>/watch` (server-sent events).
+- `forgectl tmtc [name ['{json}']]` lists or runs any command;
+  `forgectl stream <name> [-n N]` prints a stream's messages.
+- `pb::schema(type)`: a message's fields as JSON (kind, bits, bounds, enum
+  names, nested messages). `zmq::Stream::watch()`: see a stream's messages
+  from inside the program; costs one atomic read while nobody watches.
 - Fuzz targets for c2 frames, the dispatcher, protobuf bytes and JSON
   (`tests/fuzz`): a short ctest by default, libFuzzer with
   `-DFORGECPP_FUZZ=ON`.

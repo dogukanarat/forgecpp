@@ -296,6 +296,21 @@ void HttpFrontend::create_web(const Config& cfg) {
         }
         return list;
     });
+    // A command's messages, for the panel's forms.
+    http_->get_json(api + "/tmtc/:name", [this](const http::Request& req) {
+        const auto& name = req.path_params.at("name");
+        const auto* cmd = app_.commands().find(std::string_view(name));
+        if (!cmd) throw Error(404, "no command '" + name + "'");
+        return json{{"id", cmd->id},
+                    {"name", cmd->name},
+                    {"push", cmd->is_push()},
+                    {"request", cmd->req ? pb::schema(*cmd->req) : json(nullptr)},
+                    {"reply", pb::schema(*cmd->rsp)}};
+    });
+    // The messages of a stream as they go out, a few per second, in JSON.
+    http_->get(api + "/streams/:name/watch", [this](const http::Request& req, http::Response& res) {
+        watch_stream(req.path_params.at("name"))->handler()(req, res);
+    });
     http_->post_json(api + "/tmtc/:name", [this, &control](const http::Request& req, const json& body) {
         const auto& name = req.path_params.at("name");
         const bool number = !name.empty() && name.find_first_not_of("0123456789") == std::string::npos;
@@ -340,12 +355,47 @@ void HttpFrontend::start(const Config& cfg) {
         app_.logger()->info("web dashboard: http://{}:{}/forge/", is_loopback(host) ? "127.0.0.1" : host_name(),
                             http_->port());
     }
+    app_.every(std::chrono::seconds(5), [this] { drop_unwatched_streams(); });
 }
 
 void HttpFrontend::stop() {
     if (http_) http_->stop();
     subscriptions_.clear();
     weblog_.reset();
+    std::lock_guard lock(watch_mutex_);
+    watches_.clear();
+}
+
+std::shared_ptr<http::EventStream> HttpFrontend::watch_stream(const std::string& name) {
+    std::lock_guard lock(watch_mutex_);
+    if (auto it = watches_.find(name); it != watches_.end()) return it->second.events;
+    auto* stream = app_.messaging_->find_stream(name);
+    if (!stream) throw Error(404, "no stream '" + name + "'");
+    auto events = std::make_shared<http::EventStream>(4);
+    const pb::Type& type = stream->type();
+    auto subscription = stream->watch([weak = std::weak_ptr(events), &type](const zmq::Message& m) {
+        auto events = weak.lock();
+        if (!events || events->clients() == 0) return;
+        std::vector<char> body(type.size);
+        const auto bytes = std::span(reinterpret_cast<const std::uint8_t*>(m.body.data()), m.body.size());
+        if (!pb::decode(type, bytes, body.data()).ok()) return;
+        events->publish("message", json{{"seq", m.header.seq},
+                                        {"time_unix_ns", m.header.time_unix_ns},
+                                        {"source", pb::view(m.header.source)},
+                                        {"type", type.name},
+                                        {"body", pb::to_json(type, body.data())}});
+    });
+    watches_[name] = {events, std::move(subscription), std::chrono::steady_clock::now()};
+    return events;
+}
+
+// A stream nobody has watched for a while costs nothing again.
+void HttpFrontend::drop_unwatched_streams() {
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard lock(watch_mutex_);
+    std::erase_if(watches_, [&](const auto& w) {
+        return w.second.events->clients() == 0 && now - w.second.since > std::chrono::seconds(10);
+    });
 }
 
 void HttpFrontend::reset() {

@@ -192,7 +192,7 @@ Stream::Stream(Publisher& owner, std::string name, const pb::Type& type, StreamO
     : owner_(owner), name_(std::move(name)), type_(type), options_(std::move(options)) {}
 
 bool Stream::wanted() {
-    if (subscribers_.load(std::memory_order_relaxed) == 0) return false;
+    if (subscribers_.load(std::memory_order_relaxed) == 0) return watch_due(false);
     if (options_.max_rate_hz <= 0) return true;
     std::lock_guard lock(rate_mutex_);
     const auto now = std::chrono::steady_clock::now();
@@ -222,9 +222,37 @@ bool Stream::forward(const Message& m) {
     return enqueue(header, m.body, std::move(owner), data, m.blob.size());
 }
 
+Subscription Stream::watch(std::function<void(const Message&)> fn) {
+    ++*watching_;
+    auto inner = std::make_shared<Subscription>(watchers_.add(std::move(fn)));
+    return Subscription([inner, watching = watching_] {
+        inner->reset();
+        --*watching;
+    });
+}
+
+// Whether a watcher gets the next message; `take` uses the turn.
+bool Stream::watch_due(bool take) {
+    if (watching_->load(std::memory_order_relaxed) == 0) return false;
+    const std::int64_t now = std::chrono::steady_clock::now().time_since_epoch().count();
+    auto next = next_watch_ns_.load(std::memory_order_relaxed);
+    if (now < next) return false;
+    if (!take) return true;
+    const auto period = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(1.0 / watch_rate_hz));
+    return next_watch_ns_.compare_exchange_strong(next, now + period.count());
+}
+
 bool Stream::enqueue(forge_stream_header header, std::string body, BlobOwner owner, const void* data,
                      std::size_t size) {
     header.seq = ++seq_;
+    if (watch_due(true)) {
+        Message seen;
+        seen.topic = name_;
+        seen.header = header;
+        seen.body = body;
+        watchers_.notify(seen);
+    }
     Publisher::Outgoing out;
     out.stream = this;
     out.header = encode_to_string(*pb::type_of<forge_stream_header>, &header);

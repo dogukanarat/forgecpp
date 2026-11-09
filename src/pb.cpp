@@ -352,4 +352,39 @@ void from_json(const Type& type, const json& j, void* msg) {
     fill(type, j, msg, "");
 }
 
+json schema(const Type& type) {
+    static constexpr const char* kinds[] = {"bool", "int", "uint", "float", "string", "bytes", "enum", "message"};
+    std::vector<char> blank(type.size);  // nanopb's iterator needs a message to point into
+    json fields = json::array();
+    for (std::size_t i = 0; i < type.field_count; ++i) {
+        const Field& f = type.fields[i];
+        auto s = slot_of(type, blank.data(), f.tag);
+        if (!s.found) continue;
+        const auto& it = s.it;
+        json d{{"name", f.name}, {"tag", f.tag}, {"kind", kinds[static_cast<int>(f.kind)]}};
+        switch (f.kind) {
+            case FieldKind::signed_int:
+            case FieldKind::unsigned_int:
+            case FieldKind::floating: d["bits"] = it.data_size * 8; break;
+            // nanopb's max_size of a string counts the terminating NUL: the text is one shorter.
+            case FieldKind::string: d["max_length"] = it.data_size - 1; break;
+            case FieldKind::bytes: d["max_size"] = bytes_capacity(it); break;
+            case FieldKind::enumeration: {
+                json values = json::array();
+                for (std::size_t k = 0; k < f.enums->count; ++k) values.push_back(f.enums->values[k].name);
+                d["values"] = std::move(values);
+                break;
+            }
+            case FieldKind::message: d["fields"] = schema(*f.message)["fields"]; break;
+            default: break;
+        }
+        if (is_repeated(it)) {
+            d["repeated"] = true;
+            d["max_count"] = it.array_size;
+        }
+        fields.push_back(std::move(d));
+    }
+    return {{"name", type.name}, {"fields", std::move(fields)}};
+}
+
 }  // namespace forge::pb

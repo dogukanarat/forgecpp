@@ -118,6 +118,7 @@ public:
     void reset();
 
     zmq::Stream& stream(const std::string& name, const pb::Type& type, const zmq::StreamOptions& options);
+    zmq::Stream* find_stream(const std::string& name);
     std::vector<zmq::StreamInfo> stream_list() const;
     void add_endpoints(std::map<std::string, std::string>& e) const;
     /// "state" events for the values that changed since the last call (main loop).
@@ -188,8 +189,19 @@ public:
 
 private:
     void create_web(const Config& cfg);
+    /// The live messages of a stream for the panel (created on demand).
+    std::shared_ptr<http::EventStream> watch_stream(const std::string& name);
+    void drop_unwatched_streams();
+
+    struct StreamWatch {
+        std::shared_ptr<http::EventStream> events;
+        Subscription subscription;
+        std::chrono::steady_clock::time_point since;
+    };
 
     Application& app_;
+    std::mutex watch_mutex_;
+    std::map<std::string, StreamWatch> watches_;
     std::unique_ptr<http::Server> http_;
     std::shared_ptr<http::EventStream> events_;
     std::shared_ptr<WebLog> weblog_;  // log lines for the dashboard (web.logs)

@@ -176,6 +176,39 @@ TEST_CASE("zmq: publisher streams - subscribers per topic, rate limit, latest-on
     CHECK(list[0].type == "forge.log_record");
 }
 
+TEST_CASE("zmq: a stream can be watched from inside, a few messages a second") {
+    fz::Publisher pub("tcp://127.0.0.1:*");
+    auto& s = pub.add<forge_log_record>("watched");
+    CHECK_FALSE(s.wanted());  // nobody listens, nobody watches
+
+    std::mutex m;
+    std::vector<std::string> seen;
+    auto sub = s.watch([&](const fz::Message& msg) {
+        std::lock_guard lock(m);
+        seen.emplace_back(pb::view(msg.as<forge_log_record>().message));
+        CHECK(msg.blob.empty());  // never the blob
+    });
+    CHECK(s.wanted());  // a watcher makes the program build a message now and then
+    for (int i = 0; i < 50; ++i) s.publish(record("m" + std::to_string(i)));
+    {
+        std::lock_guard lock(m);
+        REQUIRE(seen.size() == 1);  // 5 per second at most: one of a quick burst
+        CHECK(seen[0] == "m0");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    s.publish(record("later"));
+    {
+        std::lock_guard lock(m);
+        CHECK(seen.back() == "later");
+    }
+    sub.reset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    CHECK_FALSE(s.wanted());
+    s.publish(record("gone"));
+    std::lock_guard lock(m);
+    CHECK(seen.back() == "later");
+}
+
 TEST_CASE("zmq: a command client that recovers from timeouts") {
     forge::tmtc::Registry commands;
     commands.add<forge_ping_request, forge_ping_reply>(forge_msg_id_ping, "ping", [](const auto& req, auto& rsp) {
@@ -399,6 +432,10 @@ TEST_CASE("zmq: the same commands answer JSON over HTTP") {
     CHECK(value(http.post_json("/forge/api/tmtc/set", {{"id", "freq"}, {"value", "433"}})) == 433);
     CHECK(value(http.post_json("/forge/api/tmtc/get", {{"id", "freq"}})) == 433);
     CHECK(http.post_json("/forge/api/tmtc/2", json::object())["name"] == "zmqapp");  // by number: info
+    const auto schema = http.get_json("/forge/api/tmtc/set");
+    CHECK(schema["id"] == forge_msg_id_set);
+    CHECK(schema["request"]["fields"][0]["name"] == "id");
+    CHECK(schema["request"]["fields"][0]["max_length"] == 47);
     const auto list = http.get_json("/forge/api/tmtc");
     CHECK(std::any_of(list.begin(), list.end(), [](const json& c) { return c["name"] == "logs"; }));
     try {

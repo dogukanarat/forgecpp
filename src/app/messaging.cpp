@@ -150,6 +150,11 @@ zmq::Stream& Messaging::stream(const std::string& name, const pb::Type& type, co
     return data_pub_->add(name, type, o);
 }
 
+zmq::Stream* Messaging::find_stream(const std::string& name) {
+    std::lock_guard lock(data_mutex_);
+    return data_pub_ ? data_pub_->find(name) : nullptr;
+}
+
 std::vector<zmq::StreamInfo> Messaging::stream_list() const {
     std::lock_guard lock(data_mutex_);
     return data_pub_ ? data_pub_->list() : std::vector<zmq::StreamInfo>{};

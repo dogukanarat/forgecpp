@@ -149,6 +149,29 @@ TEST_CASE("pb: JSON names, kinds and presence") {
     CHECK(in.sf32 == 4);
 }
 
+TEST_CASE("pb: a message's schema, for clients that build one") {
+    const auto s = pb::schema(*pb::type_of<forge_test_all_types>);
+    CHECK(s["name"] == "forge_test.all_types");
+    const auto field = [&](const std::string& name) {
+        for (const auto& f : s["fields"]) {
+            if (f["name"] == name) return f;
+        }
+        FAIL("no field " << name);
+        return json();
+    };
+    CHECK(field("i64")["kind"] == "int");
+    CHECK(field("i64")["bits"] == 64);
+    CHECK(field("u32")["kind"] == "uint");
+    CHECK(field("text")["max_length"] == 16);  // max_size 17 counts the NUL
+    CHECK(field("data")["max_size"] == 8);
+    CHECK(field("key")["max_size"] == 4);
+    CHECK(field("list")["repeated"] == true);
+    CHECK(field("list")["max_count"] == 4);
+    CHECK(field("colour")["values"] == json::array({"color_none", "red", "green", "blue"}));
+    CHECK(field("one")["fields"][1]["name"] == "s");
+    CHECK(field("one")["fields"][1]["max_length"] == 8);
+}
+
 TEST_CASE("pb: wrong JSON is refused with the path of the field") {
     CHECK(rejected(json{{"nope", 1}}) == "nope: not a field of forge_test.all_types");
     CHECK(rejected(json{{"text", std::string(17, 'x')}}) == "text: longer than 16 bytes");
