@@ -67,6 +67,20 @@ inline double timeout_scale() {
     return scale;
 }
 
+/// True when the build can keep up with real time: no sanitizer and no
+/// FORGE_TEST_TIMEOUT_SCALE above 1 (emulation). Tests of throughput and
+/// timing check their numbers only then; the rest of the test still runs.
+inline bool realtime() {
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    return false;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+    return false;
+#endif
+#endif
+    return timeout_scale() == 1.0;
+}
+
 /// Poll `predicate` until it is true or `timeout` (times timeout_scale()) expires.
 inline bool wait_until(const std::function<bool()>& predicate,
                        std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
@@ -137,9 +151,11 @@ public:
                                        " before it started (-D log.console=true shows why)")));
             }
         });
-        if (future.wait_for(std::chrono::seconds(20)) != std::future_status::ready) {
+        const auto limit =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::seconds(20) * timeout_scale());
+        if (future.wait_for(limit) != std::future_status::ready) {
             stop();
-            throw std::runtime_error("the application did not start within 20 s");
+            throw std::runtime_error("the application did not start within " + std::to_string(limit.count()) + " ms");
         }
         try {
             future.get();

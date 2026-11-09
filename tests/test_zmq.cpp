@@ -2,7 +2,10 @@
 // events of an application.
 #include <forge/control.hpp>
 #include <forge/forge.hpp>
+#include <forge/hub.forge.hpp>
+#include <forge/hub.hpp>
 #include <forge/messages.forge.hpp>
+#include <forge/remote.hpp>
 #include <forge/testing.hpp>
 #include <forge/trace.hpp>
 #include <forge/zmq.hpp>
@@ -621,4 +624,71 @@ TEST_CASE("zmq: get and set with typed values, for peers without JSON") {
     REQUIRE(c.call(forge_msg_id_set, old, now).ok());
     CHECK(now.typed.number == 100);
     CHECK(r->invoke([&] { return r->freq; }) == 100);
+}
+
+TEST_CASE("remote: get, set, press and call another program's controls") {
+    forge::testing::AppRunner<ControlledApp> r({"-D", "forge.control=tcp://127.0.0.1:*", "-D", "http.enabled=false"});
+    forge::Remote radio(r->endpoints().at("control"));
+    CHECK(radio.get("freq") == 100.0);
+    CHECK(radio.set("freq", 433.5) == 433.5);
+    CHECK(r->invoke([&] { return r->freq; }) == 433.5);
+    radio.press("cal");
+    CHECK(r->invoke([&] { return r->presses; }) == 1);
+    CHECK(radio.call("scan", {{"from", 100}, {"to", 160}})["width"] == 60.0);
+    try {
+        radio.set("freq", 7000);  // above the range: refused with the reason's status
+        FAIL("a value out of range was accepted");
+    } catch (const forge::Error& e) {
+        CHECK(e.status() == 400);
+    }
+    try {
+        radio.get("nope");
+        FAIL("an unknown control was found");
+    } catch (const forge::Error& e) {
+        CHECK(e.status() == 404);
+    }
+    forge::Remote nobody("tcp://127.0.0.1:1", std::chrono::milliseconds(100));
+    try {
+        nobody.get("freq");
+        FAIL("an answer from nowhere");
+    } catch (const forge::Error& e) {
+        CHECK(e.status() == 504);
+    }
+}
+
+TEST_CASE("hub client: registers, notices a hub that goes away, registers again when it is back") {
+    // A hub: the register command, answered by a Server we can stop and start.
+    forge::tmtc::Registry hub_commands;
+    std::atomic<int> registrations{0};
+    hub_commands.add<forge_hub_register_request, forge_hub_register_reply>(
+        forge_hub_msg_id_register, "register",
+        [&](const forge_hub_register_request& req, forge_hub_register_reply& rsp) {
+        if (!req.has_app) return forge::Status::error(forge::module_id::app, EINVAL, "no app");
+        ++registrations;
+        return pb::assign(rsp.hub, "test-hub");
+    });
+    hub_commands.add<forge_hub_unregister_request, forge_hub_unregister_reply>(
+        forge_hub_msg_id_unregister, "unregister", [&](const auto&, auto&) { return forge::Status(); });
+    const auto serve = [&](const std::string& endpoint) {
+        return std::make_unique<fz::Server>(endpoint, [&](std::string_view r) { return fz::answer(hub_commands, r); });
+    };
+    auto hub = serve("tcp://127.0.0.1:*");
+    const auto endpoint = hub->endpoint();
+
+    forge::hub::Client client(endpoint, std::chrono::seconds(1), [] {
+        forge_hub_app_registration a{};
+        REQUIRE(pb::assign(a.name, "tester").ok());
+        a.pid = 42;
+        return a;
+    }, std::chrono::milliseconds(200));
+    client.start();
+    CHECK(forge::testing::wait_until([&] { return client.registered(); }));
+    CHECK(registrations == 1);
+
+    hub.reset();  // the hub goes away
+    CHECK(forge::testing::wait_until([&] { return !client.registered(); }, 5s));
+    hub = serve(endpoint);  // and comes back on the same port
+    CHECK(forge::testing::wait_until([&] { return client.registered(); }, 5s));
+    CHECK(registrations >= 2);
+    client.stop(forge_hub_unregister_reason_REASON_EXIT, 0);
 }

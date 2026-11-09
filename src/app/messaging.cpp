@@ -4,6 +4,7 @@
 #include "services.hpp"
 
 #include "forge/control.hpp"
+#include "forge/metrics.hpp"
 #include "forge/tmtc.hpp"
 
 #include <cstring>
@@ -116,6 +117,15 @@ void Messaging::start_control(const Config& cfg) {
             return zmq::answer(app_.commands(), request);
         }, options);
         logger->info("forge: commands on {}", control_server_->endpoint());
+        // The link's counters on /metrics (the server outlives the registry's reads: reset() clears them).
+        auto& m = app_.metrics();
+        const metrics::Registry::Labels link{{"link", "zmq"}};
+        m.gauge_fn("forge.link.requests", link, [this] {
+            return control_server_ ? double(control_server_->requests()) : 0;
+        }, "Commands received on the link");
+        m.gauge_fn("forge.link.refused", link, [this] {
+            return control_server_ ? double(control_server_->rejected()) : 0;
+        }, "Commands refused because the server was busy");
     }
     const auto device = cfg.value<std::string>("forge.serial");
     if (!device.empty()) {
@@ -131,6 +141,30 @@ void Messaging::start_control(const Config& cfg) {
         // health says so and the line is tried again every second.
         open_serial();
         app_.every(std::chrono::seconds(1), [this] { check_serial(); });
+        auto& m = app_.metrics();
+        const metrics::Registry::Labels link{{"link", "serial"}, {"device", device}};
+        const auto stat = [this](auto member) {
+            return [this, member] {
+                std::lock_guard lock(serial_stats_mutex_);
+                return static_cast<double>(serial_stats_.*member);
+            };
+        };
+        const auto framing = [this](auto member) {
+            return [this, member] {
+                std::lock_guard lock(serial_stats_mutex_);
+                return static_cast<double>(serial_stats_.framing.*member);
+            };
+        };
+        m.gauge_fn("forge.link.requests", link, stat(&serial::Link::Stats::requests_in),
+                   "Commands received on the link");
+        m.gauge_fn("forge.link.refused", link, stat(&serial::Link::Stats::requests_refused),
+                   "Commands refused because the link was busy");
+        m.gauge_fn("forge.serial.messages_received", link, framing(&serial::Framing::Stats::messages_received),
+                   "Messages assembled from the line");
+        m.gauge_fn("forge.serial.frames_dropped", link, framing(&serial::Framing::Stats::frames_dropped),
+                   "Fragments with a bad CRC or COBS");
+        m.gauge_fn("forge.serial.messages_dropped", link, framing(&serial::Framing::Stats::messages_dropped),
+                   "Messages lost to a missing or out-of-order fragment");
     }
 }
 
@@ -156,6 +190,10 @@ bool Messaging::open_serial() {
 
 void Messaging::check_serial() {
     if (serial_stopped_) return;
+    if (serial_) {
+        std::lock_guard lock(serial_stats_mutex_);
+        serial_stats_ = serial_->stats();
+    }
     if (serial_ && !serial_->connected()) {
         app_.logger()->warn("forge: {} went away; waiting for it", serial_options_.device);
         app_.health().set("serial", HealthState::failed, "line gone: " + serial_options_.device, false);
@@ -181,6 +219,22 @@ void Messaging::stop() {
 
 void Messaging::reset() {
     serial_stopped_ = true;
+    auto& m = app_.metrics();
+    for (const auto& name : {"forge.link.requests", "forge.link.refused"}) {
+        m.remove(name, {{"link", "zmq"}});
+        if (!serial_options_.device.empty()) m.remove(name, {{"link", "serial"}, {"device", serial_options_.device}});
+    }
+    if (!serial_options_.device.empty()) {
+        for (const auto& name :
+             {"forge.serial.messages_received", "forge.serial.frames_dropped", "forge.serial.messages_dropped"}) {
+            m.remove(name, {{"link", "serial"}, {"device", serial_options_.device}});
+        }
+    }
+    for (const auto& info : stream_list()) {
+        for (const auto& name : {"forge.stream.sent", "forge.stream.dropped", "forge.stream.subscribers"}) {
+            m.remove(name, {{"topic", info.name}});
+        }
+    }
     serial_.reset();
     control_server_.reset();
     {
@@ -198,7 +252,21 @@ zmq::Stream& Messaging::stream(const std::string& name, const pb::Type& type, co
         data_pub_ = std::make_unique<zmq::Publisher>(ep.empty() ? "tcp://*:0" : ep);
         app_.logger()->info("forge: streams on {}", data_pub_->endpoint());
     }
-    return data_pub_->add(name, type, o);
+    const bool known = data_pub_->find(name) != nullptr;
+    auto& s = data_pub_->add(name, type, o);
+    if (!known) {
+        // Its counters on /metrics, by topic. The stream lives as long as the
+        // publisher, which reset() destroys after the registry stops being read.
+        auto& m = app_.metrics();
+        const metrics::Registry::Labels topic{{"topic", name}};
+        m.gauge_fn("forge.stream.sent", topic, [&s] { return static_cast<double>(s.info().sent); },
+                   "Messages sent on the stream");
+        m.gauge_fn("forge.stream.dropped", topic, [&s] { return static_cast<double>(s.info().dropped); },
+                   "Messages dropped because the queue was full or the policy kept only the newest");
+        m.gauge_fn("forge.stream.subscribers", topic, [&s] { return static_cast<double>(s.subscribers()); },
+                   "Subscribers of the stream");
+    }
+    return s;
 }
 
 zmq::Stream* Messaging::find_stream(const std::string& name) {

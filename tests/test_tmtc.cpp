@@ -20,6 +20,8 @@ constexpr std::uint16_t kEcho = 0x0101;
 constexpr std::uint16_t kCount = 0x0102;
 constexpr std::uint16_t kFail = 0x0103;
 constexpr std::uint16_t kQuiet = 0x0104;
+constexpr std::uint16_t kThrows = 0x0105;
+constexpr std::uint16_t kBreaks = 0x0106;
 constexpr std::uint16_t kLevel = 0x0181;
 
 using Bytes = std::vector<std::uint8_t>;
@@ -47,6 +49,18 @@ struct Fixture {
         });
         commands.add<forge_test_count_request, forge_test_count_reply>(
             kQuiet, "quiet", [](const forge_test_count_request&, forge_test_count_reply&) { return Status(); });
+        commands.add<forge_test_count_request, forge_test_count_reply>(
+            kThrows, "throws", [](const forge_test_count_request&, forge_test_count_reply&) -> Status {
+            throw std::runtime_error("a bug in the handler");
+        });
+        // Parts 1 and 2, then a refusal.
+        commands.add_parts<forge_test_count_request, forge_test_count_reply>(
+            kBreaks, "breaks", [](const forge_test_count_request&, forge_test_count_reply& rsp, std::uint32_t& more) {
+            if (more == 2) return Status::error(forge::module_id::app, EIO, "the third part is lost");
+            rsp.value = more + 1;
+            more = rsp.value;
+            return Status();
+        });
         commands.add_push<forge_test_level_report>(kLevel, "level");
     }
 
@@ -99,7 +113,7 @@ TEST_CASE("tmtc: commands are found by number and by name") {
 
     std::vector<std::uint16_t> ids;
     for (const auto* c : f.commands.list()) ids.push_back(c->id);
-    CHECK(ids == std::vector<std::uint16_t>{kEcho, kCount, kFail, kQuiet, kLevel});
+    CHECK(ids == std::vector<std::uint16_t>{kEcho, kCount, kFail, kQuiet, kThrows, kBreaks, kLevel});
 
     f.commands.remove(kQuiet);
     CHECK(f.commands.find(kQuiet) == nullptr);
@@ -209,4 +223,41 @@ TEST_CASE("tmtc: the same handler answers JSON") {
     }
     CHECK_THROWS_WITH_AS(echo->run_json(json{{"text", std::string(20, 'x')}}), "text: longer than 15 bytes",
                          forge::Error);
+}
+
+TEST_CASE("tmtc: a handler that throws is EIO of the command's module, and nothing leaves the link") {
+    Fixture f;
+    CHECK(f.dispatch(f.request(kThrows, 9, forge_test_count_request{})) == c2::Kind::request);
+    const auto s = f.refusal();
+    CHECK(s.errno_code() == EIO);
+    CHECK(s.module() == forge::module_id::app);  // an application command (0x0100 and up)
+    CHECK(f.answer().header.seq == 9);
+}
+
+TEST_CASE("tmtc: a refusal in the middle of a list ends it with a NACK") {
+    Fixture f;
+    f.dispatch(f.request(kBreaks, 10, forge_test_count_request{}));
+    REQUIRE(f.sent.size() == 3);
+    CHECK(f.answer(0).header.flags == (c2::flag::rsp | c2::flag::more));
+    CHECK(f.answer(1).header.flags == (c2::flag::rsp | c2::flag::more));
+    CHECK(f.refusal(2).errno_code() == EIO);
+    CHECK(f.answer(2).header.seq == 10);
+}
+
+TEST_CASE("tmtc: a reply that does not fit the buffer is EMSGSIZE of module pb") {
+    Fixture f;
+    const auto* cmd = f.commands.find(kEcho);
+    REQUIRE(cmd != nullptr);
+    forge_test_echo_request req{};
+    REQUIRE(pb::assign(req.text, "fifteen chars!!").ok());
+    std::array<std::uint8_t, 64> payload{};
+    std::size_t n = 0;
+    REQUIRE(pb::encode(req, payload, n).ok());
+    std::array<std::uint8_t, 4> tiny{};  // room for the token, not for the text
+    std::size_t written = 0;
+    std::uint32_t more = 0;
+    const auto s = cmd->run_binary(std::span(payload).first(n), tiny, written, more);
+    CHECK(s.errno_code() == EMSGSIZE);
+    CHECK(s.module() == forge::module_id::pb);
+    CHECK(more == 0);
 }

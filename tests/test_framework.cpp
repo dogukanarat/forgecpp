@@ -8,6 +8,11 @@
 #include <forge/messages.forge.hpp>
 #include <forge/rt.hpp>
 #include <forge/testing.hpp>
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <cstring>
 #include <forge/trace.hpp>
 
 #include <httplib.h>
@@ -834,4 +839,52 @@ TEST_CASE("threading: forge::Worker and sleep_for wake at once on stop") {
     }
     CHECK(done);
     CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5));
+}
+
+TEST_CASE("metrics: labels make series of one name") {
+    forge::metrics::Registry r;
+    r.set_labels({{"app", "t"}});
+    r.counter("forge.stream.sent", {{"topic", "iq"}}, "sent").inc(3);
+    r.counter("forge.stream.sent", {{"topic", "samples"}}, "sent").inc(5);
+    r.gauge_fn("forge.stream.subscribers", {{"topic", "iq"}}, [] { return 2.0; });
+    const auto text = r.prometheus();
+    CHECK(text.find("forge_stream_sent{app=\"t\",topic=\"iq\"} 3") != std::string::npos);
+    CHECK(text.find("forge_stream_sent{app=\"t\",topic=\"samples\"} 5") != std::string::npos);
+    CHECK(text.find("forge_stream_subscribers{app=\"t\",topic=\"iq\"} 2") != std::string::npos);
+    CHECK(r.names().size() == 3);
+    r.remove("forge.stream.sent", {{"topic", "iq"}});
+    CHECK(r.names().size() == 2);
+    CHECK_THROWS_AS(r.gauge("forge.stream.sent", {{"topic", "samples"}}), std::invalid_argument);  // a counter
+}
+
+TEST_CASE("systemd: notify() writes to $NOTIFY_SOCKET, watchdog_interval() reads the environment") {
+    forge::testing::TempDir dir;
+    const auto path = (dir / "notify.sock").string();
+    const int fd = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    REQUIRE(fd >= 0);
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
+    REQUIRE(::bind(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) == 0);
+
+    CHECK_FALSE(forge::systemd::available());
+    CHECK_FALSE(forge::systemd::notify("READY=1"));  // not under systemd: nothing happens
+    ::setenv("NOTIFY_SOCKET", path.c_str(), 1);
+    CHECK(forge::systemd::available());
+    CHECK(forge::systemd::notify("READY=1\nSTATUS=running"));
+    char buf[128] = {};
+    const auto n = ::recv(fd, buf, sizeof(buf) - 1, 0);
+    CHECK(std::string(buf, static_cast<std::size_t>(std::max<ssize_t>(n, 0))) == "READY=1\nSTATUS=running");
+    ::unsetenv("NOTIFY_SOCKET");
+    ::close(fd);
+
+    CHECK_FALSE(forge::systemd::watchdog_interval());
+    ::setenv("WATCHDOG_USEC", "3000000", 1);
+    ::setenv("WATCHDOG_PID", "1", 1);  // for another process
+    CHECK_FALSE(forge::systemd::watchdog_interval());
+    ::setenv("WATCHDOG_PID", std::to_string(::getpid()).c_str(), 1);
+    REQUIRE(forge::systemd::watchdog_interval());
+    CHECK(*forge::systemd::watchdog_interval() == std::chrono::seconds(3));
+    ::unsetenv("WATCHDOG_USEC");
+    ::unsetenv("WATCHDOG_PID");
 }

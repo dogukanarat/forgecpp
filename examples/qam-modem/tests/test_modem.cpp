@@ -164,7 +164,7 @@ TEST_CASE("qam-modem: echo through radio-controller (simulated AD9361, TX1 -> sp
                           << ", radio TX underflows " << get(r, "tx_underflows"));
     CHECK(res.corrupted == 0);
     CHECK(res.received > 0);
-    if (forge::testing::timeout_scale() == 1) {  // sanitizer builds are too slow for real time
+    if (forge::testing::realtime()) {  // sanitizer builds are too slow for real time
         CHECK(res.received >= res.sent * 99 / 100);
         CHECK(res.rx_mbps > 2.0);
         CHECK(std::abs(get(q, "cfo_hz").get<double>() - 1200) < 100);
@@ -178,7 +178,7 @@ TEST_CASE("qam-modem: echo through radio-controller (simulated AD9361, TX1 -> sp
     MESSAGE("test packets: " << kbps << " kbit/s, lost " << get(q, "test_lost") << ", received " << get(q, "test_ok"));
     CHECK(get(q, "test_bad") == 0);
     CHECK(get(q, "test_ok").get<double>() > 0);
-    if (forge::testing::timeout_scale() == 1) {
+    if (forge::testing::realtime()) {
         CHECK(get(q, "test_ok").get<double>() > 100);
         CHECK(kbps > 2500);
     }

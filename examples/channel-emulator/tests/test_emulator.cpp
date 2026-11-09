@@ -247,7 +247,7 @@ TEST_CASE("channel-emulator: qam-modem -> channel-emulator -> radio-controller (
         return std::make_tuple(get(q, "test_ok").get<double>(), get(q, "crc_errors").get<double>(),
                                get(q, "evm_db").get<double>());
     };
-    const bool realtime = forge::testing::timeout_scale() == 1;
+    const bool realtime = forge::testing::realtime();
 
     std::this_thread::sleep_for(1s);
     auto [ok_clean, crc_clean, evm_clean] = measure(2s);

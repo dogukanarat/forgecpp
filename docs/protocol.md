@@ -150,6 +150,43 @@ the command: **app** (64) for the application's commands, tmtc for forgecpp's
 module. forgecpp's own checks before a handler runs (the caller's role, a busy
 main loop) are module tmtc.
 
+## What is guaranteed
+
+The links carry messages without a layer of their own for reliability; the
+guarantees are those of the sockets and of c2, and they are these:
+
+- **Commands are at most once.** A request has one answer (or several parts);
+  without one in the client's timeout the client gives up (`ETIMEDOUT`) and
+  does not know whether the handler ran. A request that must not run twice
+  carries something to recognise it by (a token, a sequence of the caller's)
+  in its message; c2 itself has no idempotency key. The server refuses, with
+  `EAGAIN`, requests it cannot handle in time rather than queueing them for
+  ever (`[forge].control_workers`, 256 waiting at most, `request_timeout_ms`).
+- **Streams are at most once, in order per publisher.** A subscriber that
+  cannot keep up loses messages (the publisher drops when a stream has
+  `send_hwm` messages waiting, or all its streams `send_budget_bytes`; the
+  socket drops at its own high-water mark); the `seq` in the stream header
+  counts per topic, so the receiver sees the gap (`Receiver::lost()`). Within
+  one publisher the numbers follow the order the messages were queued in, also
+  when several threads publish one stream. Nothing is sent again.
+- **Events (`[forge].events`) are the same as streams**; a subscriber that
+  joins late gets nothing from before (the `state` topic sends every value
+  once when the first subscriber appears).
+- **Time in a header is the wall clock** (`time_unix_ns`); it moves with NTP.
+  Use `seq` for loss and order, time for display.
+- **A serial line adds**: a message is cut into at most 255 fragments of
+  `frame_size - 8` bytes (236 with the default 244), so the longest message
+  on a line is about 60 kB, below c2's 65 535-byte payload; a damaged or lost
+  fragment loses that one message; there is no acknowledgement and no
+  retransmission below c2.
+- **There is no heartbeat on the command link**: a peer that is gone is
+  noticed when a request times out. The `metrics` topic of `[forge].events`
+  (every `[forge].metrics_interval_s`) and forge-hub's registration are the
+  liveness signals a device has.
+- **Addresses are static**: `[forge].control` and the other endpoints come
+  from the configuration (and forge-hub lists them per application); there
+  is no discovery on the network.
+
 ## Changing the messages
 
 `proto/forge/API.json` records the messages of the last release;
@@ -197,6 +234,11 @@ equal: either may send requests, answers and reports. A c2 frame is one
 - A fragment out of order, a bad CRC, or a fragment after one was lost drops
   that message only; nothing is acknowledged or sent again. The c2 answer (or
   its absence: a timeout) tells the sender.
+- Noise that holds a `0x00` opens a frame of noise; the delimiter that ends it
+  (the leading one of the next real frame) does not start that frame, so the
+  first fragment after such noise is lost with its message. zephyrus decides
+  the same way (`tests/compat/zephyrus`, `tests/fuzz/fuzz_serial.cpp`); the
+  sender's timeout and a new request cover it.
 - A message is at most 16384 bytes on the forgecpp side (forgecpp's longest
   replies are about 12.5 kB); zephyrus's default is 4096
   (`CONFIG_ZEPHYRUS_COBS_MAX_MESSAGE_SIZE`): a device that asks for the long

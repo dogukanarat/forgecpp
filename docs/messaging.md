@@ -65,6 +65,9 @@ link.call(m.set, m.set_request(id="rx_lo_mhz", value="2412"), m.set_reply)
 | `events` | PUB | topics `state`, `alarms`, `log`, `audit`, `health`, `metrics` |
 | `data` | PUB | the application's own streams (its messages, e.g. `radio.iq_block`) |
 
+What the links guarantee (at most once, order per publisher, the size cap of a serial line):
+[protocol.md](protocol.md#what-is-guaranteed).
+
 **Streams.** Published messages are multipart: **topic**,
 **`forge.stream_header`** (source, host, pid, sequence number per topic, time,
 body type, trace context), **body** and an optional **blob** (raw bytes such as

@@ -85,11 +85,22 @@ std::vector<double> exponential_buckets(double start, double factor, int count) 
     return b;
 }
 
-Registry::Entry& Registry::entry(const std::string& name, Type type, const std::string& help, const std::string& unit) {
-    auto [it, inserted] = entries_.try_emplace(name);
+std::string Registry::key_of(const std::string& name, const Labels& labels) {
+    if (labels.empty()) return name;
+    std::string key = name + "{";
+    for (const auto& [k, v] : labels) key += k + "=" + v + ",";
+    key += "}";
+    return key;
+}
+
+Registry::Entry& Registry::entry(const std::string& name, const Labels& labels, Type type, const std::string& help,
+                                 const std::string& unit) {
+    auto [it, inserted] = entries_.try_emplace(key_of(name, labels));
     Entry& e = it->second;
     if (inserted) {
         e.type = type;
+        e.name = name;
+        e.labels = labels;
         e.help = help;
         e.unit = unit;
     } else if (e.type != type) {
@@ -99,15 +110,25 @@ Registry::Entry& Registry::entry(const std::string& name, Type type, const std::
 }
 
 Counter& Registry::counter(const std::string& name, const std::string& help, const std::string& unit) {
+    return counter(name, Labels{}, help, unit);
+}
+
+Counter& Registry::counter(const std::string& name, const Labels& labels, const std::string& help,
+                           const std::string& unit) {
     std::lock_guard lock(mutex_);
-    auto& e = entry(name, Type::counter, help, unit);
+    auto& e = entry(name, labels, Type::counter, help, unit);
     if (!e.counter) e.counter = std::make_unique<Counter>();
     return *e.counter;
 }
 
 Gauge& Registry::gauge(const std::string& name, const std::string& help, const std::string& unit) {
+    return gauge(name, Labels{}, help, unit);
+}
+
+Gauge& Registry::gauge(const std::string& name, const Labels& labels, const std::string& help,
+                       const std::string& unit) {
     std::lock_guard lock(mutex_);
-    auto& e = entry(name, Type::gauge, help, unit);
+    auto& e = entry(name, labels, Type::gauge, help, unit);
     if (!e.gauge && !e.fn) e.gauge = std::make_unique<Gauge>();
     if (!e.gauge) throw std::invalid_argument("metric '" + name + "' is a computed gauge");
     return *e.gauge;
@@ -115,18 +136,33 @@ Gauge& Registry::gauge(const std::string& name, const std::string& help, const s
 
 Histogram& Registry::histogram(const std::string& name, std::vector<double> bounds, const std::string& help,
                                const std::string& unit) {
+    return histogram(name, Labels{}, std::move(bounds), help, unit);
+}
+
+Histogram& Registry::histogram(const std::string& name, const Labels& labels, std::vector<double> bounds,
+                               const std::string& help, const std::string& unit) {
     std::lock_guard lock(mutex_);
-    auto& e = entry(name, Type::histogram, help, unit);
+    auto& e = entry(name, labels, Type::histogram, help, unit);
     if (!e.histogram) e.histogram = std::make_unique<Histogram>(std::move(bounds));
     return *e.histogram;
 }
 
 void Registry::gauge_fn(const std::string& name, std::function<double()> fn, const std::string& help,
                         const std::string& unit) {
+    gauge_fn(name, Labels{}, std::move(fn), help, unit);
+}
+
+void Registry::gauge_fn(const std::string& name, const Labels& labels, std::function<double()> fn,
+                        const std::string& help, const std::string& unit) {
     std::lock_guard lock(mutex_);
-    auto& e = entry(name, Type::gauge, help, unit);
+    auto& e = entry(name, labels, Type::gauge, help, unit);
     e.gauge.reset();
     e.fn = std::move(fn);
+}
+
+void Registry::remove(const std::string& name, const Labels& labels) {
+    std::lock_guard lock(mutex_);
+    entries_.erase(key_of(name, labels));
 }
 
 void Registry::set_labels(std::map<std::string, std::string> labels) {
@@ -137,7 +173,7 @@ void Registry::set_labels(std::map<std::string, std::string> labels) {
 std::vector<std::string> Registry::names() const {
     std::lock_guard lock(mutex_);
     std::vector<std::string> out;
-    for (const auto& [n, e] : entries_) out.push_back(n);
+    for (const auto& [key, e] : entries_) out.push_back(key);
     return out;
 }
 
@@ -151,12 +187,14 @@ Snapshot Registry::snapshot(const std::string& prefix) const {
     // hold every thread that creates a metric.
     struct Deferred {
         std::size_t index;
+        std::string key;
         std::function<double()> fn;
     };
     std::vector<Deferred> deferred;
     {
         std::lock_guard lock(mutex_);
-        for (const auto& [name, e] : entries_) {
+        for (const auto& [key, e] : entries_) {
+            const auto& name = e.name;
             if (!prefix.empty() && name.compare(0, prefix.size(), prefix) != 0) continue;
             Sample m;
             m.name = name;
@@ -164,9 +202,10 @@ Snapshot Registry::snapshot(const std::string& prefix) const {
             m.unit = e.unit;
             m.type = e.type;
             m.labels = labels_;
+            for (const auto& [k, v] : e.labels) m.labels[k] = v;  // the metric's own labels win
             if (e.counter) m.value = static_cast<double>(e.counter->value());
             if (e.gauge) m.value = e.gauge->value();
-            if (e.fn) deferred.push_back({s.metrics.size(), e.fn});
+            if (e.fn) deferred.push_back({s.metrics.size(), key, e.fn});
             if (e.histogram) {
                 e.histogram->snapshot(m.buckets, m.count, m.sum);
                 m.bounds = e.histogram->bounds();
@@ -183,12 +222,12 @@ Snapshot Registry::snapshot(const std::string& prefix) const {
             m.value = std::nan("");  // shown as NaN
             failed = true;
             std::lock_guard lock(mutex_);
-            auto it = entries_.find(m.name);
+            auto it = entries_.find(d.key);
             if (it != entries_.end() && !it->second.fn_failed)
                 log::warn("metrics: gauge {} failed: {}", m.name, ex.what());
         }
         std::lock_guard lock(mutex_);
-        auto it = entries_.find(m.name);
+        auto it = entries_.find(d.key);
         if (it != entries_.end()) it->second.fn_failed = failed;
     }
     return s;

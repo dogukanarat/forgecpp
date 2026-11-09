@@ -53,14 +53,14 @@ add_test(NAME forge_proto_compat_rules
 # (tests/fuzz/driver.cpp); -DFORGECPP_FUZZ=ON builds them for libFuzzer
 # (clang with -fsanitize=fuzzer) instead:  ./fuzz_c2 -max_total_time=600
 option(FORGECPP_FUZZ "Build the fuzz targets for libFuzzer (clang)" OFF)
-foreach(target c2 pb)
+foreach(target c2 pb serial)
     set(name fuzz_${target})
     add_executable(${name} fuzz/${name}.cpp)
     target_include_directories(${name} PRIVATE fuzz)
     target_link_libraries(${name} PRIVATE forgecpp)
     if(target STREQUAL "c2")
         forge_add_proto(${name} ROOT proto PROTOS forge_test/commands.proto)
-    else()
+    elseif(target STREQUAL "pb")
         forge_add_proto(${name} ROOT proto PROTOS forge_test/all_types.proto)
     endif()
     if(FORGECPP_FUZZ)
@@ -87,7 +87,8 @@ if(FORGE_NODE AND _forge_no_playwright EQUAL 0)
              COMMAND "${FORGE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/web/panel.test.js" $<TARGET_FILE:forgecpp_panel_app>)
     set_tests_properties(forgecpp_panel PROPERTIES LABELS web TIMEOUT 120)
 else()
-    message(STATUS "forgecpp: no node with Playwright, the panel's browser tests are not run")
+    message(WARNING "forgecpp: no node with Playwright: the panel's browser tests (tests/web) are not run. "
+                    "Install node and run `npm install playwright` (and `npx playwright install chromium`).")
 endif()
 
 forge_add_test(forgecpp_zmq_tests SOURCES test_zmq.cpp)

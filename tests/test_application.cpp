@@ -1,6 +1,11 @@
 #include <forge/forge.hpp>
 #include <forge/testing.hpp>
 
+#include <signal.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include <csignal>
 #include <fstream>
 #include <future>
 
@@ -154,4 +159,17 @@ TEST_CASE("application: a stop handler that throws does not skip the others") {
     CHECK(raw->stopped == 1);
     CHECK(tidy_stopped == 1);
     CHECK(hook_stopped == 1);
+}
+
+TEST_CASE("application: SIGHUP reloads, SIGTERM stops") {
+    auto app = std::make_unique<TestApp>();
+    TestApp* raw = app.get();
+    forge::testing::AppRunner<TestApp> r({"-D", "http.enabled=false"}, std::move(app));
+    REQUIRE(::kill(::getpid(), SIGHUP) == 0);
+    CHECK(forge::testing::wait_until([&] { return raw->reloaded == 1; }));
+    CHECK_FALSE(raw->stopping());
+    REQUIRE(::kill(::getpid(), SIGTERM) == 0);
+    CHECK(forge::testing::wait_until([&] { return raw->stopping(); }));
+    CHECK(r.stop() == 0);
+    CHECK(raw->stopped == 1);
 }

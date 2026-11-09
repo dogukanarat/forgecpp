@@ -11,6 +11,8 @@
 #   tools/check.sh --tsan PREFIX   also build and test with ThreadSanitizer (PREFIX: libraries built
 #                                  with install.sh --sanitize thread; without it TSan reports
 #                                  races inside them that are not there)
+#   tools/check.sh --libfuzzer [S] build the fuzz targets with clang's libFuzzer and run each
+#                                  for S seconds (default 60): tests/fuzz against new inputs
 #   tools/check.sh --install-hook  run the quick checks before every commit (tools/git-hooks)
 #
 # The libraries come from FORGECPP_DEPS (a prefix of install.sh --deps-only, or
@@ -27,7 +29,7 @@ ZEPHYRUS="${ZEPHYRUS_DIR:-}"
 [[ -z "${ZEPHYRUS}" && -f "${ROOT}/../zephyrus/modules/lib/cobs/cobs.c" ]] && ZEPHYRUS="$(cd "${ROOT}/../zephyrus" && pwd)"
 
 do_format=1 do_layers=1 do_build=1 do_fuzz=1 do_compat=1
-do_tidy="" do_asan=0 tsan_prefix="" fix=0
+do_tidy="" do_asan=0 tsan_prefix="" fix=0 fuzz_seconds=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -38,12 +40,14 @@ while [[ $# -gt 0 ]]; do
         --tidy-all)     do_tidy=all ;;
         --asan)         do_asan=1 ;;
         --tsan)         tsan_prefix="${2:?--tsan needs the prefix of TSan-built libraries}"; shift ;;
+        --libfuzzer)    fuzz_seconds=60
+                        if [[ "${2:-}" =~ ^[0-9]+$ ]]; then fuzz_seconds="$2"; shift; fi ;;
         --install-hook) git config core.hooksPath tools/git-hooks
                         git config blame.ignoreRevsFile .git-blame-ignore-revs
                         echo "pre-commit hook on (tools/git-hooks/pre-commit); git commit --no-verify skips it"
                         echo "git blame skips the formatting commits (.git-blame-ignore-revs)"
                         exit 0 ;;
-        -h|--help)      sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)      sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *)              echo "check: unknown option $1 (--help)" >&2; exit 2 ;;
     esac
     shift
@@ -155,6 +159,32 @@ fi
 if [[ -n "${tsan_prefix}" ]]; then
     DEPS="${tsan_prefix}" TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 FORGE_TEST_TIMEOUT_SCALE=4 \
         configure_and_test build/check-tsan tsan -DCMAKE_BUILD_TYPE=Debug -DFORGECPP_SANITIZE=thread
+fi
+
+if [[ ${fuzz_seconds} -gt 0 ]]; then
+    step "libFuzzer (${fuzz_seconds} s per target)"
+    if ! command -v clang++ >/dev/null; then
+        fail "libfuzzer: clang++ not found"
+    else
+        dir=build/check-fuzz
+        if cmake -S . -B "${dir}" -G Ninja -DCMAKE_PREFIX_PATH="${DEPS}" -DCMAKE_C_COMPILER=clang \
+                -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Debug -DFORGECPP_FUZZ=ON -DFORGECPP_BUILD_TESTS=ON \
+                -DFORGECPP_BUILD_EXAMPLES=OFF -DFORGECPP_BUILD_HUB=OFF >"${dir}.configure.log" 2>&1 &&
+           cmake --build "${dir}" -j "${JOBS}" --target fuzz_c2 fuzz_pb fuzz_serial >"${dir}.build.log" 2>&1; then
+            mkdir -p "${dir}/corpus"
+            for t in c2 pb serial; do
+                mkdir -p "${dir}/corpus/${t}"
+                if ! "${dir}/tests/fuzz_${t}" -max_total_time="${fuzz_seconds}" -print_final_stats=1 \
+                        "${dir}/corpus/${t}" >"${dir}.${t}.log" 2>&1; then
+                    tail -30 "${dir}.${t}.log"; fail "libfuzzer: fuzz_${t} (crash input in ${dir})"
+                else
+                    grep -E "stat::number_of_executed_units|cov:" "${dir}.${t}.log" | tail -2
+                fi
+            done
+        else
+            tail -20 "${dir}.build.log" "${dir}.configure.log" 2>/dev/null; fail "libfuzzer: build"
+        fi
+    fi
 fi
 
 echo

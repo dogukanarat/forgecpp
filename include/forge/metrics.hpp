@@ -107,14 +107,28 @@ public:
     Registry(const Registry&) = delete;
     Registry& operator=(const Registry&) = delete;
 
+    /// Labels of one metric: the same name with other labels is another series
+    /// (forge_stream_sent{topic="iq"} and {topic="samples"}).
+    using Labels = std::map<std::string, std::string>;
+
     /// Get or create. Asking for an existing name with another type throws.
     Counter& counter(const std::string& name, const std::string& help = {}, const std::string& unit = {});
+    Counter& counter(const std::string& name, const Labels& labels, const std::string& help = {},
+                     const std::string& unit = {});
     Gauge& gauge(const std::string& name, const std::string& help = {}, const std::string& unit = {});
+    Gauge& gauge(const std::string& name, const Labels& labels, const std::string& help = {},
+                 const std::string& unit = {});
     Histogram& histogram(const std::string& name, std::vector<double> bounds, const std::string& help = {},
                          const std::string& unit = {});
+    Histogram& histogram(const std::string& name, const Labels& labels, std::vector<double> bounds,
+                         const std::string& help = {}, const std::string& unit = {});
     /// Gauge computed when read (e.g. queue sizes). Replaces an earlier one of that name.
     void gauge_fn(const std::string& name, std::function<double()> fn, const std::string& help = {},
                   const std::string& unit = {});
+    void gauge_fn(const std::string& name, const Labels& labels, std::function<double()> fn,
+                  const std::string& help = {}, const std::string& unit = {});
+    /// Forget a metric (a stream or a link that is gone); nothing happens when it is unknown.
+    void remove(const std::string& name, const Labels& labels = {});
 
     /// Labels added to every exported metric (e.g. app="radio-controller").
     void set_labels(std::map<std::string, std::string> labels);
@@ -127,14 +141,17 @@ public:
 private:
     struct Entry {
         Type type = Type::counter;
-        std::string help, unit;
+        std::string name, help, unit;
+        Labels labels;
         std::unique_ptr<Counter> counter;
         std::unique_ptr<Gauge> gauge;
         std::unique_ptr<Histogram> histogram;
         std::function<double()> fn;
         mutable bool fn_failed = false;  // its first failure is logged
     };
-    Entry& entry(const std::string& name, Type type, const std::string& help, const std::string& unit);
+    Entry& entry(const std::string& name, const Labels& labels, Type type, const std::string& help,
+                 const std::string& unit);
+    static std::string key_of(const std::string& name, const Labels& labels);
 
     mutable std::mutex mutex_;
     std::map<std::string, Entry> entries_;

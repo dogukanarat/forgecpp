@@ -154,6 +154,8 @@ private:
     serial::LinkOptions serial_options_;  // of [forge].serial, to open it again
     std::string serial_error_;            // the last reason it could not be opened
     bool serial_stopped_ = false;
+    mutable std::mutex serial_stats_mutex_;
+    serial::Link::Stats serial_stats_;  // copied every second for the metrics (any thread reads them)
     std::vector<Subscription> subscriptions_;
     json last_state_ = json::object();
 };

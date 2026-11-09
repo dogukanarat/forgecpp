@@ -232,6 +232,35 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   the armhf build, the systemd job and the API reference run on pull
   requests, weekly and by hand.
 
+### Added (observability and tests)
+
+- Metrics with labels: `counter(name, {{"topic", "iq"}}, ...)`, the same for
+  `gauge`, `histogram` and `gauge_fn`; `Registry::remove()`. The links and
+  streams export theirs: `forge.link.requests` / `forge.link.refused`
+  (`link="zmq"` or `link="serial",device=...`), `forge.serial.*`
+  (`messages_received`, `frames_dropped`, `messages_dropped`),
+  `forge.stream.sent` / `dropped` / `subscribers` (`topic=...`),
+  `forge.loop.queued`, `forge.loop.dropped`.
+- `docs/protocol.md` "What is guaranteed": commands at most once, streams at
+  most once and in order per publisher, the size cap of a serial line (about
+  60 kB), no heartbeat on the command link, static addresses.
+- `tests/fuzz/fuzz_serial.cpp`: the COBS framing against any byte stream
+  (`fuzz_serial` in ctest; `tools/check.sh --libfuzzer [seconds]` builds the
+  three fuzz targets with clang's libFuzzer and runs them against new inputs).
+- Tests for: a command handler that throws (EIO of the command's module), a
+  refusal in the middle of a list, a reply that does not fit the buffer
+  (EMSGSIZE of pb), `forge::Remote`, `forge::systemd::notify()` and
+  `watchdog_interval()`, `hub::Client` registering again when the hub comes
+  back, SIGHUP and SIGTERM through the signal thread, a `Status` message that
+  is not a literal, a subscription reset while its handler runs.
+- `forge::testing::realtime()`: true when the build keeps up with real time
+  (no sanitizer, no `FORGE_TEST_TIMEOUT_SCALE`); the throughput checks of the
+  qam-modem and channel-emulator tests use it, so a sanitizer build without
+  the variable no longer fails them. `AppRunner` scales its start-up timeout
+  with `timeout_scale()` too.
+- CMake warns (not a status line) when the panel's browser tests are skipped
+  for want of node and Playwright.
+
 ### Fixed
 
 - The publish path of a stream allocates less and locks less: the source
