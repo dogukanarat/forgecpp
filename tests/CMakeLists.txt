@@ -31,6 +31,11 @@ add_custom_command(
 target_sources(forgecpp_pb_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/pb_golden.jsonl")
 target_compile_definitions(forgecpp_pb_tests PRIVATE FORGE_PB_GOLDEN="${CMAKE_CURRENT_BINARY_DIR}/pb_golden.jsonl")
 
+# tests/bench: how fast the message paths are (not a test; run it by hand).
+add_executable(forgecpp_bench bench/bench.cpp)
+target_link_libraries(forgecpp_bench PRIVATE forgecpp)
+forge_add_proto(forgecpp_bench ROOT proto PROTOS forge_test/commands.proto)
+
 # A field without a bound is an error at build time, not a callback.
 _forge_protoc(_test_protoc)
 add_test(NAME forge_proto_refuses_unbounded

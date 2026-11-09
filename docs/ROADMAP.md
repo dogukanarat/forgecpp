@@ -63,12 +63,22 @@ Agreed direction for the framework itself (the examples follow it):
    with numbers, sent as zephyrus' c2 frames on links and as JSON on the web,
    one handler for both. `tools/proto-compat.py` stays (it also checks
    bounds) instead of Buf.
-5. Afterwards: anti-pattern fixes found while writing the examples (`forge::Worker`
-   on `std::jthread`, `Sender::send_wait()`, counters bound to metrics and the
-   panel, typed configuration, `background()` with an error path, I/O helpers),
-   Dependabot for submodules and actions, clang-tidy, fuzzing, systemd
-   hardening. Later: Asio-based I/O, WebSocket server, connector modules
-   (MQTT, Modbus, CAN, GPIO, OPC UA), Python bindings.
+5. Done: `forge::Worker` on `std::jthread` and `Application::worker()`,
+   `Sender::send_wait()`, atomics and metrics bound to the panel
+   (`g.value(id, label, counter)`), `background()` with an error path,
+   Dependabot for submodules and actions, clang-tidy (`tools/check.sh
+   --tidy`), fuzzing (`tests/fuzz`), hardened systemd units. Typed
+   configuration was already there (`Schema` + `cfg.value<T>()`, checked at
+   start and reload); the I/O helpers that were missing came with the serial
+   link (`serial::Port`, `serial::Link`). Also done: the **serial link**
+   (c2 on a UART with zephyrus's COBS framing, checked against zephyrus's C
+   code), typed `get`/`set` values, the module of a refusal (`app` for the
+   application's commands), local tooling instead of CI (`tools/check.sh`,
+   pre-commit hook, presets, `tools/release.sh`, `forgecpp_bench`).
+6. Later: Asio-based I/O, WebSocket server, connector modules (MQTT, Modbus,
+   CAN with ISO-TP for c2, GPIO, OPC UA), Python bindings. Not planned: more
+   than two `commands` entries per reply page (each entry is about 6 kB;
+   a larger page would not fit a zephyrus peer's default buffer).
 
 ## Hardware bring-up plan (ZC702 / Z7020 + FMCOMMS5) — when the board arrives
 

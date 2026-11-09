@@ -22,6 +22,11 @@ Presets: `dev`, `release`, `asan`, `tsan`, `fuzz` (libFuzzer, clang),
 as short tests; a failing input is saved as `fuzz-failure.bin` and can be
 replayed: `./tests/fuzz_pb fuzz-failure.bin`.
 
+`build/tests/forgecpp_bench` (Release) measures the message paths: protobuf
+encode and decode, c2 dispatch, the serial framing, a command round trip and
+a stream on ZeroMQ. A name argument runs only the cases that start with it
+(`forgecpp_bench serial`). Use it to compare builds and machines.
+
 ## Versions
 
 Semantic versions, changes in [CHANGELOG.md](../CHANGELOG.md). Until 1.0 a minor
@@ -34,6 +39,12 @@ at a release (`--update`). Within a minor
 series the C++ API and the configuration keys stay compatible too
 (`tools/api-check.py`, `api/forgecpp-<x.y>.json`); what counts as public and
 how it may change: [docs/API.md](API.md).
+
+A release: `tools/release.sh 0.4.0` on master with a clean tree. It refuses
+when the version in `CMakeLists.txt` or the `## Unreleased (0.4.0)` section of
+the CHANGELOG does not match, runs `tools/check.sh`, records both APIs, dates
+the CHANGELOG, commits "Release 0.4.0" and tags `v0.4.0`. Pushing is yours:
+`git push origin master v0.4.0`. `--dry-run` stops after the checks.
 
 ## Directory layout
 

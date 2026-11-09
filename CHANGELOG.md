@@ -111,6 +111,10 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 - `[web].live_reload` (on): with `web.root`, a saved file reloads the open
   pages of the application (not `/forge/`).
 - `forgecpp-new --minimal [--with-command] [--with-stream]`.
+- `tools/release.sh <version>`: checks, records the APIs, dates the
+  CHANGELOG, commits and tags (no push).
+- `forgecpp_bench`: protobuf, c2 dispatch, serial framing, ZeroMQ command and
+  stream rates.
 - `get` and `set` carry the value in a typed member too (`number`, `flag`,
   `text`; `oneof typed`), so a microcontroller needs no JSON parser.
 
