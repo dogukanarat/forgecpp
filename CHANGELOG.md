@@ -107,6 +107,8 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 - `.github/dependabot.yml`: monthly updates of the actions and the bundled
   libraries (not protobuf, libzmq, libiio).
 - `forge::Error::module()`: the module a refusal goes out with on a link.
+- `get` and `set` carry the value in a typed member too (`number`, `flag`,
+  `text`; `oneof typed`), so a microcontroller needs no JSON parser.
 
 ### Changed
 

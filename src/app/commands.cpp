@@ -37,6 +37,33 @@ std::int64_t unix_ms(std::chrono::system_clock::time_point t) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(t.time_since_epoch()).count();
 }
 
+// The typed member of a get or set reply (tags 2, 3, 4), when the value has one.
+template <class Reply>
+void put_typed(Reply& r, const json& v) {
+    if (v.is_boolean()) {
+        r.which_typed = 3;
+        r.typed.flag = v.get<bool>();
+    } else if (v.is_number()) {
+        r.which_typed = 2;
+        r.typed.number = v.get<double>();
+    } else if (v.is_string() && v.get_ref<const std::string&>().size() < sizeof(r.typed.text)) {
+        r.which_typed = 4;
+        put(r.typed.text, v.get_ref<const std::string&>());
+    }
+}
+
+static_assert(forge_get_reply_number_tag == 2 && forge_get_reply_flag_tag == 3 && forge_get_reply_text_tag == 4);
+static_assert(forge_set_reply_number_tag == 2 && forge_set_reply_flag_tag == 3 && forge_set_reply_text_tag == 4);
+
+json value_of(const forge_set_request& r) {
+    switch (r.which_typed) {
+        case forge_set_request_number_tag: return r.typed.number;
+        case forge_set_request_flag_tag: return r.typed.flag;
+        case forge_set_request_text_tag: return std::string(pb::view(r.typed.text));
+        default: return parse("value", r.value);
+    }
+}
+
 void put_trace(forge_trace_context& dst, bool& has, const trace::Context& ctx) {
     has = ctx.valid();
     if (!has) return;
@@ -176,12 +203,16 @@ void register_builtin_commands(Application& app) {
     });
 
     r.add<forge_get_request, forge_get_reply>(forge_msg_id_get, "get", [&control](const auto& req, auto& rsp) {
-        put(rsp.value, text(control.get(req.id, current_caller())));
+        const auto v = control.get(req.id, current_caller());
+        put(rsp.value, text(v));
+        put_typed(rsp, v);
         return Status();
     });
 
     r.add<forge_set_request, forge_set_reply>(forge_msg_id_set, "set", [&control](const auto& req, auto& rsp) {
-        put(rsp.value, text(control.set(req.id, parse("value", req.value), current_caller())));
+        const auto v = control.set(req.id, value_of(req), current_caller());
+        put(rsp.value, text(v));
+        put_typed(rsp, v);
         return Status();
     });
 

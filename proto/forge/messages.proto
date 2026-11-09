@@ -122,17 +122,34 @@ message get_request {
     string id = 1 [(nanopb).max_size = 48];
 }
 
+// A value without JSON, for peers that do not parse it (a microcontroller):
+// the member that holds it. A list or an object has none (JSON only).
 message get_reply {
     string value = 1 [(nanopb).max_size = 256];  // JSON
+    oneof typed {
+        double number = 2;
+        bool flag = 3;
+        string text = 4 [(nanopb).max_size = 256];
+    }
 }
 
 message set_request {
     string id = 1 [(nanopb).max_size = 48];
-    string value = 2 [(nanopb).max_size = 256];  // JSON
+    string value = 2 [(nanopb).max_size = 256];  // JSON; not read when a `typed` member is set
+    oneof typed {
+        double number = 3;
+        bool flag = 4;
+        string text = 5 [(nanopb).max_size = 256];
+    }
 }
 
 message set_reply {
     string value = 1 [(nanopb).max_size = 256];  // the value now, JSON
+    oneof typed {
+        double number = 2;
+        bool flag = 3;
+        string text = 4 [(nanopb).max_size = 256];
+    }
 }
 
 message press_request {

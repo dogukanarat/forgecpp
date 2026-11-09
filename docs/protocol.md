@@ -51,6 +51,11 @@ that is unique in the program:
 | `0x0100`–`0x7FFF` | the application, 256 numbers per module |
 | `0xFF00`–`0xFFFF` | tests |
 
+`get` and `set` carry a control's value as JSON text (`value`) and, for a
+peer that does not parse JSON (a microcontroller), also in the `typed`
+member that fits it: `number`, `flag` or `text`. A `set` with a `typed`
+member set does not read `value`.
+
 ### Request and answers
 
 The client picks a sequence number (it counts up and wraps at 65535) and

@@ -542,3 +542,32 @@ TEST_CASE("zmq: send_wait() waits for a peer instead of dropping") {
     CHECK(out.send_wait(m, std::chrono::seconds(5)));
     CHECK(forge::testing::wait_until([&] { return got == 1; }));
 }
+
+TEST_CASE("zmq: get and set with typed values, for peers without JSON") {
+    forge::testing::AppRunner<ControlledApp> r({"-D", "forge.control=tcp://127.0.0.1:*"});
+    fz::Client c(r->endpoints().at("control"));
+    forge_set_request req{};
+    set(req.id, "freq");
+    req.which_typed = forge_set_request_number_tag;
+    req.typed.number = 2450;
+    forge_set_reply now{};
+    REQUIRE(c.call(forge_msg_id_set, req, now).ok());
+    CHECK(now.which_typed == forge_set_reply_number_tag);
+    CHECK(now.typed.number == 2450);
+    CHECK(std::string(now.value) == "2450.0");
+
+    forge_get_request get{};
+    set(get.id, "freq");
+    forge_get_reply got{};
+    REQUIRE(c.call(forge_msg_id_get, get, got).ok());
+    CHECK(got.which_typed == forge_get_reply_number_tag);
+    CHECK(got.typed.number == 2450);
+
+    // The JSON field still works when no typed member is set.
+    forge_set_request old{};
+    set(old.id, "freq");
+    set(old.value, "100");
+    REQUIRE(c.call(forge_msg_id_set, old, now).ok());
+    CHECK(now.typed.number == 100);
+    CHECK(r->invoke([&] { return r->freq; }) == 100);
+}
