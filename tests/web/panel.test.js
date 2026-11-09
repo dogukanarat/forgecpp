@@ -58,7 +58,7 @@ async function main() {
 
     // Commands: a form from the request message, the reply.
     await page.click('[data-tab=commands]');
-    await page.click('#forge-tmtc-rows tr:has-text("double_it")');
+    await page.click('[data-command="double_it"]');
     await page.locator('#forge-tmtc-fields input').first().fill('21');
     await page.click('#forge-tmtc-send');
     await waitFor(async () => (await page.textContent('#forge-tmtc-reply')).includes('42'), 'the reply 42');

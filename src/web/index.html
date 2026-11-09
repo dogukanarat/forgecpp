@@ -44,38 +44,51 @@
       <div class="forge-empty forge-wide">Loading…</div>
     </div>
 
-    <section class="forge-card forge-pane" data-pane="commands" hidden>
-      <header><h2>Commands</h2><span class="forge-muted">the program's commands: binary on a link, JSON here</span></header>
-      <div class="forge-split">
-        <table class="forge-table forge-pick"><thead><tr><th>Number</th><th>Name</th><th>Request</th></tr></thead>
-          <tbody id="forge-tmtc-rows"></tbody></table>
-        <div id="forge-tmtc-form" class="forge-tmtc-form" hidden>
-          <h3 id="forge-tmtc-title"></h3>
-          <div id="forge-tmtc-fields"></div>
-          <div class="forge-code" id="forge-tmtc-editor">
-            <div class="forge-code-head">
-              <label class="forge-code-title" for="forge-tmtc-json">Request <small>JSON</small></label>
-              <span class="forge-code-chip" id="forge-tmtc-valid"></span>
-              <button class="forge-code-btn" type="button" id="forge-tmtc-format" title="Indent the JSON">Format</button>
-              <button class="forge-code-btn" type="button" id="forge-tmtc-reset" title="Back to the form's values">Reset</button>
-            </div>
-            <div class="forge-code-edit">
-              <pre class="forge-code-hl" id="forge-tmtc-hl" aria-hidden="true"></pre>
-              <textarea id="forge-tmtc-json" spellcheck="false" autocomplete="off" autocapitalize="off"
-                        aria-label="Request as JSON"></textarea>
-            </div>
+    <section class="forge-card forge-pane forge-tmtc" data-pane="commands" hidden>
+      <div class="forge-tmtc-layout">
+        <nav class="forge-tmtc-side" aria-label="Commands">
+          <div class="forge-tmtc-side-head">
+            <h2>Commands</h2>
+            <input type="search" id="forge-tmtc-filter" placeholder="Filter" aria-label="filter commands">
           </div>
-          <div class="forge-actions forge-send-row">
-            <button class="forge-btn primary" type="button" id="forge-tmtc-send">Send</button>
-            <span class="forge-muted forge-kbd-hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+          <div id="forge-tmtc-list" class="forge-tmtc-list"></div>
+        </nav>
+        <div class="forge-tmtc-main">
+          <div class="forge-tmtc-empty" id="forge-tmtc-empty">
+            <p>Choose a command on the left.</p>
+            <p class="forge-muted">The same commands answer binary c2 frames on a link and JSON here.</p>
           </div>
-          <div class="forge-code forge-code-out" id="forge-tmtc-out" hidden>
-            <div class="forge-code-head">
-              <span class="forge-code-title">Reply</span>
-              <span class="forge-code-chip" id="forge-tmtc-status"></span>
-              <button class="forge-code-btn" type="button" id="forge-tmtc-copy">Copy</button>
+          <div id="forge-tmtc-form" class="forge-tmtc-form" hidden>
+            <header class="forge-tmtc-head">
+              <div class="forge-tmtc-name"><h3 id="forge-tmtc-title"></h3><span class="forge-tmtc-id" id="forge-tmtc-id"></span></div>
+              <div class="forge-tmtc-types" id="forge-tmtc-types"></div>
+            </header>
+            <div id="forge-tmtc-fields" class="forge-tmtc-fields"></div>
+            <div class="forge-code" id="forge-tmtc-editor">
+              <div class="forge-code-head">
+                <label class="forge-code-title" for="forge-tmtc-json">Request <small>JSON</small></label>
+                <span class="forge-code-chip" id="forge-tmtc-valid"></span>
+                <button class="forge-code-btn" type="button" id="forge-tmtc-format" title="Indent the JSON">Format</button>
+                <button class="forge-code-btn" type="button" id="forge-tmtc-reset" title="Back to the form's values">Reset</button>
+              </div>
+              <div class="forge-code-edit">
+                <pre class="forge-code-hl" id="forge-tmtc-hl" aria-hidden="true"></pre>
+                <textarea id="forge-tmtc-json" spellcheck="false" autocomplete="off" autocapitalize="off"
+                          aria-label="Request as JSON"></textarea>
+              </div>
             </div>
-            <pre id="forge-tmtc-reply" class="forge-code-view" aria-live="polite"></pre>
+            <div class="forge-actions forge-send-row">
+              <button class="forge-btn primary" type="button" id="forge-tmtc-send">Send</button>
+              <span class="forge-muted forge-kbd-hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+            </div>
+            <div class="forge-code forge-code-out" id="forge-tmtc-out" hidden>
+              <div class="forge-code-head">
+                <span class="forge-code-title">Reply</span>
+                <span class="forge-code-chip" id="forge-tmtc-status"></span>
+                <button class="forge-code-btn" type="button" id="forge-tmtc-copy">Copy</button>
+              </div>
+              <pre id="forge-tmtc-reply" class="forge-code-view" aria-live="polite"></pre>
+            </div>
           </div>
         </div>
       </div>
@@ -99,12 +112,15 @@
       <header><h2>Endpoints and streams</h2></header>
       <div id="forge-endpoints"></div>
       <table class="forge-table"><thead><tr><th>Stream</th><th>Type</th><th>Endpoint</th><th>Policy</th>
-        <th>Subscribers</th><th>Sent</th><th>Dropped</th><th></th></tr></thead>
+        <th class="num">Subscribers</th><th class="num">Sent</th><th class="num">Dropped</th><th class="forge-th-action">Inspect</th></tr></thead>
         <tbody id="forge-streams-rows"></tbody></table>
-      <div id="forge-watch" hidden>
-        <header class="forge-watch-head"><h3 id="forge-watch-title"></h3>
-          <button class="forge-btn" type="button" id="forge-watch-stop">Stop</button></header>
-        <pre id="forge-watch-lines" class="forge-mono forge-reply" aria-live="polite"></pre>
+      <div class="forge-code forge-watch" id="forge-watch" hidden>
+        <div class="forge-code-head">
+          <span class="forge-code-title" id="forge-watch-title"></span>
+          <span class="forge-code-chip" id="forge-watch-info"></span>
+          <button class="forge-code-btn" type="button" id="forge-watch-stop">Stop</button>
+        </div>
+        <div id="forge-watch-lines" class="forge-watch-lines" aria-live="polite"></div>
       </div>
     </section>
 

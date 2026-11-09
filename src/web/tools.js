@@ -192,18 +192,30 @@
     catch (e) { /* a JSON list being typed */ }
   }
 
-  async function select(row, cmd) {
-    document.querySelectorAll('#forge-tmtc-rows tr').forEach(function (r) { r.classList.remove('selected'); });
-    row.classList.add('selected');
+  async function select(item, cmd) {
+    document.querySelectorAll('.forge-tmtc-item').forEach(function (i) { i.classList.remove('selected'); });
+    item.classList.add('selected');
     const d = await forge.api('tmtc/' + encodeURIComponent(cmd.name));
     current = { cmd: cmd, form: d.request ? messageForm(d.request.fields) : null };
+    $('forge-tmtc-empty').hidden = true;
     $('forge-tmtc-form').hidden = false;
-    $('forge-tmtc-title').textContent = hex(cmd.id) + '  ' + cmd.name + (d.request ? '  (' + d.request.name + ' → ' +
-                                        d.reply.name + ')' : '  (a report: sent by the program, not a command)');
+    $('forge-tmtc-title').textContent = cmd.name;
+    $('forge-tmtc-id').textContent = hex(cmd.id);
+    const types = $('forge-tmtc-types');
+    types.textContent = '';
+    if (d.request) {
+      types.appendChild(document.createTextNode(d.request.name));
+      types.appendChild(el('span', { class: 'arrow' }, '→'));
+      types.appendChild(document.createTextNode(d.reply.name));
+    } else {
+      types.textContent = d.reply.name + ': a report the application sends, not a command';
+    }
     const fields = $('forge-tmtc-fields');
     fields.textContent = '';
     if (current.form) fields.appendChild(current.form.node);
     setRequest('{}');
+    $('forge-tmtc-editor').hidden = !d.request;
+    $('forge-tmtc-send').parentNode.hidden = !d.request;
     $('forge-tmtc-send').disabled = !d.request;
     $('forge-tmtc-out').hidden = true;
   }
@@ -233,34 +245,51 @@
   async function loadCommands() {
     if (loaded) return;
     loaded = true;
-    const body = $('forge-tmtc-rows');
+    const box = $('forge-tmtc-list');
     try {
       const list = await forge.api('tmtc');
-      // The program's own commands first (0x0100 and up), then forgecpp's, then the reports.
+      // The application's own commands first (0x0100 and up), then forgecpp's, then the reports.
       const rank = function (c) { return c.push ? 2 : c.id >= 0x100 ? 0 : 1; };
       list.sort(function (a, b) { return rank(a) - rank(b) || a.id - b.id; });
       let group = -1;
       list.forEach(function (c) {
         if (rank(c) !== group) {
           group = rank(c);
-          const head = el('tr', { class: 'forge-group-row' });
-          head.appendChild(el('td', { colspan: 3 }, ['this program', 'forgecpp', 'reports (sent by the program)'][group]));
-          body.appendChild(head);
+          box.appendChild(el('div', { class: 'forge-tmtc-group' }, ['Current application', 'forgecpp', 'Reports'][group]));
         }
-        const row = el('tr');
-        row.appendChild(el('td', { class: 'forge-mono' }, hex(c.id)));
-        row.appendChild(el('td', {}, c.name));
-        row.appendChild(el('td', { class: 'forge-muted' }, c.push ? 'report' : c.request));
-        row.addEventListener('click', function () {
-          select(row, c).catch(function (e) { forge.toast(e.message, 'error'); });
+        const item = el('button', { type: 'button', class: 'forge-tmtc-item' + (c.push ? ' report' : ''),
+                                    'data-command': c.name, title: c.push ? 'report' : c.request });
+        item.appendChild(el('span', { class: 'num' }, hex(c.id)));
+        item.appendChild(el('span', { class: 'name' }, c.name));
+        item.addEventListener('click', function () {
+          select(item, c).catch(function (e) { forge.toast(e.message, 'error'); });
         });
-        body.appendChild(row);
+        box.appendChild(item);
       });
     } catch (e) {
       loaded = false;
       forge.toast('commands: ' + e.message, 'error');
     }
   }
+
+  // The filter hides what does not match, and a group with nothing left.
+  $('forge-tmtc-filter').addEventListener('input', function () {
+    const q = this.value.trim().toLowerCase();
+    let head = null, shown = 0;
+    const close = function () { if (head) head.hidden = shown === 0; };
+    Array.from($('forge-tmtc-list').children).forEach(function (n) {
+      if (n.classList.contains('forge-tmtc-group')) {
+        close();
+        head = n;
+        shown = 0;
+        return;
+      }
+      const match = !q || n.textContent.toLowerCase().indexOf(q) >= 0;
+      n.hidden = !match;
+      if (match) ++shown;
+    });
+    close();
+  });
 
   // --- stream inspector --------------------------------------------------------------
 
@@ -272,18 +301,28 @@
 
   function watch(name) {
     stopWatching();
-    const lines = $('forge-watch-lines');
+    const lines = $('forge-watch-lines'), info = $('forge-watch-info');
     lines.textContent = '';
     $('forge-watch').hidden = false;
-    $('forge-watch-title').textContent = 'Stream ' + name + ' (at most 5 messages a second, without the blob)';
+    $('forge-watch-title').textContent = 'Stream ' + name;
+    info.className = 'forge-code-chip';
+    info.textContent = 'at most 5 a second · without the blob';
     watching = new EventSource(forge.url('streams/' + encodeURIComponent(name) + '/watch'));
     watching.addEventListener('message', function (ev) {
       const m = JSON.parse(ev.data);
-      const t = new Date(Number(m.time_unix_ns) / 1e6).toLocaleTimeString();
-      const text = t + '  #' + m.seq + '  ' + JSON.stringify(m.body) + '\n';
-      lines.textContent = (text + lines.textContent).split('\n').slice(0, 50).join('\n');
+      const row = el('div', { class: 'forge-watch-row' });
+      row.appendChild(el('span', { class: 'time' }, new Date(Number(m.time_unix_ns) / 1e6).toLocaleTimeString()));
+      row.appendChild(el('span', { class: 'seq' }, '#' + m.seq));
+      const body = el('span', { class: 'body' });
+      body.innerHTML = highlight(JSON.stringify(m.body)).trimEnd();
+      row.appendChild(body);
+      lines.insertBefore(row, lines.firstChild);
+      while (lines.children.length > 50) lines.removeChild(lines.lastChild);
     });
-    watching.onerror = function () { $('forge-watch-title').textContent = 'Stream ' + name + ': connection lost'; };
+    watching.onerror = function () {
+      info.className = 'forge-code-chip error';
+      info.textContent = 'connection lost';
+    };
   }
 
   // A Watch button in each row of the streams table (system.js redraws it).
