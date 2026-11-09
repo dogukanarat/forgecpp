@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <csignal>
 #include <fstream>
 #include <future>
@@ -21,7 +22,8 @@ class TestApp : public forge::Application {
 public:
     TestApp() : Application({"testapp", "9.9.9", "test application"}) {}
 
-    int started = 0, stopped = 0, reloaded = 0, ticks = 0, seen_events = 0;
+    int started = 0, stopped = 0, ticks = 0, seen_events = 0;
+    std::atomic<int> reloaded{0};  // read by the test while the application runs (SIGHUP)
     std::string greeting;
     int custom_flag = 0;
 
