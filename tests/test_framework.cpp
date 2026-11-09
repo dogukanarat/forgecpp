@@ -133,15 +133,15 @@ struct RolesApp : forge::Application {
 
 protected:
     void setup_config(forge::config::Schema& s) override { s.number("rolesapp.limit", 5, "A limit").range(0, 10); }
-    void setup_web(forge::web::Dashboard& ui) override {
+    void setup_controls(forge::Controls& ui) override {
         auto& g = ui.group("RF");
         g.number("gain", "Gain", gain).range(0, 70).persist();
         g.number("power", "Power", power).range(0, 10).role(forge::Role::admin);
         g.button("cal", "Calibrate", [this] { ++calibrations; });
-        g.command("sweep", "Sweep",
-                  {forge::web::number_param("start", 100).range(70, 6000), forge::web::integer_param("points", 101),
-                   forge::web::select_param("mode", {"fast", "slow"}, "fast"), forge::web::bool_param("save", false)},
-                  [](const json& a) { return a; });
+        g.action("sweep", "Sweep",
+                 {forge::web::number_param("start", 100).range(70, 6000), forge::web::integer_param("points", 101),
+                  forge::web::select_param("mode", {"fast", "slow"}, "fast"), forge::web::bool_param("save", false)},
+                 [](const json& a) { return a; });
     }
 };
 }  // namespace
@@ -518,7 +518,7 @@ TEST_CASE("framework: invoke() runs on the main loop and carries errors back as 
 
 TEST_CASE("framework: a blocked main loop does not hang requests (invoke_for, 503 main loop busy)") {
     forge::testing::AppRunner<RolesApp> r({"-D", "http.enabled=true", "-D", "http.port=0", "-D",
-                                           "http.host=\"127.0.0.1\"", "-D", "forge.request_timeout_ms=150"});
+                                           "http.host=\"127.0.0.1\"", "-D", "loop.request_timeout_ms=150"});
     CHECK(r->request_timeout() == 150ms);
     httplib::Client http("127.0.0.1", r->http()->port());
     http.set_read_timeout(5, 0);
@@ -736,7 +736,7 @@ TEST_CASE("testing: manual time - timers run when the test advances the clock, w
 }
 
 TEST_CASE("threading: background(), call() on the loop, the dashboard's owner, slow tasks") {
-    forge::testing::AppRunner<RolesApp> r({"-D", "forge.slow_task_ms=20"});
+    forge::testing::AppRunner<RolesApp> r({"-D", "loop.slow_task_ms=20"});
 
     // background(): the work on a worker, the result on the main loop
     std::promise<std::pair<int, bool>> got;

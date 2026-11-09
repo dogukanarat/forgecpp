@@ -319,12 +319,12 @@ struct ControlledApp : forge::Application {
     int kicks = 0;
 
 protected:
-    void setup_web(forge::web::Dashboard& ui) override {
+    void setup_controls(forge::Controls& ui) override {
         auto& g = ui.group("Radio");
         g.number("freq", "Frequency", freq).range(70, 6000);
         g.button("cal", "Calibrate", [this] { ++presses; });
-        g.command("scan", "Scan", {forge::web::number_param("from", 100), forge::web::number_param("to")},
-                  [](const json& a) { return json{{"width", a["to"].get<double>() - a["from"].get<double>()}}; });
+        g.action("scan", "Scan", {forge::web::number_param("from", 100), forge::web::number_param("to")},
+                 [](const json& a) { return json{{"width", a["to"].get<double>() - a["from"].get<double>()}}; });
     }
 };
 
@@ -506,7 +506,8 @@ TEST_CASE("serial: the program's commands on [forge].serial, as on [forge].contr
     char name[128] = {};
     REQUIRE(::openpty(&peer_fd, &other, name, nullptr, nullptr) == 0);
     ::close(other);  // the program opens it by name
-    forge::testing::AppRunner<ControlledApp> r({"-D", std::string("forge.serial=") + name, "-D", "http.enabled=false"});
+    forge::testing::AppRunner<ControlledApp> r(
+        {"-D", std::string("serial.device=") + name, "-D", "http.enabled=false"});
     CHECK(r->endpoints().at("serial") == name);
 
     forge::serial::LinkOptions o;
@@ -548,7 +549,7 @@ TEST_CASE("serial: a line that is missing or goes away is reported and opened ag
     };
 
     // Not there at start: not fatal, health says so.
-    forge::testing::AppRunner<ControlledApp> r({"-D", "forge.serial=" + link_path, "-D", "http.enabled=false"});
+    forge::testing::AppRunner<ControlledApp> r({"-D", "serial.device=" + link_path, "-D", "http.enabled=false"});
     CHECK(serial_state(r.app()) == "failed");
     CHECK(r->endpoints().at("serial") == link_path);
 

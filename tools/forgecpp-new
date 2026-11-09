@@ -22,7 +22,9 @@ Creates a new forgecpp application in DIR/<name> with:
 Options:
   -d, --dir DIR          Parent directory (default: current directory)
   --description TEXT     One line description
-  --minimal              Only the application, its controls, config and tests:
+  --minimal              The smallest shape: schema, controls, a timer, config and tests (about 100
+                         lines of C++); no messages, web page, Python client, CLI flag, REST route,
+                         console command, action, metric or trace span:
                          no messages (proto/), web page or Python client
   --with-command         With --minimal: also the "status" command (proto/)
   --with-stream          With --minimal: also the "ticks" stream (proto/, clients/)
@@ -35,6 +37,7 @@ NAME=""
 PARENT="."
 DESCRIPTION=""
 FORCE=0
+MINIMAL=0
 WITH_COMMAND=1 WITH_STREAM=1 WITH_WEB=1
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -177,9 +180,12 @@ cat > "${DIR}/src/${IDENT}.hpp" <<EOF
 //              [forge].events   state, alarms, logs, audit, health, metrics (PUB)
 //              [forge].data     this application's streams (PUB, "ticks")  // [stream]
 //   console    -i (local) or telnet <host> 2323 ([console].telnet)
+//
+// This is the smallest shape: a schema, controls, a timer. forgecpp-new  // [minimal]
+// without --minimal shows a command line flag, a REST route, console   // [minimal]
+// commands, an action, a metric and a trace span as well.               // [minimal]
 
 #include <forge/forge.hpp>
-#include <forge/zmq.hpp>
 
 #include "${PKG}/${PKG}.forge.hpp"  // [proto]
 
@@ -192,7 +198,7 @@ public:
     ${CLASS}() : Application({"${NAME}", APP_VERSION, "${DESCRIPTION}"}) {
         // {command
         // A command of its own (proto/${PKG}/${PKG}.proto). Links send it in
-        // binary; the web as JSON: POST /forge/api/tmtc/status {}. The handler
+        // binary; the web as JSON: POST /forge/api/commands/status {}. The handler
         // runs on the main loop.
         command<${PKG}_status_request, ${PKG}_status_reply>(${PKG}_msg_id_status, "status",
                                                             [this](const auto&, auto& rsp) {
@@ -215,35 +221,38 @@ protected:
         s.string("${IDENT}.message", "tick", "Logged on every tick");
     }
 
+    // {full
     // Extra command line options.
     void setup_cli(CLI::App& cli) override {
         cli.add_flag("--dry-run", dry_run_, "Do everything except side effects");
     }
+    // }full
 
     // Controls and commands: the web pages, /forge/, forgectl, the console
     // and telnet all use these (with roles, leases and the audit trail).
-    void setup_web(forge::web::Dashboard& ui) override {
+    void setup_controls(forge::Controls& ui) override {
         apply(config());
         ui.link("Home", "/");  // [web]
         auto& g = ui.group("${CLASS}");
         g.value("ticks", "Ticks", ticks_);
         g.toggle("paused", "Paused", paused_).persist();  // kept in [state].file
-        g.number("interval_ms", "Interval", [this] { return double(interval_.count()); },
-                 [this](double ms) { set_interval(std::chrono::milliseconds(static_cast<long>(ms))); })
-            .range(10, 60000, 10)
-            .unit("ms");
+        // A duration is bound directly (shown in ms); the timer follows on the next tick.
+        g.number("interval_ms", "Interval", interval_).range(10, 60000, 10).unit("ms");
         g.text("message", "Message", message_);
         g.button("reset", "Reset", [this] { ticks_ = 0; }).confirm("Reset the tick counter?");
-        // A command (RPC) with typed parameters: forgectl call burst count=5
-        g.command("burst", "Burst", {forge::web::integer_param("count", 3, "ticks to run now").range(1, 100)},
-                  [this](const forge::json& a) {
-                      const auto n = a["count"].get<int>();
-                      for (int i = 0; i < n; ++i) step();  // also while paused
-                      return forge::json{{"ticks", ticks_}};
-                  })
+        // {full
+        // An action with typed parameters: forgectl call burst count=5
+        g.action("burst", "Burst", {forge::web::integer_param("count", 3, "ticks to run now").range(1, 100)},
+                 [this](const forge::json& a) {
+                     const auto n = a["count"].get<int>();
+                     for (int i = 0; i < n; ++i) step();  // also while paused
+                     return forge::json{{"ticks", ticks_}};
+                 })
             .help("Run several ticks immediately");
+        // }full
     }
 
+    // {full
     // Your own REST API (served by the same HTTP server).
     void setup_http(forge::http::Server& server) override {
         server.get_json("/api/status", [this](const forge::http::Request&) {
@@ -258,6 +267,7 @@ protected:
         console.add("ticks", "ticks  show how many times the timer fired",
                     [this, &console](const forge::Console::Args&) { console.print("{}", ticks_); });
     }
+    // }full
 
     void on_start() override {
         ticks_stream_ = &stream<${PKG}_tick>("ticks");  // [stream]
@@ -279,33 +289,35 @@ private:
     }
 
     void set_interval(std::chrono::milliseconds interval) {
-        interval_ = interval;
+        interval_ = running_interval_ = interval;
         cancel(timer_);
         timer_ = every(interval_, [this] { tick(); });
     }
 
     void tick() {
         if (!paused_) step();
+        if (running_interval_ != interval_) set_interval(interval_);  // changed from the panel
     }
 
     void step() {
-        FORGE_TRACE_SCOPE("tick");  // shows up in the flight recorder (/forge/ Trace)
-        static auto& counter = metrics().counter("${IDENT}.ticks", "Ticks run");
-        counter.inc();
+        FORGE_TRACE_SCOPE("tick");  // shows up in the flight recorder (/forge/ Trace)  // [full]
+        static auto& counter = metrics().counter("${IDENT}.ticks", "Ticks run");  // [full]
+        counter.inc();  // [full]
         ++ticks_;
-        logger()->debug("{} #{}{}", message_, ticks_, dry_run_ ? " (dry run)" : "");
+        logger()->debug("{} #{}{}", message_, ticks_, dry_run_ ? " (dry run)" : "");  // [full]
+        logger()->debug("{} #{}", message_, ticks_);  // [minimal]
         // {stream
         if (ticks_stream_ && ticks_stream_->wanted()) {  // only when someone listens
             ticks_stream_->publish(${PKG}_tick{ticks_, interval_.count()});
         }
         // }stream
-        // Offload heavy work to the thread pool, report back on the main loop:
-        // pool().detach_task([this] { auto r = work(); post([this, r] { use(r); }); });
+        // Offload heavy work to the thread pool, report back on the main loop:  // [full]
+        // pool().detach_task([this] { auto r = work(); post([this, r] { use(r); }); });  // [full]
     }
 
-    bool dry_run_ = false;
+    bool dry_run_ = false;  // [full]
     bool paused_ = false;
-    std::chrono::milliseconds interval_{1000};
+    std::chrono::milliseconds interval_{1000}, running_interval_{0};
     std::string message_ = "tick";
     std::uint64_t ticks_ = 0;
     forge::Scheduler::Id timer_ = 0;
@@ -451,14 +463,15 @@ TEST_CASE("${NAME}: controls, commands and the ticks stream over ZeroMQ") {
     forge::Remote app(ep.at("control"));
     app.set("paused", true);
     const auto before = app.get("ticks").get<std::uint64_t>();
-    CHECK(app.call("burst", {{"count", 5}})["ticks"] == before + 5);
+    CHECK(app.call("burst", {{"count", 5}})["ticks"] == before + 5);  // [full]
     CHECK(app.get("paused") == true);
 
     // {command
     // Its own command, in binary.
     ${PKG}_status_reply status{};
     REQUIRE(app.client().call(${PKG}_msg_id_status, ${PKG}_status_request{}, status).ok());
-    CHECK(status.ticks == before + 5);
+    CHECK(status.ticks == before + 5);  // [full]
+    CHECK(status.ticks == before);  // [minimal]
     CHECK(status.paused);
     // }command
 }
@@ -499,7 +512,7 @@ The same ways in as every forgecpp application:
 |---|---|
 | Web | \`http://<host>:8080/\` your page, \`/forge/\` control panel (controls, commands, health, metrics, audit, leases, trace) |
 | Link | \`forgectl -e tcp://<host>:5557 info / controls / set interval_ms 500 / call burst count=5 / logs -n 50 / watch\` |
-| Commands | \`status\` (0x0100, \`proto/${PKG}/${PKG}.proto\`): binary on the link, JSON on \`POST /forge/api/tmtc/status\` | [command]
+| Commands | \`status\` (0x0100, \`proto/${PKG}/${PKG}.proto\`): binary on the link, JSON on \`POST /forge/api/commands/status\` | [command]
 | Streams | \`[forge].data\` topic \`ticks\` (\`${PKG}.tick\`); \`clients/watch.py\` | [stream]
 | Console | \`-i\` locally, \`telnet <host> 2323\` remotely |
 | Config | \`${NAME} --help-config\`, \`${NAME} -c file --check-config\` |
@@ -572,6 +585,8 @@ keep command "${WITH_COMMAND}"
 keep stream "${WITH_STREAM}"
 keep proto "${WITH_PROTO}"
 keep web "${WITH_WEB}"
+keep full "$(( 1 - MINIMAL ))"
+keep minimal "${MINIMAL}"
 
 cat > "${DIR}/.gitignore" <<EOF
 /build*/

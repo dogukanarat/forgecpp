@@ -91,7 +91,7 @@ public:
 
 protected:
     void setup_config(forge::config::Schema& schema) override;
-    void setup_web(forge::web::Dashboard& ui) override;
+    void setup_controls(forge::Controls& ui) override;
     void setup_http(forge::http::Server& server) override;
     void setup_console(forge::Console& console) override;
     void on_start() override;

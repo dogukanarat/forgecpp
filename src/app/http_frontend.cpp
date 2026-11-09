@@ -180,7 +180,7 @@ void HttpFrontend::create_web(const Config& cfg) {
                     {"protocol", "c2"},
                     {"endpoints", app_.endpoints()}};
     });
-    // What needs the main loop waits at most [forge].request_timeout_ms for it.
+    // What needs the main loop waits at most [loop].request_timeout_ms for it.
     http_->get_json(api + "/ui", [this, dashboard](const http::Request&) {
         return app_.invoke_for(app_.request_timeout(), [dashboard] { return dashboard->schema(); });
     });
@@ -212,12 +212,16 @@ void HttpFrontend::create_web(const Config& cfg) {
         }
         return json{{"id", id}, {"value", control.get(id, caller)}};
     });
-    http_->post_json(api + "/commands/:id", [&control, web_caller](const http::Request& req, const json& body) {
+    // An action of the control registry (Group::action): POST /forge/api/actions/<id>.
+    // /forge/api/commands/<id> is the old path; it also answers the program's
+    // typed commands (below), by name.
+    const auto run_action = [&control, web_caller](const http::Request& req, const json& body) {
         const auto id = req.path_params.at("id");
         json args = body.is_object() && body.contains("args") ? body["args"] : body;
         if (args.is_null()) args = json::object();
         return json{{"id", id}, {"result", control.call(id, args, web_caller(req))}};
-    });
+    };
+    http_->post_json(api + "/actions/:id", run_action);
     http_->post_json(api + "/leases/:id", [&control, web_caller](const http::Request& req, const json& body) {
         const auto id = req.path_params.at("id");
         const auto s = control.lease(id, body.is_object() ? body.value("seconds", 60u) : 60u, web_caller(req));
@@ -295,8 +299,9 @@ void HttpFrontend::create_web(const Config& cfg) {
         res.set_header("Content-Disposition", "attachment; filename=\"trace.json\"");
         res.set_content(std::move(d.chrome_json), "application/json");
     });
-    // The commands of the program, the same handlers as over a link, in JSON.
-    http_->get_json(api + "/tmtc", [this](const http::Request&) {
+    // The commands of the program, the same handlers as over a link, in JSON:
+    // /forge/api/commands (and /forge/api/tmtc, the old path).
+    const auto list_commands = [this](const http::Request&) {
         json list = json::array();
         for (const auto* c : app_.commands().list()) {
             list.push_back({{"id", c->id},
@@ -306,9 +311,11 @@ void HttpFrontend::create_web(const Config& cfg) {
                             {"push", c->is_push()}});
         }
         return list;
-    });
+    };
+    http_->get_json(api + "/commands", list_commands);
+    http_->get_json(api + "/tmtc", list_commands);
     // A command's messages, for the panel's forms.
-    http_->get_json(api + "/tmtc/:name", [this](const http::Request& req) {
+    const auto describe_command = [this](const http::Request& req) {
         const auto& name = req.path_params.at("name");
         const auto* cmd = app_.commands().find(std::string_view(name));
         if (!cmd) throw Error(404, "no command '" + name + "'");
@@ -317,12 +324,14 @@ void HttpFrontend::create_web(const Config& cfg) {
                     {"push", cmd->is_push()},
                     {"request", cmd->req ? pb::schema(*cmd->req) : json(nullptr)},
                     {"reply", pb::schema(*cmd->rsp)}};
-    });
+    };
+    http_->get_json(api + "/commands/:name", describe_command);
+    http_->get_json(api + "/tmtc/:name", describe_command);
     // The messages of a stream as they go out, a few per second, in JSON.
     http_->get(api + "/streams/:name/watch", [this](const http::Request& req, http::Response& res) {
         watch_stream(req.path_params.at("name"))->handler()(req, res);
     });
-    http_->post_json(api + "/tmtc/:name", [this, &control](const http::Request& req, const json& body) {
+    const auto run_command = [this, &control](const http::Request& req, const json& body) {
         const auto& name = req.path_params.at("name");
         const bool number = !name.empty() && name.find_first_not_of("0123456789") == std::string::npos;
         const auto* cmd = number && name.size() <= 5
@@ -332,6 +341,20 @@ void HttpFrontend::create_web(const Config& cfg) {
         if (cmd->is_push()) throw Error(501, "'" + name + "' is a report, not a command");
         CallerScope caller(control.identify("web", req.remote_addr, {}, req.get_header_value("Authorization")));
         return cmd->run_json(body);
+    };
+    http_->post_json(api + "/tmtc/:name", run_command);
+    // /forge/api/commands/<name>: a typed command by name or number; else the
+    // old path of an action (the panel of 0.3 and scripts written for it).
+    http_->post_json(api + "/commands/:name",
+                     [this, run_command, run_action](const http::Request& req, const json& body) {
+        const auto& name = req.path_params.at("name");
+        const bool number = !name.empty() && name.find_first_not_of("0123456789") == std::string::npos;
+        const bool typed = number ? app_.commands().find(static_cast<std::uint16_t>(std::stoul(name))) != nullptr
+                                  : app_.commands().find(std::string_view(name)) != nullptr;
+        if (typed) return run_command(req, body);
+        http::Request r = req;
+        r.path_params["id"] = name;
+        return run_action(r, body);
     });
     http_->get_json(api + "/logs",
                     [this](const http::Request&) { return weblog_ ? weblog_->history() : json::array(); });

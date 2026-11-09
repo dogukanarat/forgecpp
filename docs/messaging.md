@@ -25,7 +25,7 @@ message flush_reply { string message = 1 [(nanopb).max_size = 64]; }
 // CMake: forge_add_proto(pump ROOT proto PROTOS pump/pump.proto PYTHON ${CMAKE_BINARY_DIR}/python)
 #include "pump/pump.forge.hpp"
 
-// In the constructor (or setup_web()); the handler runs on the main loop.
+// In the constructor (or setup_controls()); the handler runs on the main loop.
 command<pump_flush_request, pump_flush_reply>(pump_msg_id_flush, "flush", [this](const auto& req, auto& rsp) {
     if (req.seconds > 60) return forge::Status::error(forge::module_id::app, EINVAL, "at most 60 s");
     start_flush(req.seconds);
@@ -39,9 +39,9 @@ command<pump_flush_request, pump_flush_reply>(pump_msg_id_flush, "flush", [this]
   reply), a NACK with the 32-bit status (module and errno, numbered like
   Zephyr), or several replies flagged "more" for lists. These are the frames
   of zephyrus: a gateway can pass them to a device unchanged.
-- On the web: `POST /forge/api/tmtc/<name or number>` with the request as
+- On the web: `POST /forge/api/commands/<name or number>` with the request as
   JSON, answered with the reply as JSON (64-bit numbers as strings, enums by
-  name, bytes as base64); a refusal is an HTTP error. `GET /forge/api/tmtc`
+  name, bytes as base64); a refusal is an HTTP error. `GET /forge/api/commands`
   lists the commands.
 
 ```cpp

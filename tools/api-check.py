@@ -51,8 +51,12 @@ def config_keys(app):
             section = m.group(1)
             continue
         m = re.match(r"^([A-Za-z0-9_]+) = ", line)
-        if m and section:
+        if m and section and section != "app":  # [app]: the example's own keys, not the framework's
             keys.add(f"{section}.{m.group(1)}")
+        # A deprecated name (an alias) still works: it counts as present.
+        m = re.match(r"^# ([a-z0-9_.]+) = \.\.\.\s+# deprecated", line)
+        if m:
+            keys.add(m.group(1))
     return sorted(keys)
 
 

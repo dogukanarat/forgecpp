@@ -68,7 +68,7 @@
     }
   }
 
-  // Commands (RPC with typed parameters): a small form per command.
+  // Actions (Group::action: a handler with typed parameters): a small form per action.
   function commandForm(cmd) {
     const out = el('output');
     const fields = (cmd.params || []).map(function (p) {
@@ -104,7 +104,7 @@
       });
       run.disabled = true;
       try {
-        const res = await forge.api('commands/' + encodeURIComponent(cmd.id), { body: { args: args } });
+        const res = await forge.api('actions/' + encodeURIComponent(cmd.id), { body: { args: args } });
         out.textContent = JSON.stringify(res && res.result, null, 2);
       } catch (e) {
         out.textContent = 'error: ' + e.message;

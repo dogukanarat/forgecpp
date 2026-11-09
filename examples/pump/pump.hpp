@@ -44,7 +44,7 @@ protected:
     }
 
     // One declaration: web panel, forgectl, the command link, console and telnet.
-    void setup_web(forge::web::Dashboard& ui) override {
+    void setup_controls(forge::Controls& ui) override {
         auto& drive = ui.group("Drive");
         drive.number("speed_rpm", "Speed", speed_rpm).range(0, 3000, 10).unit("rpm").persist();
         drive.value("running", "Running", running);
@@ -58,8 +58,8 @@ protected:
         readings.number("limit_bar", "Alarm limit", limit_bar).range(1, 20, 0.1).unit("bar");
 
         // A command with typed parameters: forgectl call flush seconds=5
-        ui.group("Service").command("flush", "Flush", {forge::web::number_param("seconds", 10).range(1, 60)},
-                                    [this](const forge::json& a) {
+        ui.group("Service").action("flush", "Flush", {forge::web::number_param("seconds", 10).range(1, 60)},
+                                   [this](const forge::json& a) {
             running = true;
             const auto s = a["seconds"].get<double>();
             after(std::chrono::milliseconds(static_cast<int>(s * 1000)), [this] { running = false; });

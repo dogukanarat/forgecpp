@@ -147,7 +147,7 @@ void Hub::setup_config(forge::config::Schema& s) {
         .unit("ms");
 }
 
-void Hub::setup_web(forge::web::Dashboard& ui) {
+void Hub::setup_controls(forge::Controls& ui) {
     ui.title("Device");
     ui.link("Applications", "/");
     auto& g = ui.group("Applications");
@@ -166,16 +166,16 @@ void Hub::setup_web(forge::web::Dashboard& ui) {
     });
     g.value("registry", "Registration endpoint", [this] { return registry_endpoint(); });
     using forge::web::text_param;
-    g.command("restart", "Restart", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
+    g.action("restart", "Restart", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
         return restart(a["name"].get<std::string>());
     }).help("systemctl restart (also after the unit failed)");
-    g.command("stop", "Stop", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
+    g.action("stop", "Stop", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
         return stop_app(a["name"].get<std::string>());
     }).help("systemctl stop (SIGTERM for applications without a unit)");
-    g.command("start", "Start", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
+    g.action("start", "Start", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
         return start(a["name"].get<std::string>());
     }).help("systemctl start (also after the unit failed)");
-    g.command("forget", "Forget", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
+    g.action("forget", "Forget", {text_param("name", std::nullopt, "application")}, [this](const json& a) {
         return forget(a["name"].get<std::string>());
     }).help("Remove an application that is not running from the list");
 }

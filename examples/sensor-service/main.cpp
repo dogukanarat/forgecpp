@@ -1,10 +1,12 @@
 // A complete forgecpp service (subclass style) showing every building block:
 //
+//   * a forge::Component (SimSensor): a reusable part with its own
+//     configuration keys, controls, worker thread and health
 //   * CLI11 options and TOML config with live reload (SIGHUP / `reload`)
 //   * a producer thread pushing samples through a lock-free forge::Channel
-//   * batch processing on the forge::ThreadPool
+//   * batch processing on the forge::ThreadPool (background())
 //   * typed events on the forge::EventBus
-//   * a web control panel (forge::web::Dashboard) at http://localhost:8080/forge/
+//   * a web control panel (forge::Controls) at http://localhost:8080/forge/
 //   * its own web page (web/index.html, compiled into the binary) at http://localhost:8080/
 //   * a JSON REST API with forge::http::Server
 //   * interactive console commands with completion (-i) as a backup
@@ -58,40 +60,104 @@ Stats compute(const std::vector<Sample>& window) {
 
 json to_json(const Stats& s) { return {{"count", s.count}, {"min", s.min}, {"max", s.max}, {"mean", s.mean}}; }
 
-}  // namespace
-
-class SensorService : public forge::Application {
+/// The sensor as a component: the same block, with the same keys, controls
+/// and health, could sit in any application. It owns its thread and its
+/// queue; the application takes the samples with take().
+class SimSensor : public forge::Component {
 public:
-    SensorService() : Application({"sensor-service", "1.0.0", "Example forgecpp sensor service"}) {}
+    SimSensor() : Component("sensor") {}
+
+    /// Samples since the last call (main loop).
+    std::vector<Sample> take() {
+        std::vector<Sample> out;
+        while (auto s = samples_.try_pop()) out.push_back(*s);
+        return out;
+    }
+    double rate_hz() const { return rate_hz_.load(); }
+    void rate_hz(double hz) { rate_hz_ = hz; }
+    void spikes(bool on) { spikes_ = on; }
 
 protected:
     void setup_config(forge::config::Schema& s) override {
         s.section("sensor", "Simulated sensor");
         s.number("sensor.rate_hz", 10.0, "Samples per second").range(0.1, 10000).unit("Hz");
-        s.integer("sensor.window", 50, "Samples per statistics window").range(1, 100000);
-        s.number("sensor.alarm_threshold", 80.0, "Alarm when the window mean exceeds this");
+    }
+
+    void setup_controls(forge::Controls& ui) override {
+        auto& acq = ui.group("Acquisition");
+        acq.number("rate_hz", "Sampling rate", rate_hz_).range(1, 500, 1).slider().unit("Hz");
+        acq.toggle("spikes", "Simulate spikes", spikes_);
+    }
+
+    void on_start() override {
+        rate_hz_ = app().config().value<double>("sensor.rate_hz");
+        // An independent thread that never touches application state; the
+        // application stops and joins it before on_stop(). Its health is
+        // reported under "worker.sensor" by the framework.
+        app().worker("sensor", [this](std::stop_token stop) { produce(stop); });
+        set_health(forge::HealthState::ok, "simulating");
+    }
+
+    void on_reload(const forge::Config& cfg) override { rate_hz_ = cfg.value<double>("sensor.rate_hz"); }
+
+    void on_stop() override { samples_.close(); }
+
+private:
+    void produce(const std::stop_token& stop) {
+        std::mt19937 rng{std::random_device{}()};
+        std::normal_distribution<double> noise(0.0, 3.0);
+        std::uniform_real_distribution<double> spike(0.0, 1.0);
+        double t = 0;
+        while (!stop.stop_requested()) {
+            double value = 50.0 + 20.0 * std::sin(t) + noise(rng);
+            if (spikes_ && spike(rng) < 0.05) value += 60.0;
+            samples_.push(Sample{std::chrono::system_clock::now(), value});
+            t += 0.05;
+            forge::sleep_for(stop, std::chrono::duration<double>(1.0 / rate_hz_.load()));
+        }
+    }
+
+    std::atomic<double> rate_hz_{10.0};
+    std::atomic<bool> spikes_{false};
+    forge::Channel<Sample> samples_;
+};
+
+}  // namespace
+
+class SensorService : public forge::Application {
+public:
+    SensorService() : Application({"sensor-service", "1.0.0", "Example forgecpp sensor service"}) {
+        sensor_ = &add_component<SimSensor>();
+    }
+
+protected:
+    void setup_config(forge::config::Schema& s) override {
+        s.section("stats", "Statistics windows");
+        s.integer("stats.window", 50, "Samples per statistics window").range(1, 100000);
+        s.number("stats.alarm_threshold", 80.0, "Alarm when the window mean exceeds this");
     }
 
     void setup_cli(CLI::App& cli) override {
-        cli.add_flag_callback("--simulate-spikes", [this] { spikes_ = true; },
+        cli.add_flag_callback("--simulate-spikes", [this] { sensor_->spikes(true); },
                               "Inject random spikes to trigger alarms");
     }
 
     void setup_http(forge::http::Server& server) override {
         // HTTP handlers run on server threads; hop to the main loop to read state.
         server.get_json("/api/stats", [this](const auto&) { return invoke([this] { return stats_json(); }); });
-        server.get_json("/api/rate", [this](const auto&) { return json{{"rate_hz", rate_hz_.load()}}; });
+        server.get_json("/api/rate", [this](const auto&) { return json{{"rate_hz", sensor_->rate_hz()}}; });
         server.put_json("/api/rate", [this](const auto&, const json& body) {
             const double hz = body.at("rate_hz").get<double>();
             if (hz <= 0 || hz > 1000) throw forge::http::HttpError(400, "rate_hz must be in (0, 1000]");
-            rate_hz_ = hz;
+            sensor_->rate_hz(hz);
             return json{{"rate_hz", hz}};
         });
     }
 
-    // Web control panel: every control also works from the console
-    // (`controls`, `set rate_hz 50`, `press reset`).
-    void setup_web(forge::web::Dashboard& ui) override {
+    // The control registry: the panel, forgectl, the console and telnet all
+    // use it (`controls`, `set threshold 90`, `press reset`). The sensor's
+    // own controls come from its component.
+    void setup_controls(forge::Controls& ui) override {
         ui.link("Live view", "/");
 
         auto& live = ui.group("Live");
@@ -101,18 +167,17 @@ protected:
         live.value("samples", "Samples", total_);
         live.value("exceedances", "Threshold exceedances", exceedances_);
 
-        auto& acq = ui.group("Acquisition");
-        acq.slider("rate_hz", "Sampling rate", [this] { return rate_hz_.load(); }, [this](double hz) { rate_hz_ = hz; },
-                   1, 500, 1)
-            .unit("Hz");
-        acq.number("window", "Window size", window_size_).range(5, 1000, 1).unit("samples");
-        acq.toggle("spikes", "Simulate spikes", [this] { return spikes_.load(); }, [this](bool on) { spikes_ = on; });
+        ui.group("Acquisition").number("window", "Window size", window_size_).range(5, 1000, 1).unit("samples");
 
         auto& alarm = ui.group("Alarm");
         alarm.toggle("alarm_enabled", "High-mean alarm", alarm_enabled_)
             .help("Raised while the window mean is above the threshold, cleared below 95 % of it");
-        alarm.slider("threshold", "Threshold", threshold_, 0, 150, 0.5).precision(1);
-        alarm.select("alarm_severity", "Severity", {"warning", "error", "critical"}, alarm_severity_);
+        alarm.number("threshold", "Threshold", threshold_).range(0, 150, 0.5).slider().precision(1);
+        alarm.select("alarm_severity", "Severity",
+                     {{"warning", forge::Severity::warning},
+                      {"error", forge::Severity::error},
+                      {"critical", forge::Severity::critical}},
+                     alarm_severity_);
         alarm.button("test_alarm", "Test alarm", [this] {
             alarms().raise("sensor.test", forge::Severity::info, "Test alarm raised from the dashboard");
         });
@@ -131,8 +196,8 @@ protected:
                     [this, &console](const forge::Console::Args&) { console.print("{}", stats_json().dump(2)); });
         console.add("rate", "rate [hz]  show or change the sampling rate",
                     [this, &console](const forge::Console::Args& args) {
-            if (!args.empty()) rate_hz_ = std::stod(args[0]);
-            console.print("rate: {} Hz", rate_hz_.load());
+            if (!args.empty()) sensor_->rate_hz(std::stod(args[0]));
+            console.print("rate: {} Hz", sensor_->rate_hz());
         }, [](const forge::Console::Args& so_far) -> std::vector<std::string> {
             if (!so_far.empty()) return {};
             return {"1", "10", "50", "100"};
@@ -148,15 +213,11 @@ protected:
         threshold_sub_ = events().subscribe<ThresholdExceeded>([this](const ThresholdExceeded& e) {
             ++exceedances_;
             if (!alarm_enabled_) return;
-            alarms().raise("sensor.high_mean", forge::parse_severity(alarm_severity_),
+            alarms().raise("sensor.high_mean", alarm_severity_,
                            std::format("Window mean {:.1f} exceeds threshold {:.1f}", e.mean, e.threshold));
         });
 
-        // Producer: an independent thread that never touches application state
-        // (stopped and joined before on_stop()).
-        worker("producer", [this](std::stop_token stop) { produce(stop); });
-
-        // Consumer: every 100 ms drain the channel on the main loop, and hand
+        // Consumer: every 100 ms take the samples on the main loop, and hand
         // full windows to the thread pool for (pretend) heavy processing.
         every(100ms, [this] { drain(); });
         every(10s, [this] { logger()->info("stats: {}", stats_json().dump()); });
@@ -164,41 +225,21 @@ protected:
 
     void on_reload(const forge::Config& cfg) override { apply_config(cfg); }
 
-    void on_stop() override { samples_.close(); }
-
 private:
     void apply_config(const forge::Config& cfg) {
         // Declared in setup_config(): the defaults come from there.
-        rate_hz_ = cfg.value<double>("sensor.rate_hz");
-        window_size_ = cfg.value<std::size_t>("sensor.window");
-        threshold_ = cfg.value<double>("sensor.alarm_threshold");
-        logger()->info("sensor: {} Hz, window {}, alarm > {}", rate_hz_.load(), window_size_, threshold_);
-    }
-
-    void produce(const std::stop_token& stop) {
-        std::mt19937 rng{std::random_device{}()};
-        std::normal_distribution<double> noise(0.0, 3.0);
-        std::uniform_real_distribution<double> spike(0.0, 1.0);
-        double t = 0;
-        while (!stop.stop_requested()) {
-            double value = 50.0 + 20.0 * std::sin(t) + noise(rng);
-            if (spikes_ && spike(rng) < 0.05) value += 60.0;
-            samples_.push(Sample{std::chrono::system_clock::now(), value});
-            t += 0.05;
-            forge::sleep_for(stop, std::chrono::duration<double>(1.0 / rate_hz_.load()));
-        }
+        window_size_ = cfg.value<std::size_t>("stats.window");
+        threshold_ = cfg.value<double>("stats.alarm_threshold");
+        logger()->info("stats: window {}, alarm > {}", window_size_, threshold_);
     }
 
     void drain() {
-        while (auto item = samples_.try_pop()) {
-            window_.push_back(*item);
+        for (auto& sample : sensor_->take()) {
+            window_.push_back(sample);
             ++total_;
             if (window_.size() >= window_size_) {
                 // Process the full window on a worker thread, publish the result back.
-                pool().detach_task([this, w = std::move(window_)] {
-                    auto stats = compute(w);
-                    post([this, stats] { on_window(stats); });
-                });
+                background([w = std::move(window_)] { return compute(w); }, [this](Stats s) { on_window(s); });
                 window_.clear();
             }
         }
@@ -217,20 +258,17 @@ private:
     json stats_json() const {
         return {{"total_samples", total_},
                 {"exceedances", exceedances_},
-                {"rate_hz", rate_hz_.load()},
+                {"rate_hz", sensor_->rate_hz()},
                 {"last_window", to_json(last_)}};
     }
 
+    SimSensor* sensor_ = nullptr;  // owned by the application (add_component)
+
     // Configuration
-    std::atomic<double> rate_hz_{10.0};
     std::size_t window_size_ = 50;
     double threshold_ = 80.0;
     bool alarm_enabled_ = true;
-    std::string alarm_severity_ = "warning";
-    std::atomic<bool> spikes_{false};
-
-    // Producer side
-    forge::Channel<Sample> samples_;
+    forge::Severity alarm_severity_ = forge::Severity::warning;
 
     // Main loop state (only touched on the main loop)
     std::vector<Sample> window_;

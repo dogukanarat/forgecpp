@@ -127,11 +127,11 @@ void Messaging::start_control(const Config& cfg) {
             return control_server_ ? double(control_server_->rejected()) : 0;
         }, "Commands refused because the server was busy");
     }
-    const auto device = cfg.value<std::string>("forge.serial");
+    const auto device = cfg.value<std::string>("serial.device");
     if (!device.empty()) {
         serial_options_.device = device;
-        serial_options_.baud = cfg.value<int>("forge.serial_baud");
-        serial_options_.framing.frame_size = static_cast<std::size_t>(cfg.value<int>("forge.serial_frame_size"));
+        serial_options_.baud = cfg.value<int>("serial.baud");
+        serial_options_.framing.frame_size = static_cast<std::size_t>(cfg.value<int>("serial.frame_size"));
         serial_options_.thread_name = "forge-serial";
         serial_options_.on_request = [this](std::span<const std::uint8_t> frame, const auto& send) {
             CallerScope caller(app_.control().identify("link", "serial", {}));

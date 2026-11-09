@@ -54,9 +54,15 @@ pool().detach_task([this] {
 | `logger()`, `pool()`, `http()`, `dashboard()`, `console()`, `cli()` | Services |
 | `stop(code)`, `reload()` | Thread-safe lifecycle control |
 
-Overridable hooks: `setup_cli`, `setup_http`, `setup_web`, `setup_console`,
-`on_start`, `on_stop`, `on_reload`. If you prefer not to subclass, the same
-hooks are available as lambdas: `hook_start`, `hook_stop`, `hook_reload`,
+Overridable hooks: `setup_config`, `setup_cli`, `setup_controls`, `setup_http`, `setup_console`,
+`on_start`, `on_stop`, `on_reload`, in this order at start-up: `setup_config`
+→ the command line (`setup_cli`) → the file is loaded and validated →
+`setup_controls` (the control registry: panel, forgectl, console, telnet,
+links) → the persisted values (`[state].file`) → `setup_http` / `setup_console`
+→ `on_start` → the links and the HTTP server start taking requests. A
+control's setter must therefore work before `on_start()`. If you prefer not to
+subclass, the same hooks are available as lambdas: `hook_config`, `hook_cli`,
+`hook_controls`, `hook_start`, `hook_stop`, `hook_reload`,
 `hook_http`, `hook_web`, `hook_console` (see `examples/hello`).
 
 ### Standard command line
@@ -89,6 +95,9 @@ console = true
 pattern = "[{time}] [{level}] [{logger}] {message}"   # also {thread} {file} {line}; {level}: TRC DBG INF WRN ERR CRT
 color = "auto"           # level colours: auto (a terminal, no NO_COLOR) | always | never
 format = "text"          # text | json (one object per line)
+history = 200            # records kept for the panel, forgectl logs and telnet
+flush_level = "warning"  # records at or above are written out at once
+flush_interval_s = 1     # the others, at most this late
 
 [threads]
 workers = 0              # 0 = number of CPUs
@@ -99,7 +108,7 @@ host = "0.0.0.0"
 port = 8080
 threads = 8              # each open browser tab holds one thread for live updates
 
-[http.auth]              # when set, everything except /health requires credentials
+[http.auth]              # older single-user credentials; prefer [auth] (users and roles, below)
 user = ""                # Basic auth (the browser prompts for user/password)
 password = ""
 token = ""               # Authorization: Bearer <token> (for scripts)
@@ -113,25 +122,64 @@ max_clients = 8          # concurrently connected live pages
 logs = true              # live log on the control panel
 log_level = "info"
 log_history = 200
+layout_file = ""         # card layouts of the pages (default: $STATE_DIRECTORY/web-layout.json; "-" = memory only)
+live_reload = true       # pages served from `root` reload when a file changes
 
 [console]
 enabled = false          # same as -i
 prompt = "<name>> "
 history = "~/.<name>_history"
+color = true             # default: on a terminal
 telnet = ""              # remote console, e.g. "0.0.0.0:2323"
 telnet_max_sessions = 4
 telnet_idle_s = 0
 
-[forge]                  # ZeroMQ endpoints (empty = off; "tcp://127.0.0.1:*" = any free port)
+[forge]                  # the links (ZeroMQ; empty = off; "tcp://127.0.0.1:*" = any free port)
 control = ""             # commands (c2 frames) from REQ clients (forgectl, programs), e.g. "tcp://*:5557"
 events = ""              # PUB: state, alarms, log, audit, health, metrics
 data = ""                # PUB: the application's streams (ephemeral port when empty and used)
 metrics_interval_s = 5
 control_workers = 2      # [forge].control requests handled at the same time
+
+[serial]                 # the same commands on a serial line (zephyrus framing)
+device = ""              # e.g. "/dev/ttyUSB0"; opened again when it goes away
+baud = 115200
+frame_size = 244         # the peer's CONFIG_ZEPHYRUS_COBS_FRAME_SIZE
+
+[loop]                   # the main loop
+slow_task_ms = 200       # a task longer than this is logged with its name (0 = never)
 request_timeout_ms = 2000 # requests waiting for a busy main loop answer 503 after this
+max_pending_tasks = 10000 # beyond this post() drops (forge.loop.dropped)
+
+[health]
+stall_ms = 5000          # /health says "stalled" when the loop's heartbeat is older
+watchdog_grace_s = 0     # a failed critical component stops the watchdog pings after this (0 = never)
+
+[state]
+file = ""                # controls marked persist() are saved here
+
+[crash]
+enabled = true
+dir = ""                 # default: $STATE_DIRECTORY or /tmp
+
+[trace]
+enabled = true
+capacity = 65536
+
+[metrics]
+enabled = true
+
+[hub]
+register = true
+endpoint = "tcp://127.0.0.1:5550"
+retry_s = 30
+critical = false
+group = ""
+title = ""
 
 [auth]                   # users and roles for web, the command link and telnet (see below)
 enabled = false
+anonymous = true         # false: HTTP needs credentials for everything but /health
 default_role = "viewer"
 # [auth.users.<name>] password / token / role
 
@@ -168,6 +216,11 @@ title = ""
                          # priority, nice, cpus = [1, 2]
 ```
 
+The old names `[forge].serial*`, `[forge].slow_task_ms`,
+`[forge].request_timeout_ms` and `[forge].max_pending_tasks` still work, with
+a warning (`Schema::alias`). A test (`tools/check-config-docs.py`) keeps this
+table complete: every key `--help-config` prints is named here.
+
 Unknown keys are reported with a suggestion (`htpp.port` → did you mean
 `http.port`?); wrong types and out-of-range values stop the start-up (and a
 reload) with a clear message. Applications declare their own keys in
@@ -189,7 +242,7 @@ why) and apply:
 | Applied again | Not applied until a restart |
 |---|---|
 | `[log].level`; the log file is opened again (logrotate: `postrotate kill -HUP`) | the other `[log]` keys, `[log].file` itself |
-| `[forge].request_timeout_ms`, `[forge].slow_task_ms` | the endpoints (`[forge].control`, `events`, `data`, `serial`), `[forge].control_workers` |
+| `[loop].request_timeout_ms`, `[loop].slow_task_ms` | the endpoints (`[forge].control`, `events`, `data`, `serial`), `[forge].control_workers` |
 | `[health].watchdog_grace_s` | `[http]`, `[web]`, `[console]`, `[auth]`, `[threads]`, `[crash]`, `[state]`, `[hub]`, `[audit]`, `[metrics]`, `[trace]` |
 | the application's own keys: `on_reload(config)` and the components' | |
 

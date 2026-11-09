@@ -1,4 +1,4 @@
-// The tutorial's tests (docs/tutorials/04-testing.md).
+// The tutorial's tests (docs/tutorials/05-testing.md).
 #include "pump.hpp"
 
 #include <forge/testing.hpp>

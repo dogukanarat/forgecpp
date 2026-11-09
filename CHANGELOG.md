@@ -232,6 +232,43 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   the armhf build, the systemd job and the API reference run on pull
   requests, weekly and by hand.
 
+### Changed (API and configuration; the old names keep working)
+
+- **`setup_controls(forge::Controls&)`** is the hook that declares the control
+  registry (the panel, forgectl, the console, telnet and the links all use
+  it); `setup_web()` is its old name and is still called. `forge::Controls` is
+  `web::Dashboard`. The lambda forms `hook_controls`, `hook_config` and
+  `hook_cli` join `hook_start` and the others (hello uses them). The start-up
+  order is documented in application.md.
+- **`Group::action()`** declares a handler with typed parameters (the panel's
+  form, `forgectl call`, the console's `call`); `Group::command()` is
+  deprecated for it, because a *command* is a numbered request/reply pair
+  (`Application::command<Req, Rsp>()`). On the web: `POST /forge/api/actions/<id>`.
+- The program's commands are at **`/forge/api/commands`** (list, describe,
+  run) and **`forgectl command`**; `/forge/api/tmtc` and `forgectl tmtc` are
+  aliases. `POST /forge/api/commands/<name>` runs a typed command, or, for an
+  id that is not one, an action (the path the 0.3 panel used).
+- Configuration: **`[serial]`** (`device`, `baud`, `frame_size`) and
+  **`[loop]`** (`slow_task_ms`, `request_timeout_ms`, `max_pending_tasks`)
+  take the keys that were under `[forge]`, which keeps the links (`control`,
+  `events`, `data`, `metrics_interval_s`, `control_workers`). The old names
+  work with a warning (`config::Schema::alias()`; `--help-config` lists them).
+- Controls bind more types: `toggle`/`number` to a `std::atomic<T>`, `number`
+  to a `std::chrono::duration` (shown in a unit of your choice), `select` to
+  an enum with its names; `Control::slider()` shows a number as a slider.
+- `forgecpp-new --minimal` is the smallest shape (about 100 lines of C++, half of them comments);
+  the full scaffold shows the rest.
+- `examples/sensor-service` has a `forge::Component` (`SimSensor`: keys,
+  controls, worker, health) to show how an application is assembled from parts.
+- The Python clients are pip-installable: `pip install <build>/python`
+  (`pyproject.toml` is written there; package `forge-client`).
+- Docs: `docs/field-notes.md` (ports on a device, debugging under the
+  hardened unit, persisted controls and renames, time without an RTC, metric
+  names, a busy main loop, a serial line that comes and goes), tutorial 8
+  (consuming a stream in C++), `hub/README.md`, the full key table in
+  application.md (a test keeps it complete), F-008 scoped to modules shared
+  with zephyrus.
+
 ### Added (observability and tests)
 
 - Metrics with labels: `counter(name, {{"topic", "iq"}}, ...)`, the same for

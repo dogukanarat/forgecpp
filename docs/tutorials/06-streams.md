@@ -59,7 +59,7 @@ command<pump_history_request, pump_history_reply>(pump_msg_id_history, "history"
 ```
 
 ```sh
-curl -X POST http://pump-host:8080/forge/api/tmtc/history -d '{"count": 3}'   # {"pressure_bar": [4.1, 4.3, 4.4]}
+curl -X POST http://pump-host:8080/forge/api/commands/history -d '{"count": 3}'   # {"pressure_bar": [4.1, 4.3, 4.4]}
 ```
 
 **Python** (the `forge` package comes with forgecpp, in site-packages; your

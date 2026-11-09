@@ -211,7 +211,7 @@ void RadioController::setup_cli(CLI::App& cli) {
 // ---------------------------------------------------------------------------
 // Controls: web panel, custom page, console and ZeroMQ all use these.
 
-void RadioController::setup_web(forge::web::Dashboard& ui) {
+void RadioController::setup_controls(forge::Controls& ui) {
     load_settings(config());
     ui.title("Radio controller");
     ui.link("Spectrum", "/");

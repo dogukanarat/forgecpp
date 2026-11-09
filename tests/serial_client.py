@@ -21,7 +21,7 @@ assert f.receive(b"\x13\x37" + f.encode(b"x" * 500)) == [b"x" * 500]
 peer, other = pty.openpty()
 device = os.ttyname(other)
 os.close(other)
-program = subprocess.Popen([sys.argv[2], "-D", "forge.serial=" + device, "-D", "http.enabled=false"],
+program = subprocess.Popen([sys.argv[2], "-D", "serial.device=" + device, "-D", "http.enabled=false"],
                            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 try:
     link = serial.Client(fd=peer, timeout_ms=500)

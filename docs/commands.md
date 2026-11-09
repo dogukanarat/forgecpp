@@ -96,9 +96,9 @@ Pump() : Application({"pump", "1.0.0", "Tutorial pump controller"}) {
 ## 4. Try it
 
 ```sh
-forgectl -e tcp://localhost:5577 tmtc                          # the list, with numbers
-forgectl -e tcp://localhost:5577 tmtc history '{"count": 3}'    # run it (JSON over HTTP)
-curl -X POST http://localhost:8080/forge/api/tmtc/history -d '{"count": 3}'
+forgectl -e tcp://localhost:5577 command                          # the list, with numbers
+forgectl -e tcp://localhost:5577 command history '{"count": 3}'    # run it (JSON over HTTP)
+curl -X POST http://localhost:8080/forge/api/commands/history -d '{"count": 3}'
 ```
 
 The panel's **Commands** page (`/forge/#commands`) builds a form from the

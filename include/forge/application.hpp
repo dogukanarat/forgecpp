@@ -116,6 +116,7 @@ void register_builtin_commands(Application& app);
 namespace web {
 class Dashboard;
 }  // namespace web
+using Controls = web::Dashboard;  // also in forge/web.hpp
 namespace zmq {
 class Publisher;
 class Stream;
@@ -177,7 +178,7 @@ public:
 
     // --- main loop --------------------------------------------------------
     /// Run `task` on the main loop thread (thread-safe). False when the loop's
-    /// queue is full ([forge].max_pending_tasks: the loop is stuck or far
+    /// queue is full ([loop].max_pending_tasks: the loop is stuck or far
     /// behind): the task is dropped and counted (forge.loop.dropped).
     bool post(Task task);
 
@@ -204,7 +205,7 @@ public:
         return invoke_until(std::chrono::steady_clock::now() + timeout, std::forward<F>(fn));
     }
 
-    /// [forge].request_timeout_ms: how long a request waits for the main loop.
+    /// [loop].request_timeout_ms: how long a request waits for the main loop.
     std::chrono::milliseconds request_timeout() const { return std::chrono::milliseconds(request_timeout_ms_.load()); }
 
     /// True on the thread running the main loop.
@@ -348,7 +349,7 @@ public:
     tmtc::Registry& commands() { return commands_; }
     /// A command (docs/commands.md). Its handler runs on the main loop, like
     /// the controls; a busy loop refuses it with EAGAIN after
-    /// [forge].request_timeout_ms. The caller needs `role`: the default,
+    /// [loop].request_timeout_ms. The caller needs `role`: the default,
     /// operator, is for a command that changes something, and those are
     /// written to the audit trail with their request; Role::viewer is for a
     /// query (no check, no audit record).
@@ -395,9 +396,17 @@ public:
     Application& hook_start(Hook hook);
     Application& hook_stop(Hook hook);
     Application& hook_reload(Hook hook);
+    /// Declare configuration keys (the lambda form of setup_config()).
+    Application& hook_config(std::function<void(Application&, config::Schema&)> hook);
+    /// Add command line options (the lambda form of setup_cli()).
+    Application& hook_cli(std::function<void(Application&, CLI::App&)> hook);
     Application& hook_http(std::function<void(Application&, http::Server&)> hook);
     Application& hook_console(std::function<void(Application&, Console&)> hook);
-    Application& hook_web(std::function<void(Application&, web::Dashboard&)> hook);
+    /// Declare controls and actions (the lambda form of setup_controls()).
+    Application& hook_controls(std::function<void(Application&, Controls&)> hook);
+    Application& hook_web(std::function<void(Application&, web::Dashboard&)> hook) {
+        return hook_controls(std::move(hook));
+    }
 
 protected:
     /// Add command line options (called before parsing).
@@ -410,7 +419,14 @@ protected:
     virtual void setup_http(http::Server& server);
     /// Register console commands.
     virtual void setup_console(Console& console);
-    /// Declare web dashboard controls (groups, buttons, switches, sliders, values, links).
+    /// Declare the controls and actions (groups, buttons, switches, sliders,
+    /// values, links): one registry for the web panel, forgectl, the console,
+    /// telnet and the links. Order at start-up: setup_config() -> command line
+    /// -> setup_controls() -> the persisted values ([state].file) are restored
+    /// -> on_start(). A control's setter must therefore work before on_start():
+    /// read the configuration here (config()) when a value depends on it.
+    virtual void setup_controls(Controls& controls);
+    /// The old name of setup_controls(); both are called.
     virtual void setup_web(web::Dashboard& dashboard);
     /// Called on the main loop once everything is set up. Throw to abort startup.
     virtual void on_start();
@@ -509,6 +525,8 @@ private:
 
     struct Hooks {
         std::vector<Hook> start, stop, reload;
+        std::vector<std::function<void(Application&, config::Schema&)>> config;
+        std::vector<std::function<void(Application&, CLI::App&)>> cli;
         std::vector<std::function<void(Application&, http::Server&)>> http;
         std::vector<std::function<void(Application&, Console&)>> console;
         std::vector<std::function<void(Application&, web::Dashboard&)>> web;
@@ -564,8 +582,8 @@ private:
     std::string http_listen_;
     std::string instance_;
     bool manual_clock_ = false;
-    std::atomic<int> slow_task_ms_{200};  ///< [forge].slow_task_ms
-    std::atomic<int> max_pending_tasks_{10000};  ///< [forge].max_pending_tasks
+    std::atomic<int> slow_task_ms_{200};  ///< [loop].slow_task_ms
+    std::atomic<int> max_pending_tasks_{10000};  ///< [loop].max_pending_tasks
     bool print_config_ = false;
     bool help_config_ = false;
     bool check_config_ = false;
@@ -600,7 +618,7 @@ private:
     std::unique_ptr<detail::HttpFrontend> http_;
     bool hub_registration_ = true;
     std::atomic<int> stop_signal_{0};                 ///< signal that asked us to stop (0 = none)
-    std::atomic<int> request_timeout_ms_{2000};       ///< [forge].request_timeout_ms
+    std::atomic<int> request_timeout_ms_{2000};       ///< [loop].request_timeout_ms
     std::atomic<double> watchdog_grace_s_{0};         ///< [health].watchdog_grace_s
     sigset_t saved_signal_mask_{};                    ///< the caller's mask, put back by shutdown()
     std::atomic<std::int64_t> loop_tick_ms_{0};       ///< last main loop heartbeat (steady clock)

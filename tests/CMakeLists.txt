@@ -47,6 +47,11 @@ set_tests_properties(forge_proto_refuses_unbounded PROPERTIES
 # The compatibility rules of the messages (what may change between releases).
 add_test(NAME forge_proto_compat_rules
     COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tools/proto-compat.py" --self-test)
+# docs/application.md names every configuration key the framework declares.
+if(TARGET hello)
+    add_test(NAME forge_config_docs
+        COMMAND Python3::Interpreter "${PROJECT_SOURCE_DIR}/tools/check-config-docs.py" $<TARGET_FILE:hello>)
+endif()
 
 # Fuzz targets for what arrives on a link (c2 frames, protobuf bytes, JSON).
 # By default each is a short, repeatable ctest that mutates its seeds

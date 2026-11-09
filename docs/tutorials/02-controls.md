@@ -1,11 +1,11 @@
 # 2. Controls and commands
 
-Controls are declared once in `setup_web()` and appear everywhere: the web
+Controls are declared once in `setup_controls()` and appear everywhere: the web
 panel (`/forge/`), forgectl and programs on the command link, the console and telnet,
 with roles, leases and the audit trail on every channel.
 
 ```cpp
-void setup_web(forge::web::Dashboard& ui) override {
+void setup_controls(forge::Controls& ui) override {
     auto& drive = ui.group("Drive");
     drive.number("speed_rpm", "Speed", speed_rpm).range(0, 3000, 10).unit("rpm").persist();
     drive.value("running", "Running", running);
@@ -27,7 +27,7 @@ void setup_web(forge::web::Dashboard& ui) override {
 A **command** takes typed parameters and returns a result:
 
 ```cpp
-ui.group("Service").command("flush", "Flush", {forge::web::number_param("seconds", 10).range(1, 60)},
+ui.group("Service").action("flush", "Flush", {forge::web::number_param("seconds", 10).range(1, 60)},
     [this](const forge::json& a) {
         running = true;
         const auto s = a["seconds"].get<double>();

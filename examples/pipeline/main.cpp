@@ -99,7 +99,7 @@ protected:
         cli.add_option("--producers", producer_count_, "Number of producer threads")->check(CLI::Range(1, 64));
     }
 
-    void setup_web(forge::web::Dashboard& ui) override {
+    void setup_controls(forge::Controls& ui) override {
         ui.title("Processing pipeline");
 
         auto& flow = ui.group("Throughput");

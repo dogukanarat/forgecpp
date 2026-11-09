@@ -122,30 +122,38 @@ void Application::declare_framework_config(config::Schema& s) {
     s.integer("console.telnet_max_sessions", 4, "Telnet sessions at once").range(1, 64);
     s.integer("console.telnet_idle_s", 0, "Close idle telnet sessions after (0 = never)").range(0, 86400).unit("s");
 
-    s.section("forge", "ZeroMQ: commands, events and streams");
+    s.section("forge", "The links of every forgecpp program: commands, events and streams (ZeroMQ)");
     s.string("forge.control", "", "Commands (c2 frames: forgectl, other programs), e.g. \"tcp://*:5557\"");
     s.string("forge.events", "", "PUB: state, alarms, log, audit, health, metrics, e.g. \"tcp://*:5559\"");
     s.string("forge.data", "", "PUB: the application's streams (empty: an ephemeral port when used)");
     s.integer("forge.metrics_interval_s", 5, "Metrics event interval").range(1, 3600).unit("s");
-    s.integer("forge.slow_task_ms", 200,
+    s.integer("forge.control_workers", 2, "Commands on [forge].control handled at the same time").range(1, 16);
+
+    s.section("serial", "The same commands on a serial line (c2 frames, zephyrus framing)");
+    s.string("serial.device", "", "The tty, e.g. \"/dev/ttyUSB0\" (empty = off); opened again when it goes away");
+    s.integer("serial.baud", 115200, "Baud rate").range(9600, 4000000);
+    s.integer("serial.frame_size", 244, "Largest frame sent; the peer's CONFIG_ZEPHYRUS_COBS_FRAME_SIZE")
+        .range(16, 4096)
+        .unit("B");
+    s.alias("forge.serial", "serial.device");
+    s.alias("forge.serial_baud", "serial.baud");
+    s.alias("forge.serial_frame_size", "serial.frame_size");
+
+    s.section("loop", "The main loop");
+    s.integer("loop.slow_task_ms", 200,
               "Warn when one main loop task (timer, control, command) runs longer than this (0 = never)")
         .range(0, 60000)
         .unit("ms");
-    s.integer("forge.max_pending_tasks", 10000,
-              "Tasks the main loop may have waiting; beyond that post() drops them (forge.loop.dropped)")
-        .range(16, 10000000);
-    s.integer("forge.control_workers", 2, "Commands on [forge].control handled at the same time").range(1, 16);
-    s.integer("forge.request_timeout_ms", 2000,
+    s.integer("loop.request_timeout_ms", 2000,
               "How long a request (a command, HTTP) waits for a busy main loop before it is refused")
         .range(10, 600000)
         .unit("ms");
-    s.string("forge.serial", "",
-             "Commands on a serial line too (c2 frames, zephyrus framing), e.g. \"/dev/ttyUSB0\" (empty = off)");
-    s.integer("forge.serial_baud", 115200, "Baud rate of [forge].serial").range(9600, 4000000);
-    s.integer("forge.serial_frame_size", 244,
-              "Largest frame sent on [forge].serial; the peer's CONFIG_ZEPHYRUS_COBS_FRAME_SIZE")
-        .range(16, 4096)
-        .unit("B");
+    s.integer("loop.max_pending_tasks", 10000,
+              "Tasks the main loop may have waiting; beyond that post() drops them (forge.loop.dropped)")
+        .range(16, 10000000);
+    s.alias("forge.slow_task_ms", "loop.slow_task_ms");
+    s.alias("forge.request_timeout_ms", "loop.request_timeout_ms");
+    s.alias("forge.max_pending_tasks", "loop.max_pending_tasks");
 
     s.section("auth", "Users and roles");
     s.boolean("auth.enabled", false, "Require credentials for changes (roles)");

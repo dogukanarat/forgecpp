@@ -5,13 +5,13 @@ The control panel at `/forge/`, `data-forge-*` attributes for your own pages, li
 Daemons are controlled from web pages. There are three layers, all built on
 the same control declarations:
 
-**1. Control panel — no HTML required.** Declare controls in `setup_web()` and
+**1. Control panel — no HTML required.** Declare controls in `setup_controls()` and
 `http://device:8080/forge/` becomes a ready-made panel (groups, buttons,
 switches, sliders, numbers, text, drop-downs, read-only values, live log,
 connection status, mobile layout, light/dark theme):
 
 ```cpp
-void setup_web(forge::web::Dashboard& ui) override {
+void setup_controls(forge::Controls& ui) override {
     ui.title("Pump station 3");
     ui.link("Schematic", "/schema.html");             // link to your own pages
 

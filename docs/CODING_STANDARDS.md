@@ -116,8 +116,10 @@ application error `module_id::app`. Register the name of a new module with
 
 - Each command has a `<command>_request` and a `<command>_reply`, also when one
   of them is empty.
-- The messages are in `proto/<module>.proto.in`. The bounds and the base number
-  come from CMake.
+- A module shared with zephyrus keeps its messages in `proto/<module>.proto.in`,
+  with the bounds and the base number from CMake, as zephyrus does. A module
+  of forgecpp alone (every example, the scaffolder) writes a plain `.proto`
+  with the number in the `msg_id` enum (`status = 0x0100`).
 - A command number is `base + offset` from the `msg_id` enum of the module.
 - A command number is unique in one program. forgecpp keeps its own table of
   bases (below); it does not share the table of zephyrus. The registry refuses

@@ -11,7 +11,7 @@
 //       void setup_config(forge::config::Schema& s) override {
 //           s.string("sensors.port", "/dev/ttyUSB0", "Serial port");
 //       }
-//       void setup_web(forge::web::Dashboard& ui) override {
+//       void setup_controls(forge::Controls& ui) override {
 //           ui.group("Sensors").value("temperature", "Temperature", temperature_);
 //       }
 //       void on_start() override {
@@ -48,6 +48,7 @@ class Schema;
 namespace web {
 class Dashboard;
 }  // namespace web
+using Controls = web::Dashboard;
 namespace http {
 class Server;
 }  // namespace http
@@ -65,6 +66,8 @@ public:
 
 protected:
     virtual void setup_config(config::Schema& schema);
+    virtual void setup_controls(Controls& controls);
+    /// The old name of setup_controls(); both are called.
     virtual void setup_web(web::Dashboard& dashboard);
     virtual void setup_console(Console& console);
     virtual void setup_http(http::Server& server);

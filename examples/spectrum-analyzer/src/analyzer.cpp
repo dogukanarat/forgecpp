@@ -262,7 +262,7 @@ void Analyzer::set_frequency(double center, double span) {
 // ---------------------------------------------------------------------------
 // controls (web panel, analyzer page, console and ZeroMQ all use these)
 
-void Analyzer::setup_web(forge::web::Dashboard& ui) {
+void Analyzer::setup_controls(forge::Controls& ui) {
     load(config());
     ui.title("Spectrum analyzer");
     ui.link("Analyzer", "/");

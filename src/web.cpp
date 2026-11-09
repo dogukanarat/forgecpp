@@ -114,6 +114,14 @@ Control& Control::precision(int digits) {
     def_->precision = std::max(0, digits);
     return *this;
 }
+Control& Control::slider() {
+    if (def_->kind != Kind::number && def_->kind != Kind::slider) {
+        throw std::invalid_argument("control '" + def_->id + "': only a number can be a slider");
+    }
+    def_->kind = Kind::slider;
+    return *this;
+}
+
 Control& Control::range(double min, double max, double step) {
     if (min > max) throw std::invalid_argument("control '" + def_->id + "': min > max");
     def_->min = min;
@@ -168,7 +176,12 @@ Param select_param(std::string name, std::vector<std::string> options, std::opti
 }
 
 CommandRef Group::command(const std::string& id, const std::string& label, std::vector<Param> params,
-                          std::function<json(const json&)> handler) {
+                          std::function<json(const json& args)> handler) {
+    return action(id, label, std::move(params), std::move(handler));
+}
+
+ActionRef Group::action(const std::string& id, const std::string& label, std::vector<Param> params,
+                        std::function<json(const json&)> handler) {
     if (owner_.commands_by_id_.count(id) || owner_.by_id_.count(id)) {
         throw std::invalid_argument("duplicate dashboard id '" + id + "'");
     }
@@ -214,6 +227,11 @@ Control Group::button(const std::string& id, const std::string& label, std::func
     auto c = add(Kind::button, id, label, {}, {});
     owner_.by_id_.at(id)->action = std::move(action);
     return c;
+}
+
+Control Group::toggle(const std::string& id, const std::string& label, std::atomic<bool>& value) {
+    return add(Kind::toggle, id, label, [&value] { return json(value.load(std::memory_order_relaxed)); },
+               [&value](const json& v) { value.store(v.get<bool>(), std::memory_order_relaxed); });
 }
 
 Control Group::toggle(const std::string& id, const std::string& label, bool& value) {

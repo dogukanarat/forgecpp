@@ -13,7 +13,7 @@ public:
     }
 
 protected:
-    void setup_web(forge::web::Dashboard& ui) override {
+    void setup_controls(forge::Controls& ui) override {
         auto& g = ui.group("Test");
         g.number("gain", "Gain", gain_).range(0, 70).unit("dB");
         g.toggle("enabled", "Enabled", enabled_);

@@ -267,12 +267,12 @@ with a `tmtc::Dispatcher`) and takes its reports (`on_push`).
 
 ## The same commands in JSON
 
-`POST /forge/api/tmtc/<name or number>` takes the request as JSON and answers
+`POST /forge/api/commands/<name or number>` takes the request as JSON and answers
 with the reply as JSON (a list for replies in parts). A refusal is an HTTP
 error with the status above. The JSON of a message is protobuf's: field names
 as in the `.proto` (lowerCamelCase is accepted too), 64-bit integers as
-strings, enums by name, bytes as base64. `GET /forge/api/tmtc` lists the
-commands, `GET /forge/api/tmtc/<name>` describes their messages.
+strings, enums by name, bytes as base64. `GET /forge/api/commands` lists the
+commands, `GET /forge/api/commands/<name>` describes their messages.
 
 ## Talking to it
 

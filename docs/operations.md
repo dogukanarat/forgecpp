@@ -36,7 +36,7 @@ role = "operator"
 - **Commands (RPC):** typed parameters with defaults and ranges:
 
 ```cpp
-g.command("scan", "Scan", {forge::web::number_param("from", 2400).range(70, 6000),
+g.action("scan", "Scan", {forge::web::number_param("from", 2400).range(70, 6000),
                            forge::web::number_param("to")},
           [this](const forge::json& a) { return scan(a["from"], a["to"]); }).confirm("Start a scan?");
 ```
@@ -45,11 +45,18 @@ g.command("scan", "Scan", {forge::web::number_param("from", 2400).range(70, 6000
 
 | | |
 |---|---|
-| **Metrics** | `metrics().counter / gauge / histogram / gauge_fn`; the framework adds HTTP, main loop lag/busy, thread pool, alarms, health and process metrics. Prometheus text at `GET /metrics`, `forgectl metrics`, the panel's Metrics page (with trends), the `metrics` event topic |
+| **Metrics** | `metrics().counter / gauge / histogram / gauge_fn`, with labels (`counter("rx.frames", {{"channel", "1"}})`); the framework adds HTTP, main loop (lag, busy, queue depth, dropped tasks), thread pool, the links and streams (`forge.link.*`, `forge.stream.*`, `forge.serial.*`), alarms, health and process metrics. Prometheus text at `GET /metrics` (dots become underscores: `forge_loop_lag_seconds`), `forgectl metrics`, the panel's Metrics page (with trends), the `metrics` event topic |
 | **Trace** | `FORGE_TRACE_SCOPE("name")`, `forge::trace::instant/counter`: a lock-free flight recorder per thread; main loop tasks and control requests are traced automatically. Download Chrome JSON (`forgectl trace`, panel Trace page, `GET /forge/api/trace?seconds=5`) and open it in ui.perfetto.dev |
 | **Crash reports** | Fatal signals write a report (signal, backtrace, last log lines) to `[crash].dir`; the next start raises the `forge.crashed` alarm with its path |
 | **Logs** | `[log] format = "json"` for collectors; per-logger levels (`forgectl log-level radio debug`); history via `forgectl logs`, live via `watch` and telnet `logs on` |
 | **Health** | `health().set("radio", forge::HealthState::failed, "device lost")`; `/health` (`?strict=1` → 503), `forgectl health`, the panel's Health page; with `health.watchdog_grace_s` a failed critical component stops the systemd watchdog pings so systemd restarts the daemon |
+
+## Ports on a device
+
+Every program binds what its configuration names; two programs with the same
+configuration collide. The examples follow one block of ten ports per program
+and HTTP from 8080 up; the table and the `ipc://` alternative are in
+[field-notes.md](field-notes.md#ports-on-a-device).
 
 ## forge-hub: every application on the device in one place
 

@@ -6,6 +6,12 @@ Requirements: CMake ≥ 3.16, a C++20 compiler (GCC ≥ 13 / Clang ≥ 17 with l
 libxml2 (for libiio; skip with `--without-iio`). Python 3 with `protobuf`
 (the message generator runs at build time; `apt install python3-protobuf`), and
 `pyzmq` for the Python clients (optional).
+
+The Python clients (`forge.c2`, `forge.serial`, `forge.framing`, the generated
+messages) are installed into site-packages with forgecpp; a machine without
+the C++ toolchain (a ground segment, a CI container) installs them from a
+build directory or the `--package` tarball with `pip install <build>/python`
+(a `pyproject.toml` is written there; package `forge-client`).
 Optional: `ninja`, OpenSSL (for HTTPS), zlib (for compression), libusb-1.0 (`--iio-usb`).
 
 ```sh

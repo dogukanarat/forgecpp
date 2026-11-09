@@ -100,7 +100,7 @@ void ChannelEmulator::bind(forge::web::Group& g, const std::string& id, const st
     }
 }
 
-void ChannelEmulator::setup_web(forge::web::Dashboard& ui) {
+void ChannelEmulator::setup_controls(forge::Controls& ui) {
     using S = channel::Settings;
     auto& e = ui.group("Emulator");
     auto names = channel::preset_names();

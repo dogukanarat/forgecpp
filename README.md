@@ -37,7 +37,7 @@ public:
     Pump() : Application({"pump", "1.0.0", "Pump control service"}) {}
 
 protected:
-    void setup_web(forge::web::Dashboard& ui) override {
+    void setup_controls(forge::Controls& ui) override {
         auto& g = ui.group("Pump");
         g.toggle("running", "Running", running_);
         g.slider("speed", "Speed", speed_, 0, 3000, 10).unit("rpm");
@@ -121,9 +121,11 @@ ctest --test-dir build
 sudo cmake --install build     # binary (web/ embedded) + /etc/my-daemon/my-daemon.toml + systemd unit
 ```
 
-`forgecpp-new --minimal my-daemon` makes only the application, its controls,
-configuration and tests (no messages, web page or Python client);
-`--with-command` and `--with-stream` add a command or a stream back.
+`forgecpp-new --minimal my-daemon` makes the smallest shape: a schema, the
+controls, a timer, the configuration and tests, about 100 lines of C++ (no
+messages, web page, Python client, CLI flag, REST route, console command,
+action, metric or trace span); `--with-command` and `--with-stream` add a
+command or a stream back.
 
 Generated project:
 

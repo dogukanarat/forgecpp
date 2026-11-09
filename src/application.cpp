@@ -179,9 +179,9 @@ bool Application::post(Task task) {
                                                      "Delay between post() and execution on the main loop", "s");
     static auto& busy = metrics::registry().counter("forge.loop.busy_us", "Time spent running main loop tasks", "us");
     static auto& slow = metrics::registry().counter("forge.loop.slow_tasks",
-                                                    "Main loop tasks that took longer than [forge].slow_task_ms");
+                                                    "Main loop tasks that took longer than [loop].slow_task_ms");
     static auto& dropped = metrics::registry().counter(
-        "forge.loop.dropped", "Tasks refused because the main loop's queue was full ([forge].max_pending_tasks)");
+        "forge.loop.dropped", "Tasks refused because the main loop's queue was full ([loop].max_pending_tasks)");
     // Bounded: a loop that is stuck must not let the producers fill the memory.
     const auto limit = static_cast<std::size_t>(std::max(max_pending_tasks_.load(std::memory_order_relaxed), 1));
     if (tasks_.size_approx() >= limit) {
@@ -214,7 +214,7 @@ bool Application::post(Task task) {
             const auto now_s = std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count();
             if (now_s - last_warning.exchange(now_s) >= 10 && logger_) {
                 logger_->warn(
-                    "a main loop task took {} ms (> [forge].slow_task_ms = {}): everything else waited; "
+                    "a main loop task took {} ms (> [loop].slow_task_ms = {}): everything else waited; "
                     "move heavy work off the loop with background() (forge.loop.slow_tasks, trace \"loop.task\")",
                     took.count() / 1000, limit_ms);
             }
@@ -267,8 +267,16 @@ Application& Application::hook_http(std::function<void(Application&, http::Serve
     hooks_.http.push_back(std::move(hook));
     return *this;
 }
-Application& Application::hook_web(std::function<void(Application&, web::Dashboard&)> hook) {
+Application& Application::hook_controls(std::function<void(Application&, Controls&)> hook) {
     hooks_.web.push_back(std::move(hook));
+    return *this;
+}
+Application& Application::hook_config(std::function<void(Application&, config::Schema&)> hook) {
+    hooks_.config.push_back(std::move(hook));
+    return *this;
+}
+Application& Application::hook_cli(std::function<void(Application&, CLI::App&)> hook) {
+    hooks_.cli.push_back(std::move(hook));
     return *this;
 }
 Application& Application::hook_console(std::function<void(Application&, Console&)> hook) {
@@ -282,6 +290,7 @@ void Application::setup_config(config::Schema&) {}
 void Application::setup_http(http::Server&) {}
 void Application::setup_console(Console&) {}
 void Application::setup_web(web::Dashboard&) {}
+void Application::setup_controls(Controls&) {}
 
 void Application::publish_web(const std::string& event, const json& data) {
     if (http_) http_->publish(event, data);
@@ -348,6 +357,7 @@ int Application::run(int argc, char** argv) {
     // Declared configuration: framework keys, the application's, its components'.
     declare_framework_config(schema_);
     setup_config(schema_);
+    for (auto& h : hooks_.config) h(*this, schema_);
     for (auto& c : components_) c->setup_config(schema_);
     if (help_config_) {
         std::cout << "# " << info_.name << " configuration keys (TOML)\n" << schema_.help();
@@ -409,9 +419,9 @@ int Application::run(int argc, char** argv) {
         trace::set_thread_name("main");
 
         auth_.load(cfg);
-        request_timeout_ms_ = cfg.value<int>("forge.request_timeout_ms");
-        slow_task_ms_ = cfg.value<int>("forge.slow_task_ms");
-        max_pending_tasks_ = cfg.value<int>("forge.max_pending_tasks");
+        request_timeout_ms_ = cfg.value<int>("loop.request_timeout_ms");
+        slow_task_ms_ = cfg.value<int>("loop.slow_task_ms");
+        max_pending_tasks_ = cfg.value<int>("loop.max_pending_tasks");
         start_observability(cfg);
         control_ = std::make_unique<ControlService>(*this);
         detail::register_builtin_commands(*this);
@@ -419,8 +429,12 @@ int Application::run(int argc, char** argv) {
         // The control registry exists even without HTTP: the console and
         // other channels (ZeroMQ, forgectl, telnet) use it too.
         dashboard_ = std::make_unique<web::Dashboard>(cfg.value<std::string>("web.title"));
-        setup_web(*dashboard_);
-        for (auto& c : components_) c->setup_web(*dashboard_);
+        setup_controls(*dashboard_);
+        setup_web(*dashboard_);  // the old name
+        for (auto& c : components_) {
+            c->setup_controls(*dashboard_);
+            c->setup_web(*dashboard_);
+        }
         for (auto& h : hooks_.web) h(*this, *dashboard_);
         dashboard_->bind_to_thread(main_thread_.load());  // its values belong to the main loop
         state_->restore(*dashboard_, cfg.value<std::string>("state.file"), logger_);
@@ -606,9 +620,9 @@ void Application::do_reload() {
     // What is applied again (docs/application.md "Reloading"): the main loop
     // settings, the log level, the watchdog grace time, and the log file is
     // opened again (logrotate: `postrotate kill -HUP`).
-    request_timeout_ms_ = fresh.value<int>("forge.request_timeout_ms");
-    slow_task_ms_ = fresh.value<int>("forge.slow_task_ms");
-    max_pending_tasks_ = fresh.value<int>("forge.max_pending_tasks");
+    request_timeout_ms_ = fresh.value<int>("loop.request_timeout_ms");
+    slow_task_ms_ = fresh.value<int>("loop.slow_task_ms");
+    max_pending_tasks_ = fresh.value<int>("loop.max_pending_tasks");
     watchdog_grace_s_ = fresh.value<double>("health.watchdog_grace_s");
     if (auto level = fresh.get<std::string>("log.level")) {
         try {
@@ -782,6 +796,7 @@ Component::Component(std::string name, bool critical) : name_(std::move(name)), 
 Component::~Component() = default;
 void Component::setup_config(config::Schema&) {}
 void Component::setup_web(web::Dashboard&) {}
+void Component::setup_controls(Controls&) {}
 void Component::setup_console(Console&) {}
 void Component::setup_http(http::Server&) {}
 bool is_standard_name(std::string_view name) {

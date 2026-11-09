@@ -278,6 +278,8 @@ install(DIRECTORY proto/forge DESTINATION ${CMAKE_INSTALL_DATADIR}/forgecpp/prot
 foreach(py framing.py c2.py serial.py)
     configure_file(python/forge/${py} "${PROJECT_BINARY_DIR}/python/forge/${py}" COPYONLY)
 endforeach()
+# pip install <build>/python (a ground segment without the C++ toolchain).
+configure_file(python/pyproject.toml.in "${PROJECT_BINARY_DIR}/python/pyproject.toml" @ONLY)
 forge_install_python(DIRECTORY "${PROJECT_BINARY_DIR}/python")
 install(TARGETS forgectl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES "${PROJECT_BINARY_DIR}/include/forge/version.hpp"

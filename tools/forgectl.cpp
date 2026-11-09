@@ -6,13 +6,13 @@
 //   forgectl -e tcp://board:5557 call capture seconds=2
 //   forgectl -e tcp://board:5557 watch            # events: state, alarms, log, audit, health
 //   forgectl -e tcp://board:5557 trace -s 5 -o trace.json
-//   forgectl -e tcp://board:5557 tmtc                    # every command, with its number
-//   forgectl -e tcp://board:5557 tmtc history '{"count": 3}'   # any command, in JSON
+//   forgectl -e tcp://board:5557 command                 # every command, with its number
+//   forgectl -e tcp://board:5557 command history '{"count": 3}'   # any command, in JSON
 //   forgectl -e tcp://board:5557 stream spectrum -n 5    # messages of a stream, in JSON
 //   forgectl -e http://board:8080 state           # the same commands over HTTP (JSON)
 //
 // Endpoint: tcp://host:port ([forge].control, c2 frames) or http://host:port
-// (/forge/api/tmtc). FORGE_ENDPOINT and FORGE_TOKEN may be set instead of -e / --token.
+// (/forge/api/commands). FORGE_ENDPOINT and FORGE_TOKEN may be set instead of -e / --token.
 
 #include <forge/log.hpp>
 #include <forge/messages.forge.hpp>
@@ -70,7 +70,7 @@ public:
         }
         httplib::Headers h;
         if (!t_.token.empty()) h.emplace("Authorization", "Bearer " + t_.token);
-        auto res = http_->Post("/forge/api/tmtc/" + name, h, pb::to_json(req).dump(), "application/json");
+        auto res = http_->Post("/forge/api/commands/" + name, h, pb::to_json(req).dump(), "application/json");
         if (!res) throw std::runtime_error("no answer from " + t_.endpoint);
         const auto body = json::parse(res->body, nullptr, false);
         if (res->status != 200) {
@@ -216,7 +216,9 @@ int main(int argc, char** argv) {
     auto* watch = app.add_subcommand("watch", "Follow the events: state, alarms, log, audit, health, metrics");
     watch->add_option("topics", topics, "Topics (default: all but metrics)");
     watch->add_option("--events", events_endpoint, "Events endpoint (default: from info)");
-    auto* tmtc = app.add_subcommand("tmtc", "List the commands, or run one: tmtc <name|number> ['{json}'] (over HTTP)");
+    auto* tmtc = app.add_subcommand(
+        "command", "List the program's commands, or run one: command <name|number> ['{json}'] (over HTTP)");
+    tmtc->alias("tmtc");
     tmtc->add_option("name", id);
     tmtc->add_option("request", value, "The request as JSON (default {})");
     auto* stream = app.add_subcommand("stream", "Print the messages of a stream as they go out (a few per second)");
@@ -406,9 +408,9 @@ int main(int argc, char** argv) {
             http.set_read_timeout(std::chrono::milliseconds(t.timeout_ms));
             httplib::Headers h;
             if (!t.token.empty()) h.emplace("Authorization", "Bearer " + t.token);
-            auto res = id.empty()
-                           ? http.Get("/forge/api/tmtc", h)
-                           : http.Post("/forge/api/tmtc/" + id, h, value.empty() ? "{}" : value, "application/json");
+            auto res = id.empty() ? http.Get("/forge/api/commands", h)
+                                  : http.Post("/forge/api/commands/" + id, h, value.empty() ? "{}" : value,
+                                              "application/json");
             if (!res) throw std::runtime_error("no answer over HTTP");
             const auto body = json::parse(res->body, nullptr, false);
             if (res->status != 200) {

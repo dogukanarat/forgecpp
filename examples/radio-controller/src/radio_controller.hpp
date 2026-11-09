@@ -44,7 +44,7 @@ public:
 protected:
     void setup_cli(CLI::App& cli) override;
     void setup_config(forge::config::Schema& schema) override;
-    void setup_web(forge::web::Dashboard& ui) override;
+    void setup_controls(forge::Controls& ui) override;
     void on_start() override;
     void on_stop() override;
     void on_reload(const forge::Config& cfg) override;

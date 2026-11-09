@@ -103,7 +103,7 @@ void QamModem::setup_config(forge::config::Schema& s) {
     s.integer("modem.test_size", 1400, "Test packet size").range(8, 4000).unit("bytes");
 }
 
-void QamModem::setup_web(forge::web::Dashboard& ui) {
+void QamModem::setup_controls(forge::Controls& ui) {
     auto& link = ui.group("Link");
     link.value("radio", "Radio", [this] { return radio_status_; });
     link.toggle("tx_enabled", "Transmit", [this] { return tx_enabled_.load(); }, [this](bool on) { tx_enabled_ = on; });

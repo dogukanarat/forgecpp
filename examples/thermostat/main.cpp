@@ -96,7 +96,7 @@ protected:
     }
 
     // Controls shared by the custom pages (data-forge-*), /forge/ and the console.
-    void setup_web(forge::web::Dashboard& ui) override {
+    void setup_controls(forge::Controls& ui) override {
         ui.title("Thermostat");
         ui.link("Overview", "/");
         ui.link("Settings", "/settings.html");

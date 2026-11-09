@@ -15,7 +15,7 @@ touches your members there, so you need no locks for them.
 |---|---|---|
 | `on_start()`, `on_stop()`, `on_reload()`, hooks | main loop | yes |
 | `every()`, `after()` callbacks | main loop | yes |
-| controls: setters, getters, buttons, commands (`setup_web`) | main loop | yes |
+| controls: setters, getters, buttons, actions (`setup_controls`) | main loop | yes |
 | console and telnet commands (`setup_console`) | main loop | yes |
 | `background(work, then, on_error)`: `then`, `on_error` | main loop | yes |
 | `post(fn)`, `invoke(fn)`, `call(fn)`: `fn` | main loop | yes |
@@ -44,7 +44,7 @@ touches your members there, so you need no locks for them.
 
 ## What the framework checks for you
 
-- **The controls belong to the loop.** After `setup_web()`, a `web::Dashboard`
+- **The controls belong to the loop.** After `setup_controls()`, a `web::Dashboard`
   value method (`get`, `set`, `state`, `press`, `call`, ...) called from
   another thread throws `std::logic_error` naming the method, instead of
   racing.

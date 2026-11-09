@@ -136,9 +136,27 @@ bool Schema::covered_by_open_section(const std::string& path) const {
     return false;
 }
 
+Schema& Schema::alias(const std::string& old_path, const std::string& path) {
+    aliases_[old_path] = path;
+    return *this;
+}
+
+std::string Schema::aliased(const std::string& path) const {
+    const auto it = aliases_.find(path);
+    return it == aliases_.end() ? std::string() : it->second;
+}
+
 Schema::Result Schema::validate(const Config& cfg) const {
     Result r;
     const json all = cfg.to_json();
+    for (const auto& [old_path, path] : aliases_) {
+        if (!cfg.contains(old_path)) continue;
+        if (cfg.contains(path) && cfg.get<json>(path) != cfg.get<json>(old_path)) {
+            r.errors.push_back(std::format("{}: set together with {} (its new name) to another value", old_path, path));
+        } else {
+            r.warnings.push_back(std::format("{}: deprecated, use {}", old_path, path));
+        }
+    }
     for (const auto& [path, k] : keys_) {
         const auto v = cfg.get<json>(path);
         if (!v) {
@@ -168,7 +186,9 @@ Schema::Result Schema::validate(const Config& cfg) const {
     std::vector<std::string> present;
     leaves(all, "", present);
     for (const auto& path : present) {
-        if (keys_.count(path) || sections_.count(path) || covered_by_open_section(path)) continue;
+        if (keys_.count(path) || sections_.count(path) || aliases_.count(path) || covered_by_open_section(path)) {
+            continue;
+        }
         const auto parent = parent_of(path);
         if (parent.empty() || !sections_.count(parent)) continue;  // section nobody declared
         // Suggest the closest declared key of that section.
@@ -201,6 +221,13 @@ Schema::Result Schema::validate(const Config& cfg) const {
 }
 
 void Schema::apply_defaults(Config& cfg) const {
+    // Old names first: their value becomes the new key's, which then needs no default.
+    for (const auto& [old_path, path] : aliases_) {
+        if (!cfg.contains(old_path) || cfg.contains(path)) continue;
+        if (auto v = cfg.get<json>(old_path); v && v->is_primitive() && !v->is_null()) {
+            cfg.apply_override(path + "=" + v->dump());
+        }
+    }
     for (const auto& [path, k] : keys_) {
         if (k.type == Type::table || k.type == Type::any || k.default_value.is_null() || k.is_computed) continue;
         if (cfg.contains(path)) continue;
@@ -226,6 +253,10 @@ void Schema::apply_defaults(Config& cfg) const {
 }
 
 std::string Schema::help() const {
+    std::string deprecated;
+    for (const auto& [old_path, path] : aliases_) {
+        deprecated += std::format("# {} = ...   # deprecated: use {}\n", old_path, path);
+    }
     std::map<std::string, std::vector<const Key*>> by_section;
     for (const auto& [p, k] : keys_) by_section[parent_of(p)].push_back(&k);
     std::set<std::string> names;
@@ -263,6 +294,7 @@ std::string Schema::help() const {
                                "(" + note + ")");
         }
     }
+    if (!deprecated.empty()) out += "\n# Deprecated keys (still accepted)\n" + deprecated;
     return out;
 }
 

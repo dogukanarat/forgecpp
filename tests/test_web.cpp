@@ -257,7 +257,7 @@ TEST_CASE("application: web dashboard API end to end") {
         int presses = 0;
 
     protected:
-        void setup_web(forge::web::Dashboard& ui) override {
+        void setup_controls(forge::Controls& ui) override {
             auto& g = ui.group("Main");
             g.slider("level", "Level", level, 0, 10);
             g.toggle("on", "On", on);

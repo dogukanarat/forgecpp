@@ -195,7 +195,7 @@
   async function select(item, cmd) {
     document.querySelectorAll('.forge-tmtc-item').forEach(function (i) { i.classList.remove('selected'); });
     item.classList.add('selected');
-    const d = await forge.api('tmtc/' + encodeURIComponent(cmd.name));
+    const d = await forge.api('commands/' + encodeURIComponent(cmd.name));
     current = { cmd: cmd, form: d.request ? messageForm(d.request.fields) : null };
     $('forge-tmtc-empty').hidden = true;
     $('forge-tmtc-form').hidden = false;
@@ -226,7 +226,7 @@
     const box = $('forge-tmtc-out'), out = $('forge-tmtc-reply'), chip = $('forge-tmtc-status');
     const t0 = performance.now();
     try {
-      const reply = await forge.api('tmtc/' + encodeURIComponent(current.cmd.name),
+      const reply = await forge.api('commands/' + encodeURIComponent(current.cmd.name),
                                     { body: JSON.parse(editor.value || '{}') });
       box.classList.remove('error');
       out.innerHTML = reply === null || reply === '' ? '<span class="p">(empty reply)</span>'
@@ -247,7 +247,7 @@
     loaded = true;
     const box = $('forge-tmtc-list');
     try {
-      const list = await forge.api('tmtc');
+      const list = await forge.api('commands');
       // The application's own commands first (0x0100 and up), then forgecpp's, then the reports.
       const rank = function (c) { return c.push ? 2 : c.id >= 0x100 ? 0 : 1; };
       list.sort(function (a, b) { return rank(a) - rank(b) || a.id - b.id; });
