@@ -1,4 +1,5 @@
 #include "forge/console.hpp"
+#include "common.hpp"
 
 #include "forge/log.hpp"
 
@@ -38,16 +39,7 @@ void write_all(int fd, std::string_view text) {
     }
 }
 
-/// In raw mode the terminal does not turn '\n' into "\r\n": do it here.
-std::string crlf(std::string_view text) {
-    std::string out;
-    out.reserve(text.size() + 8);
-    for (char c : text) {
-        if (c == '\n') out += '\r';
-        out += c;
-    }
-    return out;
-}
+using detail::crlf;  // raw mode: '\n' does not become "\r\n" by itself
 
 // linenoise's callbacks are plain C functions without user data: they reach the
 // console that is reading input through this (one interactive console at a time).

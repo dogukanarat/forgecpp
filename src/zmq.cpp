@@ -1,4 +1,5 @@
 #include "forge/zmq.hpp"
+#include "common.hpp"
 
 #include "forge/log.hpp"
 #include "forge/trace.hpp"
@@ -80,14 +81,7 @@ std::atomic<std::shared_ptr<const std::string>>& source_holder() {
     return holder;
 }
 
-const std::string& host_name() {
-    static const std::string host = [] {
-        char buf[256] = {};
-        ::gethostname(buf, sizeof(buf) - 1);
-        return std::string(buf);
-    }();
-    return host;
-}
+using detail::host_name;
 
 void put_trace(forge_stream_header& h, const trace::Context& ctx) {
     if (!ctx.valid()) return;
@@ -108,11 +102,7 @@ trace::Context get_trace(const forge_stream_header& h) {
 // longer than a field is cut: a header must always go out.
 forge_stream_header make_header(std::string_view topic, const char* type) {
     forge_stream_header h{};
-    const auto copy = [](auto& dst, std::string_view src) {
-        const auto n = std::min(src.size(), sizeof(dst) - 1);
-        std::copy_n(src.data(), n, dst);
-        dst[n] = '\0';
-    };
+    const auto copy = [](auto& dst, std::string_view src) { pb::assign_truncated(dst, src); };
     copy(h.source, *source_holder().load(std::memory_order_acquire));
     copy(h.host, host_name());
     h.pid = static_cast<std::uint32_t>(::getpid());

@@ -13,12 +13,6 @@
 
 namespace forge::detail {
 
-std::string host_name() {
-    char buf[256] = {};
-    if (::gethostname(buf, sizeof(buf) - 1) != 0) return {};
-    return buf;
-}
-
 bool is_loopback(const std::string& host) { return host == "127.0.0.1" || host == "localhost" || host == "::1"; }
 
 Caller console_caller() {
@@ -115,11 +109,7 @@ void HubRegistration::start(const Config& cfg) {
         const auto c = app_.config();
         const auto& info = app_.info();
         forge_hub_app_registration r{};
-        const auto put = [](auto& dst, std::string_view src) {
-            const auto n = std::min(src.size(), sizeof(dst) - 1);
-            std::memcpy(dst, src.data(), n);
-            dst[n] = '\0';
-        };
+        const auto put = [](auto& dst, std::string_view src) { pb::assign_truncated(dst, src); };
         put(r.name, app_.id());
         put(r.instance, app_.instance());
         put(r.version, info.version);

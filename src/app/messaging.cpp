@@ -12,13 +12,6 @@
 namespace forge::detail {
 namespace {
 
-template <std::size_t N>
-void put(char (&dst)[N], std::string_view src) {
-    const auto n = std::min(src.size(), N - 1);
-    std::memcpy(dst, src.data(), n);
-    dst[n] = '\0';
-}
-
 // A command the server is too busy to run: a NACK, so the client knows at once.
 std::vector<std::string> refuse_busy(std::string_view request) {
     c2::Message m;
@@ -300,8 +293,8 @@ void Messaging::publish_state(const json& current) {
         auto it = last_state_.find(id);
         if (it != last_state_.end() && *it == value) continue;
         forge_state_report msg{};
-        put(msg.id, id);
-        put(msg.value, value.dump(-1, ' ', false, json::error_handler_t::replace));
+        pb::assign_truncated(msg.id, id);
+        pb::assign_truncated(msg.value, value.dump(-1, ' ', false, json::error_handler_t::replace));
         s->publish(msg);
     }
     last_state_ = current;

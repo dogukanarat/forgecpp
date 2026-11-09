@@ -17,12 +17,6 @@ namespace {
 
 // Text into a bounded field. These answers are listings for people
 // (messages.proto says so): a longer text is cut, not refused.
-template <std::size_t N>
-void put(char (&dst)[N], std::string_view src) {
-    const auto n = std::min(src.size(), N - 1);
-    std::memcpy(dst, src.data(), n);
-    dst[n] = '\0';
-}
 
 std::string text(const json& j) { return j.dump(-1, ' ', false, json::error_handler_t::replace); }
 
@@ -48,7 +42,7 @@ void put_typed(Reply& r, const json& v) {
         r.typed.number = v.get<double>();
     } else if (v.is_string() && v.get_ref<const std::string&>().size() < sizeof(r.typed.text)) {
         r.which_typed = 4;
-        put(r.typed.text, v.get_ref<const std::string&>());
+        pb::assign_truncated(r.typed.text, v.get_ref<const std::string&>());
     }
 }
 
@@ -85,12 +79,12 @@ forge_severity severity_of(Severity s) { return static_cast<forge_severity>(stat
 }  // namespace
 
 void fill(forge_alarm& out, const Alarm& a) {
-    put(out.id, a.id);
+    pb::assign_truncated(out.id, a.id);
     out.severity = severity_of(a.severity);
-    put(out.message, a.message);
+    pb::assign_truncated(out.message, a.message);
     out.active = a.active;
     out.acknowledged = a.acknowledged;
-    put(out.acknowledged_by, a.acknowledged_by);
+    pb::assign_truncated(out.acknowledged_by, a.acknowledged_by);
     out.count = a.count;
     out.raised_unix_ms = unix_ms(a.raised_at);
     out.last_unix_ms = unix_ms(a.last_at);
@@ -100,24 +94,24 @@ void fill(forge_alarm& out, const Alarm& a) {
 
 void fill(forge_log_record& out, const log::Record& r) {
     out.time_unix_ns = r.time_unix_ns;
-    put(out.level, log::to_string(r.level));
-    put(out.logger, r.logger);
-    put(out.message, r.message);
+    pb::assign_truncated(out.level, log::to_string(r.level));
+    pb::assign_truncated(out.logger, r.logger);
+    pb::assign_truncated(out.message, r.message);
     out.thread = r.thread;
     put_trace(out.trace, out.has_trace, r.trace);
 }
 
 void fill(forge_audit_record& out, const Audit::Record& r) {
     out.time_unix_ns = r.time_unix_ns;
-    put(out.channel, r.channel);
-    put(out.client, r.client);
-    put(out.user, r.user);
-    put(out.action, r.action);
-    put(out.target, r.target);
-    if (!r.old_value.is_null()) put(out.old_value, text(r.old_value));
-    if (!r.new_value.is_null()) put(out.new_value, text(r.new_value));
+    pb::assign_truncated(out.channel, r.channel);
+    pb::assign_truncated(out.client, r.client);
+    pb::assign_truncated(out.user, r.user);
+    pb::assign_truncated(out.action, r.action);
+    pb::assign_truncated(out.target, r.target);
+    if (!r.old_value.is_null()) pb::assign_truncated(out.old_value, text(r.old_value));
+    if (!r.new_value.is_null()) pb::assign_truncated(out.new_value, text(r.new_value));
     out.ok = r.ok;
-    put(out.error, r.error);
+    pb::assign_truncated(out.error, r.error);
     put_trace(out.trace, out.has_trace, r.trace);
 }
 
@@ -127,9 +121,9 @@ void fill(forge_health_reply& out, const Health::Report& h, std::size_t from) {
     for (std::size_t i = from; i < to; ++i) {
         const auto& c = h.components[i];
         auto& o = out.components[out.components_count++];
-        put(o.name, c.name);
+        pb::assign_truncated(o.name, c.name);
         o.state = static_cast<forge_health_state>(c.state);
-        put(o.message, c.message);
+        pb::assign_truncated(o.message, c.message);
         o.critical = c.critical;
         o.since_unix_ms = c.since_unix_ms;
     }
@@ -148,20 +142,20 @@ void register_builtin_commands(Application& app) {
 
     r.add<forge_info_request, forge_info_reply>(forge_msg_id_info, "info", [&app](const auto&, auto& rsp) {
         const auto& info = app.info();
-        put(rsp.name, app.id());
-        put(rsp.version, info.version);
-        put(rsp.description, info.description);
-        put(rsp.forgecpp, version_string);
+        pb::assign_truncated(rsp.name, app.id());
+        pb::assign_truncated(rsp.version, info.version);
+        pb::assign_truncated(rsp.description, info.description);
+        pb::assign_truncated(rsp.forgecpp, version_string);
         char host[64] = {};
         ::gethostname(host, sizeof(host) - 1);
-        put(rsp.host, host);
+        pb::assign_truncated(rsp.host, host);
         rsp.pid = static_cast<std::uint32_t>(::getpid());
         rsp.uptime_s = duration_cast<seconds>(app.uptime()).count();
         for (const auto& [name, url] : app.endpoints()) {
             if (rsp.endpoints_count == std::size(rsp.endpoints)) break;
             auto& e = rsp.endpoints[rsp.endpoints_count++];
-            put(e.name, name);
-            put(e.url, url);
+            pb::assign_truncated(e.name, name);
+            pb::assign_truncated(e.url, url);
         }
         return Status();
     });
@@ -170,7 +164,7 @@ void register_builtin_commands(Application& app) {
         forge_msg_id_controls, "controls", [&app, &control](const auto&, auto& rsp, std::uint32_t& more) {
         if (!app.dashboard()) return Status();
         const auto schema = app.invoke_for(app.request_timeout(), [&] { return app.dashboard()->schema(); });
-        put(rsp.title, schema.value("title", std::string()));
+        pb::assign_truncated(rsp.title, schema.value("title", std::string()));
         std::vector<std::pair<std::string, json>> controls;  // group, control
         for (const auto& g : schema["groups"]) {
             for (const auto& c : g["controls"]) controls.emplace_back(g.value("title", std::string()), c);
@@ -178,13 +172,13 @@ void register_builtin_commands(Application& app) {
         page(controls, std::size(rsp.controls), more, [&](const std::pair<std::string, json>& item, std::size_t) {
             const auto& [group, c] = item;
             auto& p = rsp.controls[rsp.controls_count++];
-            put(p.id, c.value("id", std::string()));
-            put(p.group, group);
-            put(p.label, c.value("label", std::string()));
-            put(p.kind, c.value("kind", std::string()));
-            if (c.contains("value")) put(p.value, text(c["value"]));
-            put(p.unit, c.value("unit", std::string()));
-            put(p.help, c.value("help", std::string()));
+            pb::assign_truncated(p.id, c.value("id", std::string()));
+            pb::assign_truncated(p.group, group);
+            pb::assign_truncated(p.label, c.value("label", std::string()));
+            pb::assign_truncated(p.kind, c.value("kind", std::string()));
+            if (c.contains("value")) pb::assign_truncated(p.value, text(c["value"]));
+            pb::assign_truncated(p.unit, c.value("unit", std::string()));
+            pb::assign_truncated(p.help, c.value("help", std::string()));
             p.has_range = c.contains("min") || c.contains("max");
             p.min = c.value("min", 0.0);
             p.max = c.value("max", 0.0);
@@ -192,26 +186,26 @@ void register_builtin_commands(Application& app) {
             p.precision = c.value("precision", -1);
             for (const auto& o : c.value("options", json::array())) {
                 if (p.options_count == std::size(p.options)) break;
-                put(p.options[p.options_count++], o.get<std::string>());
+                pb::assign_truncated(p.options[p.options_count++], o.get<std::string>());
             }
             p.readonly = c.value("readonly", false) || c.value("kind", std::string()) == "value";
-            put(p.role, c.value("role", std::string("operator")));
+            pb::assign_truncated(p.role, c.value("role", std::string("operator")));
             p.persistent = c.value("persist", false);
-            put(p.lease_holder, control.lease_holder(c.value("id", std::string())));
+            pb::assign_truncated(p.lease_holder, control.lease_holder(c.value("id", std::string())));
         });
         return Status();
     });
 
     r.add<forge_get_request, forge_get_reply>(forge_msg_id_get, "get", [&control](const auto& req, auto& rsp) {
         const auto v = control.get(req.id, current_caller());
-        put(rsp.value, text(v));
+        pb::assign_truncated(rsp.value, text(v));
         put_typed(rsp, v);
         return Status();
     });
 
     r.add<forge_set_request, forge_set_reply>(forge_msg_id_set, "set", [&control](const auto& req, auto& rsp) {
         const auto v = control.set(req.id, value_of(req), current_caller());
-        put(rsp.value, text(v));
+        pb::assign_truncated(rsp.value, text(v));
         put_typed(rsp, v);
         return Status();
     });
@@ -228,7 +222,7 @@ void register_builtin_commands(Application& app) {
         if (result.size() >= sizeof(rsp.result)) {
             return Status::error(module_id::tmtc, EMSGSIZE, "the result does not fit the reply");
         }
-        put(rsp.result, result);
+        pb::assign_truncated(rsp.result, result);
         return Status();
     });
 
@@ -242,20 +236,20 @@ void register_builtin_commands(Application& app) {
         }
         page(commands, std::size(rsp.commands), more, [&](const json& c, std::size_t) {
             auto& p = rsp.commands[rsp.commands_count++];
-            put(p.id, c.value("id", std::string()));
-            put(p.label, c.value("label", std::string()));
-            put(p.help, c.value("help", std::string()));
-            put(p.role, c.value("role", std::string("operator")));
+            pb::assign_truncated(p.id, c.value("id", std::string()));
+            pb::assign_truncated(p.label, c.value("label", std::string()));
+            pb::assign_truncated(p.help, c.value("help", std::string()));
+            pb::assign_truncated(p.role, c.value("role", std::string("operator")));
             for (const auto& pa : c.value("params", json::array())) {
                 if (p.params_count == std::size(p.params)) break;
                 auto& q = p.params[p.params_count++];
-                put(q.name, pa.value("name", std::string()));
-                put(q.type, pa.value("type", std::string()));
-                put(q.help, pa.value("help", std::string()));
-                if (pa.contains("default")) put(q.default_value, text(pa["default"]));
+                pb::assign_truncated(q.name, pa.value("name", std::string()));
+                pb::assign_truncated(q.type, pa.value("type", std::string()));
+                pb::assign_truncated(q.help, pa.value("help", std::string()));
+                if (pa.contains("default")) pb::assign_truncated(q.default_value, text(pa["default"]));
                 for (const auto& o : pa.value("options", json::array())) {
                     if (q.options_count == std::size(q.options)) break;
-                    put(q.options[q.options_count++], o.get<std::string>());
+                    pb::assign_truncated(q.options[q.options_count++], o.get<std::string>());
                 }
                 q.required = !pa.contains("default");
             }
@@ -288,10 +282,10 @@ void register_builtin_commands(Application& app) {
         rsp.time_unix_ns = snap.time_unix_ns;
         page(snap.metrics, std::size(rsp.metrics), more, [&](const metrics::Sample& m, std::size_t) {
             auto& o = rsp.metrics[rsp.metrics_count++];
-            put(o.name, m.name);
-            put(o.help, m.help);
+            pb::assign_truncated(o.name, m.name);
+            pb::assign_truncated(o.help, m.help);
             o.type = static_cast<forge_metric_type>(static_cast<int>(m.type) + 1);
-            put(o.unit, m.unit);
+            pb::assign_truncated(o.unit, m.unit);
             o.value = m.value;
             o.bounds_count = static_cast<pb_size_t>(std::min(m.bounds.size(), std::size(o.bounds)));
             std::copy_n(m.bounds.begin(), o.bounds_count, o.bounds);
@@ -302,8 +296,8 @@ void register_builtin_commands(Application& app) {
             for (const auto& [k, v] : m.labels) {
                 if (o.labels_count == std::size(o.labels)) break;
                 auto& l = o.labels[o.labels_count++];
-                put(l.key, k);
-                put(l.value, v);
+                pb::assign_truncated(l.key, k);
+                pb::assign_truncated(l.value, v);
             }
         });
         return Status();
@@ -342,11 +336,11 @@ void register_builtin_commands(Application& app) {
                                                             [&app](const auto&, auto& rsp, std::uint32_t& more) {
         page(app.stream_list(), std::size(rsp.streams), more, [&](const zmq::StreamInfo& i, std::size_t) {
             auto& o = rsp.streams[rsp.streams_count++];
-            put(o.name, i.name);
-            put(o.endpoint, i.endpoint);
-            put(o.topic, i.topic);
-            put(o.type, i.type);
-            put(o.policy, i.policy);
+            pb::assign_truncated(o.name, i.name);
+            pb::assign_truncated(o.endpoint, i.endpoint);
+            pb::assign_truncated(o.topic, i.topic);
+            pb::assign_truncated(o.type, i.type);
+            pb::assign_truncated(o.policy, i.policy);
             o.max_rate_hz = i.max_rate_hz;
             o.subscribers = i.subscribers;
             o.sent = i.sent;

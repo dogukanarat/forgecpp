@@ -12,6 +12,9 @@
 //   HttpFrontend     HTTP server, framework routes, web events and logs ([http], [web])
 
 #include "forge/application.hpp"
+#include "forge/thread_pool.hpp"
+
+#include "../common.hpp"
 #include "forge/console.hpp"
 #include "forge/http.hpp"
 #include "forge/hub.hpp"
@@ -33,7 +36,6 @@ namespace forge::detail {
 
 class WebLog;
 
-std::string host_name();
 bool is_loopback(const std::string& host);
 /// Caller of a console command: the local terminal (admin) or a telnet session.
 Caller console_caller();

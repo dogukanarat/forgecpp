@@ -1,4 +1,5 @@
 #include "forge/http.hpp"
+#include "common.hpp"
 
 #include "forge/base64.hpp"
 #include "forge/log.hpp"
@@ -272,14 +273,7 @@ httplib::Server::HandlerResponse Server::pre_route(const Request& req, Response&
     return R::Unhandled;
 }
 
-namespace {
-bool constant_time_equal(std::string_view a, std::string_view b) {
-    if (a.size() != b.size()) return false;
-    unsigned char diff = 0;
-    for (std::size_t i = 0; i < a.size(); ++i) diff |= static_cast<unsigned char>(a[i] ^ b[i]);
-    return diff == 0;
-}
-}  // namespace
+using detail::constant_time_equal;
 
 bool Server::authorized(const Request& req) const {
     std::lock_guard lock(mutex_);

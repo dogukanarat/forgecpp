@@ -4,8 +4,10 @@
 
 #include "services.hpp"
 
+#include "forge/channel.hpp"
 #include "forge/crash.hpp"
 #include "forge/rt.hpp"
+#include "forge/thread_pool.hpp"
 #include "forge/trace.hpp"
 
 #include <sys/resource.h>
@@ -56,7 +58,7 @@ void Application::start_observability(const Config& cfg) {
     auto& m = metrics::registry();
     m.gauge_fn("process.uptime_seconds", [this] { return std::chrono::duration<double>(uptime()).count(); }, "Uptime",
                "s");
-    m.gauge_fn("forge.loop.queued", [this] { return static_cast<double>(tasks_.size_approx()); },
+    m.gauge_fn("forge.loop.queued", [this] { return static_cast<double>(tasks_->size_approx()); },
                "Tasks waiting for the main loop ([forge].max_pending_tasks bounds it)");
     m.gauge_fn("process.rss_bytes", [] {
         long pages = 0, rss = 0;

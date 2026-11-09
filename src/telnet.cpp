@@ -1,4 +1,5 @@
 #include "forge/telnet.hpp"
+#include "common.hpp"
 
 #include "forge/console.hpp"
 #include "forge/log.hpp"
@@ -25,15 +26,7 @@ namespace {
 constexpr unsigned char IAC = 255, DONT = 254, DO = 253, WONT = 252, WILL = 251, SB = 250, SE = 240, IP = 244,
                         ECHO_OPT = 1;
 
-std::string crlf(std::string_view text) {
-    std::string out;
-    out.reserve(text.size() + 16);
-    for (char c : text) {
-        if (c == '\n') out += '\r';
-        out += c;
-    }
-    return out;
-}
+using detail::crlf;
 
 }  // namespace
 

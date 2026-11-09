@@ -1,5 +1,6 @@
 #pragma once
-// TOML configuration built on toml++, with JSON export via nlohmann/json.
+// TOML configuration. The parser (toml++) stays inside the library: this
+// header only needs nlohmann/json, which is forgecpp's JSON type everywhere.
 //
 //   auto cfg = forge::Config::load_file("/etc/mydaemon/mydaemon.toml");
 //   int port      = cfg.value<int>("http.port");           // declared key: default from the schema
@@ -9,10 +10,11 @@
 //   cfg.apply_override("log.level=debug");   // e.g. from `-D log.level=debug`
 
 #include <nlohmann/json.hpp>
-#include <toml++/toml.hpp>
 
 #include <cstdint>
 #include <filesystem>
+#include <limits>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -36,25 +38,35 @@ struct is_vector<std::vector<T, A>> : std::true_type {};
 
 class Config {
 public:
-    Config() = default;
-    explicit Config(toml::table table, std::filesystem::path source = {});
+    struct Impl;  ///< the parsed table (toml++), defined in the library
+
+    Config();
+    Config(const Config& other);
+    Config(Config&& other) noexcept;
+    Config& operator=(const Config& other);
+    Config& operator=(Config&& other) noexcept;
+    ~Config();
 
     /// Parse a TOML file. Throws ConfigError with file:line:column on error.
     static Config load_file(const std::filesystem::path& path);
     /// Parse TOML text. Throws ConfigError on error.
     static Config parse(std::string_view text, std::string_view source_name = "<string>");
 
-    bool empty() const { return table_.empty(); }
+    bool empty() const;
     bool contains(std::string_view path) const;
 
     /// Value at a dotted path ("a.b.c", "servers[0].host").
     /// Returns std::nullopt if missing, throws ConfigError on type mismatch.
     template <class T>
-    std::optional<T> get(std::string_view path) const;
+    [[nodiscard]] std::optional<T> get(std::string_view path) const {
+        auto v = node(path);
+        if (!v) return std::nullopt;
+        return convert<T>(path, *v);
+    }
 
     /// Value at path or `fallback` when missing.
     template <class T>
-    T get_or(std::string_view path, T fallback) const {
+    [[nodiscard]] T get_or(std::string_view path, T fallback) const {
         auto v = get<T>(path);
         return v ? std::move(*v) : std::move(fallback);
     }
@@ -63,13 +75,13 @@ public:
     /// forge::Application fills in (config::Schema::apply_defaults). Throws
     /// ConfigError when missing (an undeclared key: use get_or).
     template <class T>
-    T value(std::string_view path) const {
+    [[nodiscard]] T value(std::string_view path) const {
         return require<T>(path);
     }
 
     /// Value at path; throws ConfigError when missing.
     template <class T>
-    T require(std::string_view path) const {
+    [[nodiscard]] T require(std::string_view path) const {
         auto v = get<T>(path);
         if (!v) throw ConfigError("missing required config key '" + std::string(path) + "'");
         return std::move(*v);
@@ -81,13 +93,9 @@ public:
     /// Keys of the top level table.
     std::vector<std::string> keys() const;
 
-    /// Set a value, creating intermediate tables ("a.b.c" only, no indices).
-    template <class T>
-    void set(std::string_view path, T&& value) {
-        toml::table holder;
-        holder.insert_or_assign("v", std::forward<T>(value));
-        set_node(path, std::move(holder));
-    }
+    /// Set a value (any JSON value: a number, text, a list, a table), creating
+    /// intermediate tables ("a.b.c" only, no indices).
+    void set(std::string_view path, const nlohmann::json& value);
 
     /// Apply "key.path=value". The value is parsed as a TOML value
     /// (42, 1.5, true, "text", [1,2]); anything unparsable is taken as a string.
@@ -99,70 +107,61 @@ public:
     nlohmann::json to_json() const;
     std::string to_toml() const;
 
-    const toml::table& table() const { return table_; }
-    const std::filesystem::path& source() const { return source_; }
+    const std::filesystem::path& source() const;
 
 private:
-    void set_node(std::string_view path, toml::table holder);  // moves holder["v"]
-    [[noreturn]] static void type_error(std::string_view path, std::string_view expected, const toml::node& node);
+    explicit Config(std::unique_ptr<Impl> impl);
+
+    /// The value at `path` as JSON (nullopt: no such key).
+    std::optional<nlohmann::json> node(std::string_view path) const;
+    [[noreturn]] static void type_error(std::string_view path, std::string_view expected, const nlohmann::json& got);
 
     template <class T>
-    static std::optional<T> convert(std::string_view path, const toml::node& node);
+    static T convert(std::string_view path, const nlohmann::json& v);
 
-    toml::table table_;
-    std::filesystem::path source_;
+    std::unique_ptr<Impl> impl_;
 };
 
 // ---------------------------------------------------------------------------
 
-nlohmann::json toml_to_json(const toml::node& node);
-
 template <class T>
-std::optional<T> Config::convert(std::string_view path, const toml::node& node) {
+T Config::convert(std::string_view path, const nlohmann::json& v) {
     if constexpr (std::is_same_v<T, nlohmann::json>) {
-        return toml_to_json(node);
-    } else if constexpr (std::is_same_v<T, Config>) {
-        if (auto t = node.as_table()) return Config(*t);
-        type_error(path, "table", node);
+        return v;
     } else if constexpr (detail::is_vector<T>::value) {
         using U = typename T::value_type;
-        auto arr = node.as_array();
-        if (!arr) type_error(path, "array", node);
+        if (!v.is_array()) type_error(path, "array", v);
         T out;
-        out.reserve(arr->size());
-        for (std::size_t i = 0; i < arr->size(); ++i) {
-            const std::string elem_path = std::string(path) + "[" + std::to_string(i) + "]";
-            out.push_back(*convert<U>(elem_path, *arr->get(i)));
+        out.reserve(v.size());
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            out.push_back(convert<U>(std::string(path) + "[" + std::to_string(i) + "]", v[i]));
         }
         return out;
     } else if constexpr (std::is_same_v<T, std::filesystem::path>) {
-        if (auto s = node.value<std::string>()) return std::filesystem::path(*s);
-        type_error(path, "string", node);
+        if (!v.is_string()) type_error(path, "string", v);
+        return std::filesystem::path(v.get<std::string>());
     } else if constexpr (std::is_same_v<T, bool>) {
-        if (node.is_boolean()) return node.as_boolean()->get();
-        type_error(path, "boolean", node);
+        if (!v.is_boolean()) type_error(path, "boolean", v);
+        return v.get<bool>();
     } else if constexpr (std::is_integral_v<T>) {
-        if (!node.is_integer()) type_error(path, "integer", node);
-        if (auto v = node.value<T>()) return v;
-        throw ConfigError("config key '" + std::string(path) + "' is out of range");
+        if (!v.is_number_integer()) type_error(path, "integer", v);
+        const auto wide = v.get<std::int64_t>();
+        if (wide < static_cast<std::int64_t>(std::numeric_limits<T>::min()) ||
+            (std::is_signed_v<T> ? wide > static_cast<std::int64_t>(std::numeric_limits<T>::max())
+                                 : static_cast<std::uint64_t>(wide) > std::numeric_limits<T>::max())) {
+            throw ConfigError("config key '" + std::string(path) + "' is out of range");
+        }
+        return static_cast<T>(wide);
     } else if constexpr (std::is_floating_point_v<T>) {
-        if (!node.is_number()) type_error(path, "number", node);
-        return node.value<T>();
+        if (!v.is_number()) type_error(path, "number", v);
+        return static_cast<T>(v.get<double>());
     } else if constexpr (std::is_same_v<T, std::string>) {
-        if (!node.is_string()) type_error(path, "string", node);
-        return node.as_string()->get();
+        if (!v.is_string()) type_error(path, "string", v);
+        return v.get<std::string>();
     } else {
-        // Anything toml++ knows how to read (dates, times, ...).
-        if (auto v = node.value<T>()) return v;
-        type_error(path, "compatible value", node);
+        // Anything JSON converts to (dates and times are strings).
+        return v.get<T>();
     }
-}
-
-template <class T>
-std::optional<T> Config::get(std::string_view path) const {
-    auto view = table_.at_path(path);
-    if (!view) return std::nullopt;
-    return convert<T>(path, *view.node());
 }
 
 }  // namespace forge

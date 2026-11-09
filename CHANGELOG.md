@@ -232,6 +232,25 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   the armhf build, the systemd job and the API reference run on pull
   requests, weekly and by hand.
 
+### Changed (headers)
+
+- `forge/config.hpp` no longer includes toml++: the parser is behind
+  `Config`'s implementation (`Config` copies and moves as before;
+  `Config::set()` takes any JSON value, `table()` is gone, nothing used it).
+  `forge/application.hpp` no longer includes the thread pool or the channel
+  (`forge::ThreadPool` is a class deriving from BS::thread_pool, so it can be
+  named without its header; the main loop's queue is behind a pointer), and
+  the waiting code of `invoke()` moved into the library (`invoke_erased`).
+  A translation unit that includes `forge/application.hpp` parses about a
+  third less; `forge/forge.hpp` still brings everything, by design.
+- `Config::get/get_or/value/require`, `Channel::try_pop/pop/pop_for`,
+  `Scheduler::pending/next_due` are `[[nodiscard]]`.
+- One copy of the small helpers the library repeated (`pb::assign_truncated()`
+  for a text cut to its field; `crlf`, `constant_time_equal`, `host_name` in
+  `src/common.hpp`).
+- `docs/API.md` says what each header exposes and why hidden visibility waits
+  for the facade work.
+
 ### Changed (build, packaging and the Yocto layer)
 
 - `forgecpp::testing` is an INTERFACE target that carries `testing_main.cpp`

@@ -39,9 +39,9 @@ TEST_CASE("config: typed access with defaults") {
 
 TEST_CASE("config: errors") {
     const auto cfg = Config::parse("port = \"eighty\"\nsmall = 300");
-    CHECK_THROWS_AS(cfg.get<int>("port"), ConfigError);
-    CHECK_THROWS_AS(cfg.require<int>("missing"), ConfigError);
-    CHECK_THROWS_AS(cfg.get<std::int8_t>("small"), ConfigError);  // out of range
+    CHECK_THROWS_AS((void)cfg.get<int>("port"), ConfigError);
+    CHECK_THROWS_AS((void)cfg.require<int>("missing"), ConfigError);
+    CHECK_THROWS_AS((void)cfg.get<std::int8_t>("small"), ConfigError);  // out of range
     CHECK_THROWS_AS(Config::parse("this is = not toml ="), ConfigError);
     CHECK_THROWS_AS(Config::load_file("/definitely/not/here.toml"), ConfigError);
 }
@@ -107,7 +107,7 @@ TEST_CASE("config schema: defaults are filled in from the declaration") {
     CHECK(cfg.value<double>("radio.gain") == 3.0);
     CHECK_FALSE(cfg.contains("console.color"));            // computed at run time
     CHECK_FALSE(cfg.contains("auth.users"));
-    CHECK_THROWS_AS(cfg.value<int>("undeclared"), ConfigError);
+    CHECK_THROWS_AS((void)cfg.value<int>("undeclared"), ConfigError);
     CHECK(s.validate(cfg).ok());
 
     // A parent that is not a table is not replaced.

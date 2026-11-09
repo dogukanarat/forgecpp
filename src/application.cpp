@@ -2,6 +2,7 @@
 
 #include "app/services.hpp"
 
+#include "forge/channel.hpp"
 #include "forge/console.hpp"
 #include "forge/control.hpp"
 #include "forge/crash.hpp"
@@ -9,6 +10,7 @@
 #include "forge/hub.hpp"
 #include "forge/rt.hpp"
 #include "forge/systemd.hpp"
+#include "forge/thread_pool.hpp"
 #include "forge/trace.hpp"
 #include "forge/version.hpp"
 #include "forge/web.hpp"
@@ -23,6 +25,7 @@
 #include <unistd.h>
 #include <algorithm>
 #include <cctype>
+#include <condition_variable>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +34,20 @@
 namespace forge {
 
 namespace detail {
+
+/// An exception on its way from the main loop to a thread waiting in
+/// Application::invoke(): described here, thrown anew on the waiting thread.
+struct LoopError {
+    int kind = 0;  ///< 0 = no error
+    int status = 0;
+    std::string message;
+    json body;
+    explicit operator bool() const { return kind != 0; }
+    /// Describe the exception being handled (call inside a catch block).
+    void capture() noexcept;
+    void set_stopped();
+    [[noreturn]] void rethrow() const;
+};
 
 namespace {
 enum LoopErrorKind { kNone, kHttp, kConfig, kInvalidArgument, kOutOfRange, kRuntime, kStopped };
@@ -93,7 +110,7 @@ sigset_t handled_signal_set() {
 }  // namespace
 
 Application::Application(AppInfo info, const std::string& installed_config)
-    : info_(std::move(info)), cli_(std::make_unique<CLI::App>()) {
+    : info_(std::move(info)), cli_(std::make_unique<CLI::App>()), tasks_(std::make_unique<Channel<Task>>(256)) {
     if (info_.name.empty()) info_.name = "app";
     if (info_.config_paths.empty()) {
         info_.config_paths.emplace_back(info_.name + ".toml");
@@ -151,11 +168,77 @@ void Application::stop(int exit_code) {
     if (!stop_requested_.exchange(true)) {
         exit_code_ = exit_code;
     }
-    tasks_.push([] {});  // wake the main loop
+    tasks_->push([] {});  // wake the main loop
 }
 
 void Application::background_failed(const char* what) {
     if (logger_) logger_->error("background task failed: {}", what);
+}
+
+void Application::run_in_pool(std::function<void()> fn) { pool().detach_task(std::move(fn)); }
+
+void Application::invoke_erased(std::optional<std::chrono::steady_clock::time_point> deadline,
+                                const std::function<void()>& run) {
+    enum class Phase { pending, running, done, abandoned };
+    struct Waiter {
+        std::mutex mutex;
+        std::condition_variable cv;
+        Phase phase = Phase::pending;
+        detail::LoopError error;
+    };
+    // Finishes the wait even when the task is discarded (application stopping).
+    struct Guard {
+        explicit Guard(std::shared_ptr<Waiter> waiter) : w(std::move(waiter)) {}
+        Guard(const Guard&) = delete;
+        Guard& operator=(const Guard&) = delete;
+        std::shared_ptr<Waiter> w;
+        ~Guard() {
+            bool waiting;
+            {
+                std::lock_guard lock(w->mutex);
+                waiting = w->phase == Phase::pending || w->phase == Phase::running;
+                if (waiting) {
+                    w->error.set_stopped();
+                    w->phase = Phase::done;
+                }
+            }
+            if (waiting) w->cv.notify_all();
+        }
+    };
+    auto w = std::make_shared<Waiter>();
+    auto guard = std::make_shared<Guard>(w);
+    // `run` refers to the caller's frame: it is only called while the caller
+    // waits (phase running), never after the caller gave up (abandoned).
+    const bool posted = post([w, &run, guard] {
+        {
+            std::lock_guard lock(w->mutex);
+            if (w->phase == Phase::abandoned) return;  // the caller gave up: do not run
+            w->phase = Phase::running;
+        }
+        detail::LoopError error;
+        try {
+            run();
+        } catch (...) {
+            error.capture();
+        }
+        {
+            std::lock_guard lock(w->mutex);
+            w->error = std::move(error);
+            w->phase = Phase::done;
+        }
+        w->cv.notify_all();
+    });
+    guard.reset();
+    if (!posted) loop_busy();  // the queue is full: nothing was queued, nothing to wait for
+    std::unique_lock lock(w->mutex);
+    const auto finished = [&] { return w->phase == Phase::done; };
+    if (deadline && !w->cv.wait_until(lock, *deadline, finished) && w->phase == Phase::pending) {
+        w->phase = Phase::abandoned;
+        lock.unlock();
+        loop_busy();
+    }
+    w->cv.wait(lock, finished);
+    if (w->error) w->error.rethrow();
 }
 
 void Application::loop_busy() const {
@@ -184,7 +267,7 @@ bool Application::post(Task task) {
         "forge.loop.dropped", "Tasks refused because the main loop's queue was full ([loop].max_pending_tasks)");
     // Bounded: a loop that is stuck must not let the producers fill the memory.
     const auto limit = static_cast<std::size_t>(std::max(max_pending_tasks_.load(std::memory_order_relaxed), 1));
-    if (tasks_.size_approx() >= limit) {
+    if (tasks_->size_approx() >= limit) {
         dropped.inc();
         static std::atomic<std::int64_t> last_warning{0};
         const auto now_s =
@@ -198,7 +281,7 @@ bool Application::post(Task task) {
         }
         return false;
     }
-    return tasks_.push([this, t = std::move(task), queued = std::chrono::steady_clock::now()] {
+    return tasks_->push([this, t = std::move(task), queued = std::chrono::steady_clock::now()] {
         const auto start = std::chrono::steady_clock::now();
         lag.observe(std::chrono::duration<double>(start - queued).count());
         FORGE_TRACE_SCOPE("loop.task", "forge");
@@ -572,10 +655,10 @@ void Application::drain_while(const std::function<void()>& blocking) {
             if (logger_) logger_->error("shutdown step failed: {}", e.what());
         }
         done = true;
-        tasks_.push([] {});
+        tasks_->push([] {});
     });
     while (!done.load()) {
-        auto task = tasks_.pop_for(std::chrono::milliseconds(50));
+        auto task = tasks_->pop_for(std::chrono::milliseconds(50));
         if (!task || !*task) continue;
         try {
             (*task)();
@@ -591,7 +674,7 @@ void Application::drain_while(const std::function<void()>& blocking) {
 void Application::main_loop() {
     while (!stopping()) {
         // stop() pushes a task, so the wait only ends when there is something to do.
-        auto task = tasks_.pop_for(std::chrono::seconds(5));
+        auto task = tasks_->pop_for(std::chrono::seconds(5));
         if (!task || !*task) continue;
         try {
             (*task)();
@@ -694,7 +777,7 @@ void Application::shutdown() {
     pthread_sigmask(SIG_SETMASK, &saved_signal_mask_, nullptr);  // as run() found it
     // Tasks that never ran: dropped now, so a thread waiting on a call() future
     // gets std::future_error (broken promise) instead of waiting for ever.
-    while (tasks_.try_pop()) {
+    while (tasks_->try_pop()) {
     }
 
     hub_->reset();

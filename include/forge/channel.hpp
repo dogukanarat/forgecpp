@@ -47,7 +47,7 @@ public:
     }
 
     /// Non-blocking pop.
-    std::optional<T> try_pop() {
+    [[nodiscard]] std::optional<T> try_pop() {
         T item;
         if (queue_.try_dequeue(item)) return std::optional<T>(std::move(item));
         return std::nullopt;
@@ -55,7 +55,7 @@ public:
 
     /// Wait at most `timeout` for an item.
     template <class Rep, class Period>
-    std::optional<T> pop_for(std::chrono::duration<Rep, Period> timeout) {
+    [[nodiscard]] std::optional<T> pop_for(std::chrono::duration<Rep, Period> timeout) {
         T item;
         if (queue_.wait_dequeue_timed(item, timeout)) return std::optional<T>(std::move(item));
         return std::nullopt;
@@ -63,7 +63,7 @@ public:
 
     /// Block until an item is available. Returns std::nullopt once the
     /// channel is closed *and* drained.
-    std::optional<T> pop() {
+    [[nodiscard]] std::optional<T> pop() {
         T item;
         for (;;) {
             if (queue_.wait_dequeue_timed(item, close_poll_interval)) {

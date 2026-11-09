@@ -58,7 +58,7 @@ public:
     bool cancel(Id id);
     void cancel_all();
 
-    std::size_t pending() const;
+    [[nodiscard]] std::size_t pending() const;
 
     /// Current time of this scheduler (steady_clock, or the manual clock).
     Clock::time_point now() const;
@@ -68,7 +68,7 @@ public:
     /// executor). Returns the number of tasks run.
     std::size_t advance(Clock::duration d);
     /// When the next pending task is due (nullopt: none).
-    std::optional<Clock::time_point> next_due() const;
+    [[nodiscard]] std::optional<Clock::time_point> next_due() const;
 
     /// Stop the timer thread. Pending tasks are discarded.
     void stop();

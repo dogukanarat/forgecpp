@@ -48,6 +48,25 @@ forgecpp uses semantic versions (`CHANGELOG.md`).
 
 Until 1.0 the record covers exported functions; changes to class layouts,
 inline functions and templates are caught by the examples and tests building,
-not by a binary comparison. For 1.0: hidden visibility for everything not
-public (smaller symbol table, faster loading), and an ABI comparison of the
-headers (libabigail) in CI.
+not by a binary comparison.
+
+**What the headers expose.** `forge/application.hpp` no longer parses toml++
+(the parser is behind `Config`'s implementation), BS::thread_pool or
+moodycamel (`ThreadPool` is a class, `Channel` is forward-declared); the
+main-loop waiting code is in the library (`invoke_erased`). The headers that
+still carry a third-party library do so on purpose, and say so at the top:
+`http.hpp` (cpp-httplib's `Request`/`Response` are the handler types),
+`zmq.hpp` (cppzmq), `channel.hpp` / `buffer_pool.hpp` (moodycamel),
+`thread_pool.hpp` (BS), `log_rt.hpp` (quill's macros), `json.hpp` (nlohmann,
+forgecpp's JSON type everywhere), `pb.hpp` (nanopb's descriptors).
+
+**Why the library still exports everything.** Hidden visibility
+(`-fvisibility=hidden` with an export macro) is the 1.0 step, and it is not
+taken yet for a reason: the header-only libraries above keep state in
+templates (quill's frontend, moodycamel's thread registry) that the
+application and `libforgecpp.so` must share; with hidden visibility each side
+gets its own copy, and the two logging frontends or queue registries silently
+disagree. The step therefore follows the one that takes those libraries out
+of the public headers (a `Logger`-style facade for the pool and the channel),
+after which an ABI comparison of the headers (libabigail's `abidiff` against
+the previous release's `.so`) joins `tools/check.sh`.

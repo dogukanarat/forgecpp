@@ -132,6 +132,15 @@ Status assign(char (&dst)[N], std::string_view src) {
     return {};
 }
 
+/// Copy as much of `src` as fits (the rest is cut), always with the terminator:
+/// for a text that must go out whatever its length (a header, a name shown).
+template <std::size_t N>
+void assign_truncated(char (&dst)[N], std::string_view src) {
+    const auto n = std::min(src.size(), N - 1);
+    std::memcpy(dst, src.data(), n);
+    dst[n] = '\0';
+}
+
 /// Copy values into a bounded repeated field and set its count. E2BIG when they do not fit.
 template <class T, std::size_t N, class Range>
 Status assign(T (&dst)[N], pb_size_t& count, const Range& src) {

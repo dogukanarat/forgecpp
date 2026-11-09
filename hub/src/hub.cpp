@@ -16,6 +16,7 @@
 using namespace std::chrono_literals;
 
 namespace forgehub {
+namespace pb = forge::pb;
 namespace {
 
 std::int64_t steady_ms() {
@@ -61,13 +62,6 @@ std::string seconds(std::uint64_t us) {
                                               : std::format("{:.1f}", s);
 }
 
-template <std::size_t N>
-void put(char (&dst)[N], std::string_view src) {
-    const auto n = std::min(src.size(), N - 1);
-    std::memcpy(dst, src.data(), n);
-    dst[n] = '\0';
-}
-
 std::string_view text(const char* field) { return field; }
 
 std::string_view state_name(forge_hub_app_state s) {
@@ -82,7 +76,7 @@ std::string_view state_name(forge_hub_app_state s) {
 /// The restart policy of a unit, as the dashboard shows it.
 forge_hub_restart_policy policy_of(const UnitState& u) {
     forge_hub_restart_policy p{};
-    put(p.restart, u.restart);
+    pb::assign_truncated(p.restart, u.restart);
     p.mode = u.restart == "no" || u.restart.empty() ? forge_hub_restart_mode_MODE_NEVER
              : u.restart == "always"                ? forge_hub_restart_mode_MODE_ALWAYS
                                                     : forge_hub_restart_mode_MODE_ON_FAILURE;
@@ -311,10 +305,10 @@ void Hub::on_start() {
                 if (!s.is_object()) continue;
                 Entry e;
                 e.static_entry = true;
-                put(e.app.name, name);
-                put(e.app.title, s.value("title", name));
-                put(e.app.description, s.value("description", ""));
-                put(e.app.group, s.value("group", ""));
+                pb::assign_truncated(e.app.name, name);
+                pb::assign_truncated(e.app.title, s.value("title", name));
+                pb::assign_truncated(e.app.description, s.value("description", ""));
+                pb::assign_truncated(e.app.group, s.value("group", ""));
                 e.url = s.value("url", "");
                 e.health_url = s.value("health_url", "");
                 e.state = e.health_url.empty() ? forge_hub_app_state_STATE_UNKNOWN : forge_hub_app_state_STATE_STARTING;
@@ -361,8 +355,8 @@ std::vector<std::string> Hub::handle(std::string_view bytes) {
 }
 
 forge::Status Hub::on_register(const forge_hub_app_registration& app, forge_hub_register_reply& reply) {
-    put(reply.hub, std::string("forge-hub ") + FORGE_HUB_VERSION);
-    put(reply.instance, instance_);
+    pb::assign_truncated(reply.hub, std::string("forge-hub ") + FORGE_HUB_VERSION);
+    pb::assign_truncated(reply.instance, instance_);
     const std::string name(text(app.name));
     const int pid = static_cast<int>(app.pid);
     const auto refuse = [&](int code, const std::string& why) {
@@ -699,23 +693,23 @@ forge_hub_app_status Hub::status_of(const Entry& e) const {
     s.app = e.app;
     if (!e.static_entry) s.app.pid = live(e.state) ? static_cast<std::uint32_t>(std::max(e.pid, 0)) : 0;
     s.state = e.state;
-    put(s.message, e.message);
-    put(s.health, e.health);
+    pb::assign_truncated(s.message, e.message);
+    pb::assign_truncated(s.health, e.health);
     s.alarms_active = e.alarms_active;
-    put(s.alarms_highest, e.alarms_highest);
+    pb::assign_truncated(s.alarms_highest, e.alarms_highest);
     s.uptime_s = live(e.state) ? e.uptime_s : 0;
     s.cpu_percent = e.cpu;
     s.rss_bytes = e.rss;
-    put(s.supervision, e.unit.empty() ? "none" : "systemd " + e.unit);
+    pb::assign_truncated(s.supervision, e.unit.empty() ? "none" : "systemd " + e.unit);
     s.last_seen_unix_ms = e.last_seen_ms;
-    put(s.url, e.url);
+    pb::assign_truncated(s.url, e.url);
     s.static_entry = e.static_entry;
     if (e.unit_state) {
         s.restarts = e.unit_state->n_restarts;
         s.has_policy = true;
         s.policy = policy_of(*e.unit_state);
-        put(s.unit_state, e.unit_state->active + "/" + e.unit_state->sub);
-        put(s.unit_result, e.unit_state->result);
+        pb::assign_truncated(s.unit_state, e.unit_state->active + "/" + e.unit_state->sub);
+        pb::assign_truncated(s.unit_result, e.unit_state->result);
     }
     return s;
 }

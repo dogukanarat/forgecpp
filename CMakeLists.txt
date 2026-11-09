@@ -117,6 +117,7 @@ add_library(forgecpp
     src/auth.cpp
     src/base64.cpp
     src/c2.cpp
+    src/common.cpp
     src/config.cpp
     src/config_schema.cpp
     src/console.cpp

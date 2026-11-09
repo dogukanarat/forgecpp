@@ -41,7 +41,6 @@
 #include "forge/alarms.hpp"
 #include "forge/audit.hpp"
 #include "forge/auth.hpp"
-#include "forge/channel.hpp"
 #include "forge/component.hpp"
 #include "forge/config.hpp"
 #include "forge/config_schema.hpp"
@@ -52,7 +51,6 @@
 #include "forge/metrics.hpp"
 #include "forge/pb.hpp"
 #include "forge/scheduler.hpp"
-#include "forge/thread_pool.hpp"
 #include "forge/tmtc.hpp"
 #include "forge/worker.hpp"
 
@@ -60,7 +58,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -84,21 +81,9 @@ class App;
 
 namespace forge {
 
-namespace detail {
-/// An exception on its way from the main loop to a thread waiting in
-/// Application::invoke(): described here, thrown anew on the waiting thread.
-struct LoopError {
-    int kind = 0;  ///< 0 = no error
-    int status = 0;
-    std::string message;
-    json body;
-    explicit operator bool() const { return kind != 0; }
-    /// Describe the exception being handled (call inside a catch block).
-    void capture() noexcept;
-    void set_stopped();
-    [[noreturn]] void rethrow() const;
-};
-}  // namespace detail
+class ThreadPool;  // forge/thread_pool.hpp (BS::thread_pool), parsed only where the pool is used
+template <class T>
+class Channel;  // forge/channel.hpp
 
 namespace http {
 class Server;
@@ -244,8 +229,7 @@ public:
     template <class Work, class Then, class OnError>
     void background(Work work, Then then, OnError on_error) {
         using R = std::invoke_result_t<Work>;
-        pool().detach_task(
-            [this, work = std::move(work), then = std::move(then), on_error = std::move(on_error)]() mutable {
+        run_in_pool([this, work = std::move(work), then = std::move(then), on_error = std::move(on_error)]() mutable {
             std::string error;
             try {
                 if constexpr (std::is_void_v<R>) {
@@ -440,84 +424,26 @@ private:
                       F&& fn) -> std::invoke_result_t<std::decay_t<F>> {
         using R = std::invoke_result_t<std::decay_t<F>>;
         if (on_main_loop()) return fn();
-        enum class Phase { pending, running, done, abandoned };
-        struct Waiter {
-            std::mutex mutex;
-            std::condition_variable cv;
-            Phase phase = Phase::pending;
-            // references are kept as pointers
-            using Stored = std::conditional_t<std::is_reference_v<R>, std::remove_reference_t<R>*, R>;
-            std::conditional_t<std::is_void_v<R>, bool, std::optional<Stored>> value{};
-            detail::LoopError error;
-        };
-        // Finishes the wait even when the task is discarded (application stopping).
-        struct Guard {
-            explicit Guard(std::shared_ptr<Waiter> waiter) : w(std::move(waiter)) {}
-            Guard(const Guard&) = delete;
-            Guard& operator=(const Guard&) = delete;
-            std::shared_ptr<Waiter> w;
-            ~Guard() {
-                bool waiting;
-                {
-                    std::lock_guard lock(w->mutex);
-                    waiting = w->phase == Phase::pending || w->phase == Phase::running;
-                    if (waiting) {
-                        w->error.set_stopped();
-                        w->phase = Phase::done;
-                    }
-                }
-                if (waiting) w->cv.notify_all();
-            }
-        };
-        auto w = std::make_shared<Waiter>();
-        auto f = std::make_shared<std::decay_t<F>>(std::forward<F>(fn));
-        auto guard = std::make_shared<Guard>(w);
-        const bool posted = post([w, f, guard] {
-            {
-                std::lock_guard lock(w->mutex);
-                if (w->phase == Phase::abandoned) return;  // the caller gave up: do not run
-                w->phase = Phase::running;
-            }
-            detail::LoopError error;
-            try {
-                if constexpr (std::is_void_v<R>) {
-                    (*f)();
-                } else if constexpr (std::is_reference_v<R>) {
-                    auto* r = &(*f)();
-                    std::lock_guard lock(w->mutex);
-                    w->value.emplace(r);
-                } else {
-                    auto r = (*f)();
-                    std::lock_guard lock(w->mutex);
-                    w->value.emplace(std::move(r));
-                }
-            } catch (...) {
-                error.capture();
-            }
-            {
-                std::lock_guard lock(w->mutex);
-                w->error = std::move(error);
-                w->phase = Phase::done;
-            }
-            w->cv.notify_all();
-        });
-        guard.reset();
-        if (!posted) loop_busy();  // the queue is full: nothing was queued, nothing to wait for
-        std::unique_lock lock(w->mutex);
-        const auto finished = [&] { return w->phase == Phase::done; };
-        if (deadline && !w->cv.wait_until(lock, *deadline, finished) && w->phase == Phase::pending) {
-            w->phase = Phase::abandoned;
-            lock.unlock();
-            loop_busy();
-        }
-        w->cv.wait(lock, finished);
-        if (w->error) w->error.rethrow();
-        if constexpr (std::is_reference_v<R>) {
-            return static_cast<R>(**w->value);
-        } else if constexpr (!std::is_void_v<R>) {
-            return std::move(*w->value);
+        // invoke_erased() runs `run` on the loop and waits for it; once started
+        // it is always waited for, so `fn` and the result may live here.
+        if constexpr (std::is_void_v<R>) {
+            invoke_erased(deadline, [&fn] { fn(); });
+        } else if constexpr (std::is_reference_v<R>) {
+            std::remove_reference_t<R>* result = nullptr;
+            invoke_erased(deadline, [&fn, &result] { result = &fn(); });
+            return static_cast<R>(*result);
+        } else {
+            std::optional<R> result;
+            invoke_erased(deadline, [&fn, &result] { result.emplace(fn()); });
+            return std::move(*result);
         }
     }
+    /// Post `run` to the main loop and wait as invoke() / invoke_for()
+    /// describe (abandon before it started at `deadline`; exceptions are
+    /// described on the loop and thrown anew here).
+    void invoke_erased(std::optional<std::chrono::steady_clock::time_point> deadline, const std::function<void()>& run);
+    /// Run `fn` on the worker pool (the non-template part of background()).
+    void run_in_pool(std::function<void()> fn);
     /// Counts the timeout and throws 503 "main loop busy".
     [[noreturn]] void loop_busy() const;
     void background_failed(const char* what);
@@ -593,7 +519,7 @@ private:
     Logger logger_;
     EventBus events_;
     Alarms alarms_;
-    Channel<Task> tasks_{256};
+    std::unique_ptr<Channel<Task>> tasks_;  // the main loop's queue
     std::unique_ptr<ThreadPool> pool_;
     std::unique_ptr<Scheduler> scheduler_;
     std::unique_ptr<web::Dashboard> dashboard_;
