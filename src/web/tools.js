@@ -15,6 +15,115 @@
   }
   function hex(n) { return '0x' + ('000' + n.toString(16)).slice(-4); }
 
+  // --- JSON, coloured -------------------------------------------------------------------
+
+  const TOKEN = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|([{}[\],])/g;
+  function esc(t) { return t.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+  function highlight(text) {
+    let out = '', last = 0;
+    text.replace(TOKEN, function (m, str, colon, literal, num, punct, at) {
+      out += esc(text.slice(last, at));
+      if (str) out += '<span class="' + (colon ? 'k' : 's') + '">' + esc(str) + '</span>' +
+                      (colon ? '<span class="p">' + esc(colon) + '</span>' : '');
+      else if (literal) out += '<span class="l">' + literal + '</span>';
+      else if (num) out += '<span class="n">' + num + '</span>';
+      else out += '<span class="p">' + punct + '</span>';
+      last = at + m.length;
+      return m;
+    });
+    // A trailing newline keeps the last (empty) line as tall as the textarea's.
+    return out + esc(text.slice(last)) + '\n';
+  }
+
+  // "line 4:1 · expected double-quoted property name": browsers word it differently.
+  function parseError(message, text) {
+    let line, col;
+    const lc = message.match(/line (\d+) column (\d+)/);
+    const pos = message.match(/position (\d+)/);
+    if (lc) {
+      line = lc[1];
+      col = lc[2];
+    } else if (pos) {
+      const before = text.slice(0, Number(pos[1]));
+      line = before.split('\n').length;
+      col = before.length - before.lastIndexOf('\n');
+    }
+    const what = message.replace(/^JSON\.parse: /, '').replace(/\s*\(line \d+ column \d+\)/, '')
+                        .replace(/ in JSON at position \d+/, '').replace(/ at line \d+ column \d+ of the JSON data/, '');
+    const reason = what.charAt(0).toLowerCase() + what.slice(1);
+    return line ? 'line ' + line + ':' + col + ' · ' + reason : reason;
+  }
+
+  // The request editor: the textarea is transparent over the coloured text.
+  const editor = $('forge-tmtc-json');
+  function check() {
+    const chip = $('forge-tmtc-valid');
+    let ok = true;
+    try {
+      JSON.parse(editor.value || '{}');
+      chip.textContent = 'valid JSON';
+      chip.title = '';
+    } catch (e) {
+      ok = false;
+      chip.textContent = parseError(e.message, editor.value);
+      chip.title = e.message;
+    }
+    chip.className = 'forge-code-chip ' + (ok ? 'ok' : 'error');
+    $('forge-tmtc-editor').classList.toggle('invalid', !ok);
+    return ok;
+  }
+  function showRequest() {
+    $('forge-tmtc-hl').innerHTML = highlight(editor.value);
+    check();
+  }
+  function setRequest(text) {
+    editor.value = text;
+    showRequest();
+  }
+  function insert(text) {
+    // execCommand keeps the browser's undo; setRangeText where it is gone.
+    if (!document.execCommand || !document.execCommand('insertText', false, text)) {
+      editor.setRangeText(text, editor.selectionStart, editor.selectionEnd, 'end');
+      showRequest();
+    }
+  }
+  editor.addEventListener('input', showRequest);
+  editor.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+      ev.preventDefault();
+      send();
+    } else if (ev.key === 'Tab' && !ev.shiftKey) {
+      ev.preventDefault();
+      insert('  ');
+    } else if (ev.key === 'Enter') {
+      // Keep the indentation of the line; one more level after { or [.
+      ev.preventDefault();
+      const before = editor.value.slice(0, editor.selectionStart);
+      const line = before.slice(before.lastIndexOf('\n') + 1);
+      const indent = line.match(/^\s*/)[0] + (/[{[]\s*$/.test(line) ? '  ' : '');
+      insert('\n' + indent);
+    }
+  });
+  if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) {
+    document.querySelector('.forge-kbd-hint kbd').textContent = '⌘';
+  }
+  $('forge-tmtc-format').addEventListener('click', function () {
+    try { setRequest(JSON.stringify(JSON.parse(editor.value || '{}'), null, 2)); } catch (e) { check(); }
+    editor.focus();
+  });
+  $('forge-tmtc-reset').addEventListener('click', function () {
+    if (current && current.form) preview();
+    else setRequest('{}');
+  });
+  $('forge-tmtc-copy').addEventListener('click', async function () {
+    try {
+      await navigator.clipboard.writeText($('forge-tmtc-reply').textContent);
+      forge.toast('reply copied', 'info');
+    } catch (e) {
+      forge.toast('the browser did not allow copying', 'error');
+    }
+  });
+
   // --- the form of a message --------------------------------------------------------
   // Each input knows how to give its value; a message is a fieldset of inputs.
 
@@ -79,7 +188,7 @@
 
   function preview() {
     if (!current || !current.form) return;
-    try { $('forge-tmtc-json').value = JSON.stringify(current.form.read(), null, 1); }
+    try { setRequest(JSON.stringify(current.form.read(), null, 2)); }
     catch (e) { /* a JSON list being typed */ }
   }
 
@@ -94,26 +203,31 @@
     const fields = $('forge-tmtc-fields');
     fields.textContent = '';
     if (current.form) fields.appendChild(current.form.node);
-    $('forge-tmtc-json').value = '{}';
+    setRequest('{}');
     $('forge-tmtc-send').disabled = !d.request;
-    $('forge-tmtc-reply').textContent = '';
+    $('forge-tmtc-out').hidden = true;
   }
 
   async function send() {
-    if (!current) return;
-    const out = $('forge-tmtc-reply');
-    let body;
-    try { body = JSON.parse($('forge-tmtc-json').value || '{}'); }
-    catch (e) { out.className = 'forge-mono forge-reply error'; out.textContent = 'not JSON: ' + e.message; return; }
+    if (!current || $('forge-tmtc-send').disabled) return;
+    if (!check()) { editor.focus(); return; }
+    const box = $('forge-tmtc-out'), out = $('forge-tmtc-reply'), chip = $('forge-tmtc-status');
     const t0 = performance.now();
     try {
-      const reply = await forge.api('tmtc/' + encodeURIComponent(current.cmd.name), { body: body });
-      out.className = 'forge-mono forge-reply';
-      out.textContent = JSON.stringify(reply, null, 2) + '\n\n' + Math.round(performance.now() - t0) + ' ms';
+      const reply = await forge.api('tmtc/' + encodeURIComponent(current.cmd.name),
+                                    { body: JSON.parse(editor.value || '{}') });
+      box.classList.remove('error');
+      out.innerHTML = reply === null || reply === '' ? '<span class="p">(empty reply)</span>'
+                                                     : highlight(JSON.stringify(reply, null, 2));
+      chip.className = 'forge-code-chip ok';
+      chip.textContent = 'ok · ' + Math.round(performance.now() - t0) + ' ms';
     } catch (e) {
-      out.className = 'forge-mono forge-reply error';
+      box.classList.add('error');
       out.textContent = e.message;
+      chip.className = 'forge-code-chip error';
+      chip.textContent = e.status ? 'HTTP ' + e.status : 'failed';
     }
+    box.hidden = false;
   }
 
   async function loadCommands() {

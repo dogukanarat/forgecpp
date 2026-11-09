@@ -60,7 +60,9 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 - `.clang-format`, `.clang-tidy`, `.editorconfig`; `CMakePresets.json`
   (dev, release, asan, tsan, fuzz, armhf; libraries from `FORGECPP_DEPS`).
 - Panel: a **Commands** page (every command with a form built from its
-  request message; the reply as JSON) and a **Watch** button per stream on
+  request message, and a JSON editor with colours, live validation that says
+  the line and column of a mistake, Format, Tab and Ctrl+Enter; the reply
+  coloured the same way, with its time and a Copy button) and a **Watch** button per stream on
   the Streams page (its messages as they go out, at most 5 a second, without
   the blob). HTTP: `GET /forge/api/tmtc/<name>` (the request and reply
   schemas), `GET /forge/api/streams/<name>/watch` (server-sent events).

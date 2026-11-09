@@ -52,10 +52,31 @@
         <div id="forge-tmtc-form" class="forge-tmtc-form" hidden>
           <h3 id="forge-tmtc-title"></h3>
           <div id="forge-tmtc-fields"></div>
-          <label class="forge-muted" for="forge-tmtc-json">Request (JSON, what is sent)</label>
-          <textarea id="forge-tmtc-json" class="forge-mono" rows="4" spellcheck="false"></textarea>
-          <div class="forge-actions"><button class="forge-btn primary" type="button" id="forge-tmtc-send">Send</button></div>
-          <pre id="forge-tmtc-reply" class="forge-mono forge-reply" aria-live="polite"></pre>
+          <div class="forge-code" id="forge-tmtc-editor">
+            <div class="forge-code-head">
+              <label class="forge-code-title" for="forge-tmtc-json">Request <small>JSON</small></label>
+              <span class="forge-code-chip" id="forge-tmtc-valid"></span>
+              <button class="forge-code-btn" type="button" id="forge-tmtc-format" title="Indent the JSON">Format</button>
+              <button class="forge-code-btn" type="button" id="forge-tmtc-reset" title="Back to the form's values">Reset</button>
+            </div>
+            <div class="forge-code-edit">
+              <pre class="forge-code-hl" id="forge-tmtc-hl" aria-hidden="true"></pre>
+              <textarea id="forge-tmtc-json" spellcheck="false" autocomplete="off" autocapitalize="off"
+                        aria-label="Request as JSON"></textarea>
+            </div>
+          </div>
+          <div class="forge-actions forge-send-row">
+            <button class="forge-btn primary" type="button" id="forge-tmtc-send">Send</button>
+            <span class="forge-muted forge-kbd-hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+          </div>
+          <div class="forge-code forge-code-out" id="forge-tmtc-out" hidden>
+            <div class="forge-code-head">
+              <span class="forge-code-title">Reply</span>
+              <span class="forge-code-chip" id="forge-tmtc-status"></span>
+              <button class="forge-code-btn" type="button" id="forge-tmtc-copy">Copy</button>
+            </div>
+            <pre id="forge-tmtc-reply" class="forge-code-view" aria-live="polite"></pre>
+          </div>
         </div>
       </div>
     </section>
