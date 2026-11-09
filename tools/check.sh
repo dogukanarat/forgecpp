@@ -137,7 +137,7 @@ if [[ -n "${do_tidy}" ]]; then
 fi
 
 if [[ ${do_asan} == 1 ]]; then
-    ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+    ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 FORGE_TEST_TIMEOUT_SCALE=4 \
         configure_and_test build/check-asan asan -DCMAKE_BUILD_TYPE=Debug '-DFORGECPP_SANITIZE=address;undefined'
 fi
 
