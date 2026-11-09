@@ -109,6 +109,8 @@ add_library(forgecpp
     src/app/config.cpp
     src/app/observability.cpp
     src/app/http_frontend.cpp
+    src/app/main_loop.cpp
+    src/app/signals.cpp
     src/app/messaging.cpp
     src/app/remote_console.cpp
     src/app/state.cpp

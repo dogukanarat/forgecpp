@@ -148,6 +148,27 @@ TEST_CASE("application: bad config file is reported") {
     CHECK(app.run(static_cast<int>(args.size()), argv.data()) == 1);
 }
 
+TEST_CASE("application: the lambda hooks add options, configuration keys and controls") {
+    forge::Application app({"hooked", "1.0.0", "No subclass"});
+    int gain = 0;
+    double limit = 0;
+    app.hook_cli([&](forge::Application&, CLI::App& cli) { cli.add_option("--gain", gain); });
+    app.hook_config([](forge::Application&, forge::config::Schema& s) {
+        s.section("hooked", "Declared by a hook");
+        s.number("hooked.limit", 2.5, "A limit");
+    });
+    app.hook_controls(
+        [&](forge::Application&, forge::Controls& ui) { ui.group("Hooked").value("gain", "Gain", gain); });
+    app.hook_start([&](forge::Application& a) {
+        limit = a.config().value<double>("hooked.limit");
+        a.stop(a.dashboard()->state().contains("gain") ? 0 : 3);
+    });
+    const char* argv[] = {"hooked", "--gain", "7", "-D", "http.enabled=false", "-D", "log.console=false"};
+    CHECK(app.run(7, const_cast<char**>(argv)) == 0);
+    CHECK(gain == 7);
+    CHECK(limit == doctest::Approx(2.5));
+}
+
 TEST_CASE("application: a stop handler that throws does not skip the others") {
     int tidy_stopped = 0;
     auto app = std::make_unique<TestApp>();
@@ -164,6 +185,21 @@ TEST_CASE("application: a stop handler that throws does not skip the others") {
 }
 
 TEST_CASE("application: SIGHUP reloads, SIGTERM stops") {
+    // run() blocks the signals on its own thread, which in a daemon is the main
+    // thread, so every other thread inherits the mask. Here run() is on the
+    // runner's thread: the test thread blocks them itself, or kill() would
+    // deliver the signal to it and end the test program.
+    struct BlockedSignals {
+        BlockedSignals() {
+            sigset_t set;
+            sigemptyset(&set);
+            sigaddset(&set, SIGHUP);
+            sigaddset(&set, SIGTERM);
+            pthread_sigmask(SIG_BLOCK, &set, &before);
+        }
+        ~BlockedSignals() { pthread_sigmask(SIG_SETMASK, &before, nullptr); }
+        sigset_t before{};
+    } blocked;
     auto app = std::make_unique<TestApp>();
     TestApp* raw = app.get();
     forge::testing::AppRunner<TestApp> r({"-D", "http.enabled=false"}, std::move(app));

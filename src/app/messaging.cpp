@@ -41,6 +41,7 @@ void Messaging::start(const Config& cfg) {
         zmq::SocketOptions so;
         so.send_hwm = 1000;
         events_pub_ = std::make_unique<zmq::Publisher>(events, so);
+        endpoints_.set("events", events_pub_->endpoint());
         events_pub_->add<forge_state_report>("state");
         events_pub_->add<forge_alarm>("alarms");
         events_pub_->add<forge_log_record>("log");
@@ -93,6 +94,7 @@ void Messaging::start(const Config& cfg) {
     if (!data.empty()) {
         std::lock_guard lock(data_mutex_);
         data_pub_ = std::make_unique<zmq::Publisher>(data);
+        endpoints_.set("data", data_pub_->endpoint());
         logger->info("forge: streams on {}", data_pub_->endpoint());
     }
 }
@@ -109,6 +111,7 @@ void Messaging::start_control(const Config& cfg) {
             CallerScope caller(app_.control().identify("link", "zmq", {}));
             return zmq::answer(app_.commands(), request);
         }, options);
+        endpoints_.set("control", control_server_->endpoint());
         logger->info("forge: commands on {}", control_server_->endpoint());
         // The link's counters on /metrics (the server outlives the registry's reads: reset() clears them).
         auto& m = app_.metrics();
@@ -123,6 +126,7 @@ void Messaging::start_control(const Config& cfg) {
     const auto device = cfg.value<std::string>("serial.device");
     if (!device.empty()) {
         serial_options_.device = device;
+        endpoints_.set("serial", device);
         serial_options_.baud = cfg.value<int>("serial.baud");
         serial_options_.framing.frame_size = static_cast<std::size_t>(cfg.value<int>("serial.frame_size"));
         serial_options_.thread_name = "forge-serial";
@@ -243,6 +247,7 @@ zmq::Stream& Messaging::stream(const std::string& name, const pb::Type& type, co
         // No [forge].data configured: an ephemeral port, listed in the endpoints.
         const auto ep = app_.config().value<std::string>("forge.data");
         data_pub_ = std::make_unique<zmq::Publisher>(ep.empty() ? "tcp://*:0" : ep);
+        endpoints_.set("data", data_pub_->endpoint());
         app_.logger()->info("forge: streams on {}", data_pub_->endpoint());
     }
     const bool known = data_pub_->find(name) != nullptr;
@@ -270,14 +275,6 @@ zmq::Stream* Messaging::find_stream(const std::string& name) {
 std::vector<zmq::StreamInfo> Messaging::stream_list() const {
     std::lock_guard lock(data_mutex_);
     return data_pub_ ? data_pub_->list() : std::vector<zmq::StreamInfo>{};
-}
-
-void Messaging::add_endpoints(std::map<std::string, std::string>& e) const {
-    if (control_server_) e["control"] = control_server_->endpoint();
-    if (serial_ || !serial_options_.device.empty()) e["serial"] = serial_options_.device;
-    if (events_pub_) e["events"] = events_pub_->endpoint();
-    std::lock_guard lock(data_mutex_);
-    if (data_pub_) e["data"] = data_pub_->endpoint();
 }
 
 bool Messaging::wants_state() const {

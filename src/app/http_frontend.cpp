@@ -1,6 +1,6 @@
 // HttpFrontend: the HTTP server with the framework's routes, the built-in
 // pages, live events and logs for the browser, and the card layouts.
-#include "services.hpp"
+#include "impl.hpp"
 
 #include "forge/component.hpp"
 #include "forge/control.hpp"
@@ -98,7 +98,7 @@ void HttpFrontend::create(const Config& cfg) {
                 {{"name", c.name}, {"state", to_string(c.state)}, {"message", c.message}, {"critical", c.critical}});
         }
         const auto overall = health.overall();
-        const auto loop_age = app_.loop_age_ms();
+        const auto loop_age = d_.loop.age_ms();
         // The 1 s heartbeat runs on the main loop: an old one means the loop is stuck.
         const char* status = app_.stopping() ? "stopping" : (loop_age > stall_ms_ ? "stalled" : "ok");
         json j{{"status", status},
@@ -118,9 +118,7 @@ void HttpFrontend::create(const Config& cfg) {
     http_->get("/metrics", [](const http::Request&, http::Response& res) {
         res.set_content(metrics::registry().prometheus(), "text/plain; version=0.0.4");
     });
-    app_.setup_http(*http_);
-    for (auto& c : app_.components_) c->setup_http(*http_);
-    for (auto& h : app_.hooks_.http) h(app_, *http_);
+    d_.setup_http(*http_);  // the application's routes, its components', the hooks'
     create_web(cfg);
 }
 
@@ -290,7 +288,7 @@ void HttpFrontend::create_web(const Config& cfg) {
     http_->get_json(api + "/health", [this](const http::Request&) { return to_json(app_.health().snapshot()); });
     http_->get_json(api + "/streams", [this](const http::Request&) {
         json a = json::array();
-        for (const auto& i : app_.stream_list()) a.push_back(zmq::to_json(i));
+        for (const auto& i : d_.messaging.stream_list()) a.push_back(zmq::to_json(i));
         return json{{"streams", std::move(a)}};
     });
     http_->get(api + "/trace", [](const http::Request& req, http::Response& res) {
@@ -385,6 +383,7 @@ void HttpFrontend::start(const Config& cfg) {
     if (!http_) return;
     const auto host = cfg.value<std::string>("http.host");
     http_->start(host, cfg.value<int>("http.port"));
+    if (http_->port() > 0) d_.endpoints.set("http", std::format("http://{}:{}/", host_name(), http_->port()));
     if (events_) {
         const auto refresh = std::max(cfg.value<int>("web.refresh_ms"), 50);
         app_.every(std::chrono::milliseconds(refresh), [this] { push_state(); });
@@ -431,7 +430,7 @@ void HttpFrontend::stop() {
 std::shared_ptr<http::EventStream> HttpFrontend::watch_stream(const std::string& name) {
     std::lock_guard lock(watch_mutex_);
     if (auto it = watches_.find(name); it != watches_.end()) return it->second.events;
-    auto* stream = app_.messaging_->find_stream(name);
+    auto* stream = d_.messaging.find_stream(name);
     if (!stream) throw Error(404, "no stream '" + name + "'");
     auto events = std::make_shared<http::EventStream>(4);
     const pb::Type& type = stream->type();
@@ -475,10 +474,6 @@ void HttpFrontend::push_state() {
     if (alarms_dirty_.exchange(false)) events_->publish("alarms", app_.alarms().to_json());
     auto changed = dashboard->changes();
     if (!changed.empty()) events_->publish("state", changed);
-}
-
-void HttpFrontend::add_endpoints(std::map<std::string, std::string>& e) const {
-    if (http_ && http_->port() > 0) e["http"] = std::format("http://{}:{}/", host_name(), http_->port());
 }
 
 // ---------------------------------------------------------------------------

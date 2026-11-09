@@ -29,7 +29,9 @@ class Application;
 
 class ControlService {
 public:
-    explicit ControlService(Application& app);
+    /// `changed(persistent)` runs after a control changed (the application
+    /// saves it and tells the open pages and the subscribers).
+    explicit ControlService(Application& app, std::function<void(bool persistent)> changed = {});
 
     /// Resolve the caller's identity from a token (bearer) or an HTTP
     /// Authorization header value; anonymous callers get the default role.
@@ -63,6 +65,7 @@ private:
                const json& new_value, bool ok, const std::string& error);
 
     Application& app_;
+    std::function<void(bool persistent)> changed_;
     struct LeaseEntry {
         std::string holder;
         std::chrono::steady_clock::time_point expires;

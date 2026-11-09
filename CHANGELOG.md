@@ -253,6 +253,30 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   (`... must be integer (got string "eighty") at app.toml:2:8`), and a value
   is converted straight from the parsed node instead of through JSON text.
 
+### Changed (the inside of Application)
+
+- `forge::Application` holds one pointer: its members are in
+  `Application::Impl` (`src/app/impl.hpp`), and the class has no `friend`
+  declarations left. The public and protected API is the same; an
+  application built against an earlier 0.4 header must be built again (the
+  size of the class changed).
+- The main loop is a class of its own (`src/app/main_loop.hpp`: the task
+  queue, `post()`, `invoke()` with its deadline, the lag and slow-task
+  figures), and so is the signal thread (`src/app/signals.hpp`). The command
+  line options are one struct. `run()` reads as its phases: prepare (command
+  line, configuration, logging), start, the loop, shutdown.
+- `ControlService` takes the "a value changed" callback in its constructor
+  instead of calling a private method of `Application`. `Component` has one
+  friend (`detail::ComponentAccess`) instead of `Application`.
+- `hook_cli()` hooks were stored and never called: they run after
+  `setup_cli()` now, and a test uses every lambda hook without a subclass.
+- A link could answer `info` while the main loop was still opening the next
+  link, and read a pointer that was being written (found by the thread
+  sanitizer on the serial link). The endpoints are kept in one locked table,
+  filled as each link opens.
+- `run()` puts the signal mask back also when it returns early (`--help-config`,
+  `--check-config`, a wrong configuration).
+
 ### Changed (headers)
 
 - `forge/config.hpp` no longer includes toml++: the parser is behind

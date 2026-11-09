@@ -1,8 +1,6 @@
 // Application: the command line, the configuration file and the keys the
 // framework declares ([log], [http], [forge], ...), and their validation.
-#include "forge/application.hpp"
-
-#include "services.hpp"
+#include "impl.hpp"
 
 #include "forge/version.hpp"
 
@@ -14,35 +12,36 @@
 
 namespace forge {
 
-int Application::parse_command_line(int argc, char** argv) {
-    setup_cli(*cli_);
+int Application::Impl::parse_command_line(int argc, char** argv) {
+    app.setup_cli(cli);
+    for (auto& h : hooks.cli) h(app, cli);  // hook_cli()
     try {
-        cli_->parse(argc, argv);
+        cli.parse(argc, argv);
     } catch (const CLI::ParseError& e) {
-        return cli_->exit(e);
+        return cli.exit(e);
     }
-    if (instance_.empty()) {
+    if (instance.empty()) {
         if (const char* env = std::getenv("FORGE_INSTANCE"); env && *env) {
-            instance_ = env;
+            instance = env;
         } else {
-            instance_ = hub::instance_of(hub::unit_of(::getpid()));  // radio-controller@rx2.service
+            instance = hub::instance_of(hub::unit_of(::getpid()));  // radio-controller@rx2.service
         }
     }
-    if (instance_.size() > 32 ||
-        instance_.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.") !=
+    if (instance.size() > 32 ||
+        instance.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.") !=
             std::string::npos) {
-        std::cerr << info_.name << ": invalid instance name '" << instance_ << "'\n";
+        std::cerr << info.name << ": invalid instance name '" << instance << "'\n";
         return 2;
     }
     return -1;
 }
 
-Config Application::load_config() const {
+Config Application::Impl::load_config() const {
     Config cfg;
-    if (!config_file_.empty()) {
-        cfg = Config::load_file(config_file_);
+    if (!options.config_file.empty()) {
+        cfg = Config::load_file(options.config_file);
     } else {
-        for (const auto& candidate : info_.config_paths) {
+        for (const auto& candidate : info.config_paths) {
             std::error_code ec;
             if (std::filesystem::is_regular_file(candidate, ec)) {
                 cfg = Config::load_file(candidate);
@@ -51,30 +50,32 @@ Config Application::load_config() const {
         }
     }
 
-    for (const auto& o : overrides_) cfg.apply_override(o);
+    for (const auto& o : options.overrides) cfg.apply_override(o);
 
     // Explicit flags win over the file and -D overrides.
-    if (verbosity_ == 1) cfg.set("log.level", "debug");
-    if (verbosity_ >= 2) cfg.set("log.level", "trace");
-    if (!log_level_.empty()) cfg.set("log.level", log_level_);
-    if (!log_file_.empty()) cfg.set("log.file", log_file_);
-    if (syslog_) cfg.set("log.syslog", true);
-    if (interactive_) cfg.set("console.enabled", true);
-    if (!http_listen_.empty()) {
+    if (options.verbosity == 1) cfg.set("log.level", "debug");
+    if (options.verbosity >= 2) cfg.set("log.level", "trace");
+    if (!options.log_level.empty()) cfg.set("log.level", options.log_level);
+    if (!options.log_file.empty()) cfg.set("log.file", options.log_file);
+    if (options.syslog) cfg.set("log.syslog", true);
+    if (options.interactive) cfg.set("console.enabled", true);
+    if (!options.http_listen.empty()) {
         cfg.set("http.enabled", true);
-        const auto colon = http_listen_.rfind(':');
-        const std::string port = colon == std::string::npos ? http_listen_ : http_listen_.substr(colon + 1);
-        if (colon != std::string::npos && colon > 0) cfg.set("http.host", http_listen_.substr(0, colon));
+        const auto colon = options.http_listen.rfind(':');
+        const std::string port =
+            colon == std::string::npos ? options.http_listen : options.http_listen.substr(colon + 1);
+        if (colon != std::string::npos && colon > 0) cfg.set("http.host", options.http_listen.substr(0, colon));
         try {
             cfg.set("http.port", static_cast<std::int64_t>(std::stoi(port)));
         } catch (const std::exception&) {
-            throw ConfigError("invalid --http value '" + http_listen_ + "'");
+            throw ConfigError("invalid --http value '" + options.http_listen + "'");
         }
     }
     return cfg;
 }
 
-void Application::declare_framework_config(config::Schema& s) {
+void Application::Impl::declare_framework_config() {
+    auto& s = schema;
     s.section("log", "Logging");
     s.string("log.level", "info", "Default level")
         .choices({"trace", "debug", "info", "warn", "error", "critical", "off"});
@@ -101,7 +102,7 @@ void Application::declare_framework_config(config::Schema& s) {
 
     s.section("web", "Control panel");
     s.boolean("web.enabled", true, "Serve the control panel at /forge/");
-    s.string("web.title", info_.name, "Title");
+    s.string("web.title", info.name, "Title");
     s.string("web.root", "", "Serve pages from this directory instead of the embedded ones");
     s.boolean("web.live_reload", true, "With web.root: reload the open pages when a file there changes");
     s.integer("web.refresh_ms", 500, "Live update interval").range(50, 60000).unit("ms");
@@ -115,7 +116,7 @@ void Application::declare_framework_config(config::Schema& s) {
 
     s.section("console", "Local console (-i) and telnet");
     s.boolean("console.enabled", false, "Run the console on the terminal (same as -i)");
-    s.string("console.prompt", info_.name + "> ", "Prompt");
+    s.string("console.prompt", info.name + "> ", "Prompt");
     s.string("console.history", "", "History file (default ~/.<app>_history)");
     s.boolean("console.color", true, "Colors (default: on a terminal)").computed();
     s.string("console.telnet", "", "Telnet console HOST:PORT, e.g. \"0.0.0.0:2323\" (empty = off)");
@@ -201,20 +202,20 @@ void Application::declare_framework_config(config::Schema& s) {
     s.boolean("process.mlockall", false, "Lock all memory (no page faults; needs CAP_IPC_LOCK)");
 }
 
-bool Application::validate_config(const Config& cfg, bool at_start) {
-    const auto r = schema_.validate(cfg);
+bool Application::Impl::validate_config(const Config& cfg, bool at_start) {
+    const auto r = schema.validate(cfg);
     for (const auto& w : r.warnings) {
-        if (at_start && !logger_) {
-            std::cerr << info_.name << ": warning: " << w << "\n";
-        } else if (logger_) {
-            logger_->warn("config: {}", w);
+        if (at_start && !logger) {
+            std::cerr << info.name << ": warning: " << w << "\n";
+        } else if (logger) {
+            logger->warn("config: {}", w);
         }
     }
     for (const auto& e : r.errors) {
-        if (logger_) {
-            logger_->error("config: {}", e);
+        if (logger) {
+            logger->error("config: {}", e);
         } else {
-            std::cerr << info_.name << ": config: " << e << "\n";
+            std::cerr << info.name << ": config: " << e << "\n";
         }
     }
     return r.ok();

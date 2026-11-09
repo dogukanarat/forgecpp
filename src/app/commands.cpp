@@ -1,6 +1,6 @@
 // The commands every application answers (proto/forge/messages.proto,
 // numbers 0x0001..0x00FF), on top of ControlService and the other services.
-#include "services.hpp"
+#include "impl.hpp"
 
 #include "forge/control.hpp"
 #include "forge/version.hpp"
@@ -129,7 +129,7 @@ void fill(forge_health_reply& out, const Health::Report& h, std::size_t from) {
     }
 }
 
-void register_builtin_commands(Application& app) {
+void register_builtin_commands(Application& app, Application::Impl& d) {
     auto& r = app.commands();
     auto& control = app.control();
     using namespace std::chrono;
@@ -333,8 +333,8 @@ void register_builtin_commands(Application& app) {
     });
 
     r.add_parts<forge_streams_request, forge_streams_reply>(forge_msg_id_streams, "streams",
-                                                            [&app](const auto&, auto& rsp, std::uint32_t& more) {
-        page(app.stream_list(), std::size(rsp.streams), more, [&](const zmq::StreamInfo& i, std::size_t) {
+                                                            [&d](const auto&, auto& rsp, std::uint32_t& more) {
+        page(d.messaging.stream_list(), std::size(rsp.streams), more, [&](const zmq::StreamInfo& i, std::size_t) {
             auto& o = rsp.streams[rsp.streams_count++];
             pb::assign_truncated(o.name, i.name);
             pb::assign_truncated(o.endpoint, i.endpoint);

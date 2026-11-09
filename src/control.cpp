@@ -23,7 +23,8 @@ const Caller& current_caller() {
 CallerScope::CallerScope(Caller caller) : caller_(std::move(caller)), previous_(tls_caller) { tls_caller = &caller_; }
 CallerScope::~CallerScope() { tls_caller = previous_; }
 
-ControlService::ControlService(Application& app) : app_(app) {}
+ControlService::ControlService(Application& app, std::function<void(bool)> changed)
+    : app_(app), changed_(std::move(changed)) {}
 
 Caller ControlService::identify(std::string channel, std::string client, std::string_view token,
                                 std::string_view http_authorization) const {
@@ -143,7 +144,7 @@ json ControlService::set(const std::string& id, const json& value, const Caller&
             now = d->get(id);
         });
         audit(caller, "set", id, old, now, true, {});
-        app_.control_changed(id, c.persist);
+        if (changed_) changed_(c.persist);
         return now;
     } catch (const Error& e) {
         audit(caller, "set", id, old, value, false, e.what());
@@ -163,7 +164,7 @@ void ControlService::press(const std::string& id, const Caller& caller) {
         check_lease(id, caller);
         app_.invoke_for(app_.request_timeout(), [&] { d->press(id); });
         audit(caller, "press", id, nullptr, nullptr, true, {});
-        app_.control_changed(id, false);
+        if (changed_) changed_(false);
     } catch (const Error& e) {
         audit(caller, "press", id, nullptr, nullptr, false, e.what());
         throw;
@@ -181,7 +182,7 @@ json ControlService::call(const std::string& id, const json& args, const Caller&
         check_lease(id, caller);
         json result = app_.invoke_for(app_.request_timeout(), [&] { return d->call(id, args); });
         audit(caller, "call", id, nullptr, args, true, {});
-        app_.control_changed(id, false);
+        if (changed_) changed_(false);
         return result;
     } catch (const Error& e) {
         audit(caller, "call", id, nullptr, args, false, e.what());

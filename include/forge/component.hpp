@@ -36,8 +36,7 @@
 namespace forge {
 
 namespace detail {
-class HttpFrontend;
-class RemoteConsole;
+struct ComponentAccess;
 }  // namespace detail
 class Application;
 class Config;
@@ -82,9 +81,7 @@ protected:
     void set_health(HealthState state, const std::string& message = {});
 
 private:
-    friend class Application;
-    friend class detail::HttpFrontend;
-    friend class detail::RemoteConsole;
+    friend struct detail::ComponentAccess;  // the application that owns it calls the hooks
     Application* app_ = nullptr;
     std::string name_;
     bool critical_;

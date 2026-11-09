@@ -40,6 +40,29 @@ bool is_loopback(const std::string& host);
 /// Caller of a console command: the local terminal (admin) or a telnet session.
 Caller console_caller();
 
+/// The addresses the program listens on, by name ("control", "http", ...).
+/// The main loop writes one as each opens; any thread reads them (the "info"
+/// command is answered on the links' own threads, also during the start).
+class Endpoints {
+public:
+    void set(const std::string& name, std::string endpoint) {
+        std::lock_guard lock(mutex_);
+        endpoints_[name] = std::move(endpoint);
+    }
+    void clear() {
+        std::lock_guard lock(mutex_);
+        endpoints_.clear();
+    }
+    std::map<std::string, std::string> all() const {
+        std::lock_guard lock(mutex_);
+        return endpoints_;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::map<std::string, std::string> endpoints_;
+};
+
 /// Persistent controls: restored at start-up, saved when they changed.
 class StateStore {
 public:
@@ -124,7 +147,7 @@ private:
 /// (an unplugged USB adapter) and reported under health as "serial".
 class Messaging {
 public:
-    explicit Messaging(Application& app) : app_(app) {}
+    Messaging(Application& app, Endpoints& endpoints) : app_(app), endpoints_(endpoints) {}
     /// Events and streams (before on_start(): it may publish).
     void start(const Config& cfg);
     /// The command endpoint and the serial line (after on_start(): everything is ready).
@@ -137,7 +160,6 @@ public:
     zmq::Stream& stream(const std::string& name, const pb::Type& type, const zmq::StreamOptions& options);
     zmq::Stream* find_stream(const std::string& name);
     std::vector<zmq::StreamInfo> stream_list() const;
-    void add_endpoints(std::map<std::string, std::string>& e) const;
     /// "state" events for the values that changed since the last call (main loop).
     void publish_state(const json& current);
     bool wants_state() const;
@@ -151,6 +173,7 @@ private:
     void check_serial();
 
     Application& app_;
+    Endpoints& endpoints_;
     std::unique_ptr<zmq::Publisher> events_pub_;
     mutable std::mutex data_mutex_;
     std::unique_ptr<zmq::Publisher> data_pub_;
@@ -166,7 +189,7 @@ private:
 };
 
 /// The built-in commands (commands.cpp), and the conversions the events share.
-void register_builtin_commands(Application& app);
+void register_builtin_commands(Application& app, Application::Impl& d);
 void fill(forge_alarm& out, const Alarm& a);
 void fill(forge_log_record& out, const log::Record& r);
 void fill(forge_audit_record& out, const Audit::Record& r);
@@ -175,7 +198,7 @@ void fill(forge_health_reply& out, const Health::Report& h, std::size_t from = 0
 /// Console commands (one registry for -i and telnet), the local REPL, telnet.
 class RemoteConsole {
 public:
-    explicit RemoteConsole(Application& app) : app_(app) {}
+    RemoteConsole(Application& app, Application::Impl& d) : app_(app), d_(d) {}
     void create(const Config& cfg);
     void start_telnet(const Config& cfg);
     void start_repl() {
@@ -184,7 +207,6 @@ public:
     void stop();
     void reset();
     Console* console() { return console_.get(); }
-    void add_endpoints(std::map<std::string, std::string>& e) const;
 
 private:
     void register_builtins(Console& c);
@@ -192,6 +214,7 @@ private:
     void register_controls(Console& c);
 
     Application& app_;
+    Application::Impl& d_;  // the application's state (impl.hpp)
     std::unique_ptr<Console> console_;
     std::unique_ptr<Telnet> telnet_;
 };
@@ -200,7 +223,7 @@ private:
 /// /forge/api/...), the built-in pages, live events and logs for the browser.
 class HttpFrontend {
 public:
-    explicit HttpFrontend(Application& app) : app_(app) {}
+    HttpFrontend(Application& app, Application::Impl& d) : app_(app), d_(d) {}
     /// Create the server and its routes ([http].enabled), not listening yet.
     void create(const Config& cfg);
     /// Listen; start the live updates.
@@ -212,7 +235,6 @@ public:
     void publish(const std::string& event, const json& data);
     /// Changed controls and alarms to the open pages (main loop).
     void push_state();
-    void add_endpoints(std::map<std::string, std::string>& e) const;
 
 private:
     void create_web(const Config& cfg);
@@ -228,6 +250,7 @@ private:
     };
 
     Application& app_;
+    Application::Impl& d_;  // the application's state (impl.hpp)
     std::mutex watch_mutex_;
     std::map<std::string, StreamWatch> watches_;
     std::unique_ptr<http::Server> http_;

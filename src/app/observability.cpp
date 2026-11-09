@@ -1,8 +1,6 @@
 // Application: metrics, the flight recorder, crash reports and the process
 // figures the framework keeps up to date by itself.
-#include "forge/application.hpp"
-
-#include "services.hpp"
+#include "impl.hpp"
 
 #include "forge/channel.hpp"
 #include "forge/crash.hpp"
@@ -20,9 +18,9 @@
 
 namespace forge {
 
-void Application::start_observability(const Config& cfg) {
+void Application::Impl::start_observability(const Config& cfg) {
     trace::configure(cfg.value<bool>("trace.enabled"), cfg.value<std::size_t>("trace.capacity"));
-    audit_.configure(cfg.value<std::size_t>("audit.history"), cfg.value<std::string>("audit.file"));
+    audit.configure(cfg.value<std::size_t>("audit.history"), cfg.value<std::string>("audit.file"));
 
     if (cfg.value<bool>("crash.enabled")) {
         std::string dir = cfg.value<std::string>("crash.dir");
@@ -30,36 +28,36 @@ void Application::start_observability(const Config& cfg) {
             const char* state = std::getenv("STATE_DIRECTORY");  // systemd StateDirectory=
             dir = state ? std::string(state).substr(0, std::string(state).find(':')) : "/tmp";
         }
-        if (auto report = crash::previous_report(info_.name, dir)) {
+        if (auto report = crash::previous_report(info.name, dir)) {
             std::ifstream in(*report);
             std::string first;
             std::getline(in, first);
             const auto kept = std::format(
-                "{}/{}-crash-{}.txt", dir, info_.name,
+                "{}/{}-crash-{}.txt", dir, info.name,
                 std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
                     .count());
             std::error_code ec;
             std::filesystem::rename(*report, kept, ec);
-            logger_->error("the previous run crashed ({}); report: {}", first, ec ? *report : kept);
-            alarms_.raise("forge.crashed", Severity::error,
-                          std::format("The previous run crashed ({}). Report: {}", first, ec ? *report : kept));
+            logger->error("the previous run crashed ({}); report: {}", first, ec ? *report : kept);
+            alarms.raise("forge.crashed", Severity::error,
+                         std::format("The previous run crashed ({}). Report: {}", first, ec ? *report : kept));
         }
-        crash::install(info_.name, dir);
+        crash::install(info.name, dir);
     }
     if (cfg.value<bool>("process.mlockall")) {
         if (auto err = rt::lock_memory(); err.empty()) {
-            logger_->info("memory locked (mlockall)");
+            logger->info("memory locked (mlockall)");
         } else {
-            logger_->warn("{}", err);
+            logger->warn("{}", err);
         }
     }
 
     // Process metrics, computed when read.
     auto& m = metrics::registry();
-    m.gauge_fn("process.uptime_seconds", [this] { return std::chrono::duration<double>(uptime()).count(); }, "Uptime",
-               "s");
-    m.gauge_fn("forge.loop.queued", [this] { return static_cast<double>(tasks_->size_approx()); },
-               "Tasks waiting for the main loop ([forge].max_pending_tasks bounds it)");
+    m.gauge_fn("process.uptime_seconds", [this] { return std::chrono::duration<double>(app.uptime()).count(); },
+               "Uptime", "s");
+    m.gauge_fn("forge.loop.queued", [this] { return static_cast<double>(loop.queued()); },
+               "Tasks waiting for the main loop ([loop].max_pending_tasks bounds it)");
     m.gauge_fn("process.rss_bytes", [] {
         long pages = 0, rss = 0;
         if (FILE* f = std::fopen("/proc/self/statm", "r")) {
@@ -83,12 +81,12 @@ void Application::start_observability(const Config& cfg) {
         }
         return static_cast<double>(n);
     }, "Threads");
-    m.gauge_fn("forge.pool.queued", [this] { return pool_ ? static_cast<double>(pool_->get_tasks_queued()) : 0.0; },
+    m.gauge_fn("forge.pool.queued", [this] { return pool ? static_cast<double>(pool->get_tasks_queued()) : 0.0; },
                "Tasks waiting for a worker thread");
-    m.gauge_fn("forge.scheduler.timers",
-               [this] { return scheduler_ ? static_cast<double>(scheduler_->pending()) : 0.0; }, "Pending timers");
-    m.gauge_fn("forge.alarms.active", [this] { return static_cast<double>(alarms_.active_count()); }, "Active alarms");
-    m.gauge_fn("forge.health.state", [this] { return static_cast<double>(health_.overall()); },
+    m.gauge_fn("forge.scheduler.timers", [this] { return scheduler ? static_cast<double>(scheduler->pending()) : 0.0; },
+               "Pending timers");
+    m.gauge_fn("forge.alarms.active", [this] { return static_cast<double>(alarms.active_count()); }, "Active alarms");
+    m.gauge_fn("forge.health.state", [this] { return static_cast<double>(health.overall()); },
                "Overall health: 1 ok, 2 degraded, 3 failed");
 }
 

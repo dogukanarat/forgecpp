@@ -1,6 +1,6 @@
 // RemoteConsole: one command registry for the local REPL (-i) and telnet,
 // with the framework's commands.
-#include "services.hpp"
+#include "impl.hpp"
 
 #include "forge/component.hpp"
 #include "forge/control.hpp"
@@ -53,9 +53,7 @@ void RemoteConsole::create(const Config& cfg) {
     register_builtins(*console_);
     if (app_.dashboard()) register_controls(*console_);
     register_framework(*console_);
-    app_.setup_console(*console_);
-    for (auto& c : app_.components_) c->setup_console(*console_);
-    for (auto& h : app_.hooks_.console) h(app_, *console_);
+    d_.setup_console(*console_);  // the application's commands, its components', the hooks'
 }
 
 void RemoteConsole::start_telnet(const Config& cfg) {
@@ -70,6 +68,7 @@ void RemoteConsole::start_telnet(const Config& cfg) {
     o.banner = std::format("{} {} on {} (forgecpp {})", info.name, info.version, host_name(), version_string);
     telnet_ = std::make_unique<Telnet>(*console_, app_.auth(), o);
     telnet_->start();
+    d_.endpoints.set("telnet", telnet_->endpoint());
     app_.logger()->info("console: telnet on {}", telnet_->endpoint());
 }
 
@@ -81,10 +80,6 @@ void RemoteConsole::stop() {
 void RemoteConsole::reset() {
     telnet_.reset();
     console_.reset();
-}
-
-void RemoteConsole::add_endpoints(std::map<std::string, std::string>& e) const {
-    if (telnet_) e["telnet"] = telnet_->endpoint();
 }
 
 void RemoteConsole::register_builtins(Console& c) {
@@ -119,7 +114,7 @@ void RemoteConsole::register_builtins(Console& c) {
             c.error("no such key '" + args[0] + "'");
         }
     });
-    c.add("reload", "reload  re-read the configuration file", [this](const Console::Args&) { app_.do_reload(); });
+    c.add("reload", "reload  re-read the configuration file", [this](const Console::Args&) { d_.reload(); });
     c.add("alarms", "alarms  list active alarms and recent history", [this, &c](const Console::Args&) {
         const auto list = app_.alarms().list();
         if (list.empty()) {
@@ -224,7 +219,7 @@ void RemoteConsole::register_framework(Console& c) {
     });
     c.add("streams", "streams  published streams and endpoints", [this, &c](const Console::Args&) {
         for (const auto& [k, v] : app_.endpoints()) c.print("  {:<8} {}", k, v);
-        for (const auto& s : app_.stream_list()) {
+        for (const auto& s : d_.messaging.stream_list()) {
             c.print("  stream {:<16} {:<22} {} subscriber(s), {} sent, {} dropped", s.name, s.type, s.subscribers,
                     s.sent, s.dropped);
         }

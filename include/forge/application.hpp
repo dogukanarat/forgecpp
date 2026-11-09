@@ -82,22 +82,11 @@ class App;
 namespace forge {
 
 class ThreadPool;  // forge/thread_pool.hpp (BS::thread_pool), parsed only where the pool is used
-template <class T>
-class Channel;  // forge/channel.hpp
 
 namespace http {
 class Server;
 class EventStream;
 }  // namespace http
-namespace detail {
-class StateStore;
-class Watchdog;
-class HubRegistration;
-class Messaging;
-class RemoteConsole;
-class HttpFrontend;
-void register_builtin_commands(Application& app);
-}  // namespace detail
 namespace web {
 class Dashboard;
 }  // namespace web
@@ -156,7 +145,7 @@ public:
 
     /// Request shutdown (thread-safe, also from signal context via the signal thread).
     void stop(int exit_code = 0);
-    bool stopping() const { return stop_requested_.load(); }
+    bool stopping() const;
 
     /// Re-read the configuration file and call on_reload() (thread-safe).
     void reload();
@@ -191,10 +180,10 @@ public:
     }
 
     /// [loop].request_timeout_ms: how long a request waits for the main loop.
-    std::chrono::milliseconds request_timeout() const { return std::chrono::milliseconds(request_timeout_ms_.load()); }
+    std::chrono::milliseconds request_timeout() const;
 
     /// True on the thread running the main loop.
-    bool on_main_loop() const { return std::this_thread::get_id() == main_thread_.load(); }
+    bool on_main_loop() const;
 
     /// Run `fn` on the main loop and get its result as a future. On the main
     /// loop itself it runs at once (a ready future), so waiting on it never
@@ -260,8 +249,8 @@ public:
     // --- deterministic time for tests ----------------------------------------
     /// Before run(): timers only fire when the test calls advance_time()
     /// (forge::testing::AppRunner: Options{.manual_time = true}, r.advance(10s)).
-    void use_manual_clock() { manual_clock_ = true; }
-    bool manual_clock() const { return manual_clock_; }
+    void use_manual_clock();
+    bool manual_clock() const;
     /// Manual clock only, not from the main loop: move time forward by `d`.
     /// Every timer that falls due on the way runs on the main loop, in order,
     /// seeing now() == its due time, before the next one; returns how many ran.
@@ -270,23 +259,23 @@ public:
     /// Publish an event asynchronously on the main loop.
     template <class Event>
     void emit(Event event) {
-        post([this, e = std::move(event)] { events_.publish(e); });
+        post([this, e = std::move(event)] { events().publish(e); });
     }
 
     // --- services ---------------------------------------------------------
-    const AppInfo& info() const { return info_; }
+    const AppInfo& info() const;
     /// Instance name when the application runs several times on a device
     /// (--instance, or the instance of its systemd template unit <name>@<instance>);
     /// "" otherwise. Valid from run() on.
-    const std::string& instance() const { return instance_; }
+    const std::string& instance() const;
     /// "<name>" or "<name>@<instance>": how forge-hub, the logs and /forge/api/info name it.
-    std::string id() const { return instance_.empty() ? info_.name : info_.name + "@" + instance_; }
+    std::string id() const;
     /// Snapshot of the effective configuration (file + overrides + flags).
     Config config() const;
     Logger logger() const;
     /// Valid from on_start() until run() returns.
     ThreadPool& pool();
-    EventBus& events() { return events_; }
+    EventBus& events();
     /// Valid from on_start() until run() returns.
     Scheduler& scheduler();
     /// nullptr unless the HTTP server is enabled.
@@ -294,10 +283,10 @@ public:
     /// Control registry declared in setup_web(); valid from on_start() until run()
     /// returns, with or without HTTP. Served at /forge/ when the web UI is enabled,
     /// and by the console and the built-in commands.
-    web::Dashboard* dashboard() { return dashboard_.get(); }
+    web::Dashboard* dashboard();
     /// Alarm list shown in the web UI (bell, banner, panel) and the console
     /// (`alarms`, `ack`). Thread-safe.
-    Alarms& alarms() { return alarms_; }
+    Alarms& alarms();
     /// Push an event to every open web page: forge.on(event, data => ...) in the browser.
     void publish_web(const std::string& event, const json& data);
     /// Short-lived message on every open page (level: info|success|warning|error).
@@ -308,10 +297,10 @@ public:
     /// The single path for control changes (roles, leases, audit); see control.hpp.
     ControlService& control();
     /// Who changed what (control changes, presses, commands, acks, leases).
-    Audit& audit() { return audit_; }
+    Audit& audit();
     /// Component health; drives /health, the watchdog and the "health" events.
-    Health& health() { return health_; }
-    const Auth& auth() const { return auth_; }
+    Health& health();
+    const Auth& auth() const;
     /// Process-wide metrics (forge::metrics::registry()).
     metrics::Registry& metrics() { return metrics::registry(); }
 
@@ -330,7 +319,7 @@ public:
 
     /// The commands this program answers, by number (links) and by name (web).
     /// The built-in ones (proto/forge/messages.proto) use 0x0001..0x00FF.
-    tmtc::Registry& commands() { return commands_; }
+    tmtc::Registry& commands();
     /// A command (docs/commands.md). Its handler runs on the main loop, like
     /// the controls; a busy loop refuses it with EAGAIN after
     /// [loop].request_timeout_ms. The caller needs `role`: the default,
@@ -341,8 +330,8 @@ public:
     /// registry from their own threads once they run.
     template <pb::Message Req, pb::Message Rsp>
     void command(std::uint16_t id, std::string name, tmtc::Handler<Req, Rsp> handler, Role role = Role::operator_) {
-        if (commands_closed_) throw std::logic_error("command '" + name + "': add commands before the start");
-        commands_.add<Req, Rsp>(id, name, [this, name, role, h = std::move(handler)](const Req& req, Rsp& rsp) {
+        if (commands().closed()) throw std::logic_error("command '" + name + "': add commands before the start");
+        commands().add<Req, Rsp>(id, name, [this, name, role, h = std::move(handler)](const Req& req, Rsp& rsp) {
             return run_command(name, role, [&] { return pb::to_json(req); },
                                [&] { return invoke_for(request_timeout(), [&] { return h(req, rsp); }); });
         });
@@ -373,7 +362,7 @@ public:
         return ref;
     }
     /// Command line parser; add your own options in the constructor or setup_cli().
-    CLI::App& cli() { return *cli_; }
+    CLI::App& cli();
     std::chrono::steady_clock::duration uptime() const;
 
     // --- lambda hooks (alternative to overriding the virtuals) ------------
@@ -397,7 +386,7 @@ protected:
     /// Declare configuration keys (types, ranges, docs); see config_schema.hpp.
     virtual void setup_config(config::Schema& schema);
     /// Applications that must not register with forge-hub (the hub itself).
-    void disable_hub_registration() { hub_registration_ = false; }
+    void disable_hub_registration();
     /// Register HTTP routes (called before the server starts listening).
     virtual void setup_http(http::Server& server);
     /// Register console commands.
@@ -447,115 +436,20 @@ private:
     /// Counts the timeout and throws 503 "main loop busy".
     [[noreturn]] void loop_busy() const;
     void background_failed(const char* what);
-
-    struct Hooks {
-        std::vector<Hook> start, stop, reload;
-        std::vector<std::function<void(Application&, config::Schema&)>> config;
-        std::vector<std::function<void(Application&, CLI::App&)>> cli;
-        std::vector<std::function<void(Application&, http::Server&)>> http;
-        std::vector<std::function<void(Application&, Console&)>> console;
-        std::vector<std::function<void(Application&, web::Dashboard&)>> web;
-    };
-
-    // The internal services (src/app/services.hpp) reach the hooks, the
-    // components and the virtual setup functions.
-    friend class detail::Messaging;
-    friend class detail::RemoteConsole;
-    friend class detail::HttpFrontend;
-    friend void detail::register_builtin_commands(Application& app);
-
     /// The role check and the audit record around a command's handler.
     Status run_command(const std::string& name, Role role, const std::function<json()>& request,
                        const std::function<Status()>& run);
-    friend class ControlService;
-
-    /// After a control changed (live updates, persistence, "state" event).
-    /// Main loop or any thread.
-    void control_changed(const std::string& id, bool persistent);
-    std::vector<zmq::StreamInfo> stream_list() const;
-
-    int parse_command_line(int argc, char** argv);
-    Config load_config() const;
-    void declare_framework_config(config::Schema& schema);
-    bool validate_config(const Config& config, bool at_start);
     void attach(std::unique_ptr<Component> component);
-    void start_observability(const Config& config);
-    void setup_logging(const Config& config);
-    void start_signal_thread();
-    void stop_signal_thread();
-    /// Run `blocking` on a helper thread while this (main) thread keeps
-    /// executing posted tasks, so it cannot deadlock on invoke()/call().
-    void drain_while(const std::function<void()>& blocking);
-    void main_loop();
-    void do_reload();
-    void shutdown();
-    /// Milliseconds since the main loop's last heartbeat (0 before it runs).
-    std::int64_t loop_age_ms() const;
 
-    AppInfo info_;
-    Hooks hooks_;
-    std::unique_ptr<CLI::App> cli_;
+public:
+    /// The application's state and internal services: defined inside the
+    /// library (src/app/impl.hpp), opaque to applications. Nothing of the
+    /// layout of an Application is visible here, so it can change without
+    /// rebuilding the applications.
+    struct Impl;
 
-    // command line state
-    std::string config_file_;
-    std::vector<std::string> overrides_;
-    std::string log_level_;
-    std::string log_file_;
-    int verbosity_ = 0;
-    bool syslog_ = false;
-    bool interactive_ = false;
-    std::string http_listen_;
-    std::string instance_;
-    bool manual_clock_ = false;
-    std::atomic<int> slow_task_ms_{200};  ///< [loop].slow_task_ms
-    std::atomic<int> max_pending_tasks_{10000};  ///< [loop].max_pending_tasks
-    bool print_config_ = false;
-    bool help_config_ = false;
-    bool check_config_ = false;
-
-    mutable std::mutex config_mutex_;
-    Config config_;
-
-    Logger logger_;
-    EventBus events_;
-    Alarms alarms_;
-    std::unique_ptr<Channel<Task>> tasks_;  // the main loop's queue
-    std::unique_ptr<ThreadPool> pool_;
-    std::unique_ptr<Scheduler> scheduler_;
-    std::unique_ptr<web::Dashboard> dashboard_;
-    std::atomic<std::thread::id> main_thread_{};
-
-    config::Schema schema_;
-    Audit audit_;
-    tmtc::Registry commands_;
-    Health health_;
-    Auth auth_;
-    std::unique_ptr<ControlService> control_;
-    std::vector<std::unique_ptr<Component>> components_;
-    std::mutex workers_mutex_;
-    std::vector<std::unique_ptr<Worker>> workers_;
-    // services (src/app/)
-    std::unique_ptr<detail::StateStore> state_;
-    std::unique_ptr<detail::Watchdog> watchdog_;
-    std::unique_ptr<detail::HubRegistration> hub_;
-    std::unique_ptr<detail::Messaging> messaging_;
-    std::unique_ptr<detail::RemoteConsole> console_;
-    std::unique_ptr<detail::HttpFrontend> http_;
-    bool hub_registration_ = true;
-    std::atomic<int> stop_signal_{0};                 ///< signal that asked us to stop (0 = none)
-    std::atomic<int> request_timeout_ms_{2000};       ///< [loop].request_timeout_ms
-    std::atomic<double> watchdog_grace_s_{0};         ///< [health].watchdog_grace_s
-    sigset_t saved_signal_mask_{};                    ///< the caller's mask, put back by shutdown()
-    std::atomic<std::int64_t> loop_tick_ms_{0};       ///< last main loop heartbeat (steady clock)
-    std::atomic<bool> state_event_pending_{false};
-
-    std::atomic<bool> stop_requested_{false};
-    bool commands_closed_ = false;  // set before the links start
-    std::atomic<int> exit_code_{0};
-    std::atomic<bool> signal_thread_running_{false};
-    int signal_wake_fd_ = -1;  ///< eventfd: stop_signal_thread() wakes the thread's poll
-    std::thread signal_thread_;
-    std::chrono::steady_clock::time_point started_at_;
+private:
+    std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace forge
