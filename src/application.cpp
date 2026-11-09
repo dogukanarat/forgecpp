@@ -271,6 +271,9 @@ Application& Application::hook_controls(std::function<void(Application&, Control
     hooks_.web.push_back(std::move(hook));
     return *this;
 }
+Application& Application::hook_web(std::function<void(Application&, web::Dashboard&)> hook) {
+    return hook_controls(std::move(hook));
+}
 Application& Application::hook_config(std::function<void(Application&, config::Schema&)> hook) {
     hooks_.config.push_back(std::move(hook));
     return *this;

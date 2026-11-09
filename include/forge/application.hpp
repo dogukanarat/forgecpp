@@ -404,9 +404,8 @@ public:
     Application& hook_console(std::function<void(Application&, Console&)> hook);
     /// Declare controls and actions (the lambda form of setup_controls()).
     Application& hook_controls(std::function<void(Application&, Controls&)> hook);
-    Application& hook_web(std::function<void(Application&, web::Dashboard&)> hook) {
-        return hook_controls(std::move(hook));
-    }
+    /// The old name of hook_controls().
+    Application& hook_web(std::function<void(Application&, web::Dashboard&)> hook);
 
 protected:
     /// Add command line options (called before parsing).
