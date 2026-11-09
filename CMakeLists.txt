@@ -106,6 +106,8 @@ include("${PROJECT_SOURCE_DIR}/cmake/ForgeHelpers.cmake")
 add_library(forgecpp
     src/application.cpp
     src/app/commands.cpp
+    src/app/config.cpp
+    src/app/observability.cpp
     src/app/http_frontend.cpp
     src/app/messaging.cpp
     src/app/remote_console.cpp
