@@ -17,7 +17,7 @@ const app = process.argv[2];
 const port = 20000 + Math.floor(Math.random() * 20000);
 const base = `http://127.0.0.1:${port}`;
 
-async function waitFor(fn, what, ms = 5000) {
+async function waitFor(fn, what, ms = 10000) {
   const end = Date.now() + ms;
   for (;;) {
     try { if (await fn()) return; } catch (e) { /* not yet */ }
@@ -43,6 +43,10 @@ async function main() {
     page.on('pageerror', e => errors.push(e.message));
     page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
     await page.goto(`${base}/forge/`);
+    // Its controls drawn and its event stream open: a state update cannot
+    // overwrite what the test types.
+    await waitFor(async () => page.evaluate(() => window.forge && window.forge.connected), 'the panel connected');
+    await page.locator('input[data-forge-bind="gain"]').waitFor();
 
     // A number: typed, then sent on change.
     const gain = page.locator('input[data-forge-bind="gain"]');
