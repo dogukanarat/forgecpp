@@ -40,6 +40,32 @@ add_test(NAME forge_proto_refuses_unbounded
 set_tests_properties(forge_proto_refuses_unbounded PROPERTIES
     PASS_REGULAR_EXPRESSION "unbounded.text: give it a bound")
 
+# Fuzz targets for what arrives on a link (c2 frames, protobuf bytes, JSON).
+# By default each is a short, repeatable ctest that mutates its seeds
+# (tests/fuzz/driver.cpp); -DFORGECPP_FUZZ=ON builds them for libFuzzer
+# (clang with -fsanitize=fuzzer) instead:  ./fuzz_c2 -max_total_time=600
+option(FORGECPP_FUZZ "Build the fuzz targets for libFuzzer (clang)" OFF)
+foreach(target c2 pb)
+    set(name fuzz_${target})
+    add_executable(${name} fuzz/${name}.cpp)
+    target_include_directories(${name} PRIVATE fuzz)
+    target_link_libraries(${name} PRIVATE forgecpp)
+    if(target STREQUAL "c2")
+        forge_add_proto(${name} ROOT proto PROTOS forge_test/commands.proto)
+    else()
+        forge_add_proto(${name} ROOT proto PROTOS forge_test/all_types.proto)
+    endif()
+    if(FORGECPP_FUZZ)
+        target_compile_options(${name} PRIVATE -fsanitize=fuzzer,address,undefined)
+        target_link_options(${name} PRIVATE -fsanitize=fuzzer,address,undefined)
+        target_sources(${name} PRIVATE fuzz/fail.cpp)
+    else()
+        target_sources(${name} PRIVATE fuzz/driver.cpp)
+        add_test(NAME ${name} COMMAND ${name})
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT "FORGE_FUZZ_RUNS=20000" LABELS fuzz)
+    endif()
+endforeach()
+
 forge_add_test(forgecpp_zmq_tests SOURCES test_zmq.cpp)
 forge_add_test(forgecpp_framework_tests SOURCES test_framework.cpp test_services.cpp)
 # The services are internal (src/app/services.hpp).

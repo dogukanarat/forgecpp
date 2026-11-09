@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Quick checks of what is about to be committed (a few seconds). Turned on by
+# tools/check.sh --install-hook; skipped with git commit --no-verify. The full
+# set (build, tests, sanitizers) is tools/check.sh.
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)"
+failed=0
+
+# Trailing whitespace, conflict markers.
+if ! git diff --cached --check; then
+    echo "pre-commit: whitespace or conflict markers (above)"; failed=1
+fi
+
+# Formatting of the staged C++ files.
+mapfile -t cpp < <(git diff --cached --name-only --diff-filter=ACMR -- '*.cpp' '*.hpp' '*.h' |
+                   grep -v -e '^third_party/' -e '^tests/compat/zephyrus/private/' -e '^tests/compat/zephyrus/stubs/')
+if [[ ${#cpp[@]} -gt 0 ]] && command -v clang-format >/dev/null; then
+    bad=()
+    for f in "${cpp[@]}"; do
+        git show ":${f}" | clang-format --assume-filename="${f}" --dry-run --Werror >/dev/null 2>&1 || bad+=("${f}")
+    done
+    if [[ ${#bad[@]} -gt 0 ]]; then
+        printf 'pre-commit: not formatted (clang-format -i %s)\n' "${bad[*]}"; failed=1
+    fi
+fi
+
+# Module layers, when a header or source moved.
+if [[ ${#cpp[@]} -gt 0 ]]; then
+    python3 tools/check-layers.py >/dev/null || { python3 tools/check-layers.py; failed=1; }
+fi
+
+# The messages stay compatible (needs protoc).
+if git diff --cached --name-only | grep -q '^proto/forge/'; then
+    protoc="$(command -v protoc || true)"
+    deps="${FORGECPP_DEPS:-}"
+    [[ -z "${protoc}" && -n "${deps}" && -x "${deps}/bin/protoc" ]] && protoc="${deps}/bin/protoc"
+    if [[ -n "${protoc}" ]]; then
+        python3 tools/proto-compat.py --protoc "${protoc}" >/dev/null || {
+            python3 tools/proto-compat.py --protoc "${protoc}"; failed=1; }
+    else
+        echo "pre-commit: proto/forge changed but no protoc to check it (set FORGECPP_DEPS)"
+    fi
+fi
+
+[[ ${failed} == 0 ]] || echo "pre-commit: fix the above, or commit with --no-verify"
+exit ${failed}

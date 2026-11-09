@@ -53,6 +53,15 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   `forge.framing` (streams), with `forge.messages_pb2` and `forge.hub_pb2`.
 - `forge::base64` (`forge/base64.hpp`), shared by auth, HTTP and the JSON of
   bytes fields.
+- `tools/check.sh`: on this machine, what CI checks (format, layers, build,
+  tests, fuzz, API and message records); `--asan`, `--tsan PREFIX`,
+  `--tidy`, `--fix`. `tools/check.sh --install-hook` adds a quick pre-commit
+  check (`tools/git-hooks/pre-commit`).
+- `.clang-format`, `.clang-tidy`, `.editorconfig`; `CMakePresets.json`
+  (dev, release, asan, tsan, fuzz, armhf; libraries from `FORGECPP_DEPS`).
+- Fuzz targets for c2 frames, the dispatcher, protobuf bytes and JSON
+  (`tests/fuzz`): a short ctest by default, libFuzzer with
+  `-DFORGECPP_FUZZ=ON`.
 
 ### Changed
 
@@ -144,7 +153,9 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
     framing`); Yocto: `python3-forge` replaces `python3-forge-v1` (it
     RPROVIDES the old name) and there is no `forgecpp-protoc` package any
     more.
-  - `Application::command()` throws when it is called after the links
+  - `Application(info, installed_config)` and `zmq::Receiver(..., options)`
+  take `const std::string&` / `const Options&` (were by value).
+- `Application::command()` throws when it is called after the links
     started: add commands in the constructor or `setup_web()`.
 - `install.sh --profile embedded` keeps the libraries shared (it built them
   static): the applications of a device share one `libforgecpp.so`,

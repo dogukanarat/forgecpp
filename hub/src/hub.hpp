@@ -106,7 +106,7 @@ private:
     void tick();
     void apply_units(const std::map<std::string, UnitState>& units);
     void probe_done(const std::string& name, int pid, bool ok, const json& health, const std::string& error);
-    void unit_action(const std::string& name, std::vector<std::string> verbs);
+    void unit_action(const std::string& name, const std::vector<std::string>& verbs);
 
     // with mutex_ held
     void ended(Entry& e, const std::string& why, bool failure);

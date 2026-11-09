@@ -1,0 +1,23 @@
+# Checks that find real bugs with few false alarms. tools/check.sh --tidy runs
+# them on the files a commit changes (or on all with --tidy-all).
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-exception-escape,
+  -bugprone-unchecked-optional-access,
+  performance-*,
+  -performance-enum-size,
+  -performance-inefficient-vector-operation,
+  -performance-inefficient-string-concatenation,
+  -performance-avoid-endl,
+  modernize-use-override,
+  modernize-use-nullptr,
+  misc-redundant-expression,
+  misc-unused-using-decls,
+  readability-misleading-indentation
+WarningsAsErrors: ''
+HeaderFilterRegex: '(include/forge|src|hub/src|tools)/'
+FormatStyle: file

@@ -115,7 +115,6 @@ class Dashboard;
 }
 namespace zmq {
 class Publisher;
-class Server;
 class Stream;
 struct StreamInfo;
 struct StreamOptions;
@@ -157,7 +156,7 @@ public:
 
     /// `installed_config` is where the build system installs this app's config
     /// file; forge_add_app() defines FORGE_APP_INSTALLED_CONFIG accordingly.
-    explicit Application(AppInfo info, std::string installed_config = FORGE_APP_INSTALLED_CONFIG);
+    explicit Application(AppInfo info, const std::string& installed_config = FORGE_APP_INSTALLED_CONFIG);
     virtual ~Application();
 
     Application(const Application&) = delete;

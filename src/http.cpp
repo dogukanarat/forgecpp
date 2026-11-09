@@ -101,7 +101,7 @@ void reply_json(Response& res, const json& body, int status) {
 // Server
 
 Server::Server() {
-    server_.set_exception_handler([](const Request& req, Response& res, std::exception_ptr ep) {
+    server_.set_exception_handler([](const Request& req, Response& res, const std::exception_ptr& ep) {
         std::string what = "unknown error";
         try {
             if (ep) std::rethrow_exception(ep);
@@ -115,7 +115,7 @@ Server::Server() {
         } catch (const std::exception& e) {
             what = e.what();
         } catch (...) {
-            // not a std::exception: `what` stays "unknown error"
+            what = "unknown error (not a std::exception)";
         }
         log::error("http: {} {} failed: {}", req.method, req.path, what);
         reply_error(res, 500, what);
@@ -230,11 +230,12 @@ Server& Server::auth(Auth a) {
 }
 
 Server& Server::events(const std::string& pattern, std::shared_ptr<EventStream> stream) {
+    auto handler = stream->handler();
     {
         std::lock_guard lock(mutex_);
-        streams_.push_back(stream);
+        streams_.push_back(std::move(stream));
     }
-    return get(pattern, stream->handler());
+    return get(pattern, std::move(handler));
 }
 
 Server& Server::assets(const std::vector<web::Asset>& list) {

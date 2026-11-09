@@ -454,7 +454,7 @@ std::string Sender::endpoint() const { return resolved_endpoint(const_cast<::zmq
 Receiver::Receiver(Kind kind, const std::string& endpoint, Handler handler)
     : Receiver(kind, endpoint, std::move(handler), Options{}) {}
 
-Receiver::Receiver(Kind kind, const std::string& endpoint, Handler handler, Options options)
+Receiver::Receiver(Kind kind, const std::string& endpoint, Handler handler, const Options& options)
     : socket_(context(), kind == Kind::sub ? ::zmq::socket_type::sub : ::zmq::socket_type::pull),
       handler_(std::move(handler)) {
     apply(socket_, options.socket);
@@ -653,20 +653,16 @@ void Server::run() {
                 if (i >= frames.size()) continue;  // no request frame
                 job.body = frames[i].to_string();
                 ++requests_;
-                bool queued = false;
-                {
-                    std::lock_guard lock(mutex_);
-                    if (!stopping_ && queue_.size() < server_options_.max_queued) {
-                        queue_.push_back(std::move(job));
-                        queued = true;
-                    }
-                }
-                if (queued) {
-                    cv_.notify_one();
-                } else {
+                std::unique_lock lock(mutex_);
+                if (stopping_ || queue_.size() >= server_options_.max_queued) {
+                    lock.unlock();
                     ++rejected_;
                     send_reply(socket_, job, busy(job.body));
+                    continue;
                 }
+                queue_.push_back(std::move(job));
+                lock.unlock();
+                cv_.notify_one();
             }
         } catch (const ::zmq::error_t& e) {
             if (e.num() == ETERM) break;

@@ -8,14 +8,14 @@ namespace forge {
 
 Scheduler::Scheduler(Executor executor) : executor_(std::move(executor)) {
     if (!executor_) {
-        executor_ = [](Task t) { t(); };
+        executor_ = [](const Task& t) { t(); };
     }
     thread_ = std::thread([this] { run(); });
 }
 
 Scheduler::Scheduler(ManualClock, Executor executor) : executor_(std::move(executor)), manual_(true) {
     if (!executor_) {
-        executor_ = [](Task t) { t(); };
+        executor_ = [](const Task& t) { t(); };
     }
     // No timer thread: time moves with advance().
 }

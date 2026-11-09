@@ -128,8 +128,9 @@ void HttpFrontend::create_web(const Config& cfg) {
         if (!app_.stopping()) {
             try {
                 greeting.push_back({"state", app_.invoke_for(app_.request_timeout(), [dashboard] { return dashboard->state(); })});
-            } catch (const std::exception&) {
+            } catch (const std::exception& e) {
                 // main loop busy: the next state event brings the values
+                log::debug("web: greeting without the state: {}", e.what());
             }
         }
         greeting.push_back({"alarms", alarms.to_json()});

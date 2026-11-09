@@ -93,7 +93,7 @@ sigset_t handled_signal_set() {
 
 }  // namespace
 
-Application::Application(AppInfo info, std::string installed_config)
+Application::Application(AppInfo info, const std::string& installed_config)
     : info_(std::move(info)), cli_(std::make_unique<CLI::App>()) {
     if (info_.name.empty()) info_.name = "app";
     if (info_.config_paths.empty()) {

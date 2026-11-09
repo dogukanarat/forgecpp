@@ -283,7 +283,7 @@ public:
     };
 
     Receiver(Kind kind, const std::string& endpoint, Handler handler);
-    Receiver(Kind kind, const std::string& endpoint, Handler handler, Options options);
+    Receiver(Kind kind, const std::string& endpoint, Handler handler, const Options& options);
     ~Receiver();
 
     Receiver(const Receiver&) = delete;

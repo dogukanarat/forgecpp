@@ -739,7 +739,7 @@ Entry& find_or_throw(std::map<std::string, Entry>& apps, const std::string& name
 }
 }  // namespace
 
-void Hub::unit_action(const std::string& name, std::vector<std::string> verbs) {
+void Hub::unit_action(const std::string& name, const std::vector<std::string>& verbs) {
     std::string unit;
     {
         std::lock_guard lock(mutex_);
