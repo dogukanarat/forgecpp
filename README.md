@@ -72,6 +72,44 @@ telnet device 2323                              # the console, remotely
 kill -HUP $(pidof pump)            # reload the configuration
 ```
 
+## What it looks like
+
+**The control panel** at `/forge/`, in every application without a line of
+HTML: the controls declared in C++, live values, alarms, the log
+(`examples/sensor-service`).
+
+![The control panel of sensor-service](docs/images/panel-controls.png)
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/panel-commands.png" alt="The Commands page"></td>
+<td width="50%"><img src="docs/images/panel-metrics.png" alt="The Metrics page"></td>
+</tr>
+<tr>
+<td><b>Commands:</b> every command of the program, with a JSON form; the same
+commands answer binary c2 frames on ZeroMQ, a serial line or a CAN bus.</td>
+<td><b>Metrics:</b> the framework's and the application's, with a trend;
+also <code>/metrics</code> for Prometheus. Health, streams, audit, leases and
+the flight recorder have their pages too.</td>
+</tr>
+</table>
+
+**The console**, the same commands without a browser: `-i` on the terminal,
+or over telnet (`[console].telnet`) on a remote device.
+
+<img src="docs/images/console.png" alt="The interactive console of the pump" width="720">
+
+**forge-hub**, the device's dashboard: every forgecpp program on the device
+registers with it; their health, alarms, CPU and memory, systemd restarts,
+and the way into each one's panel.
+
+![forge-hub](docs/images/hub.png)
+
+**An application's own page** next to the panel: the spectrum analyzer of
+`examples/spectrum-analyzer`, here on its simulated AD9364.
+
+![The spectrum analyzer's page](docs/images/spectrum-analyzer.jpg)
+
 ## What's inside
 
 | Library | Version | Purpose | In forgecpp |
@@ -161,6 +199,9 @@ forge_add_app(mydaemon
 forge_add_web(mytool DIR web PREFIX /)
 # or the classic way:
 target_link_libraries(mytool PRIVATE forgecpp::forgecpp)
+# the optional components (docs/storage.md):
+find_package(forgecpp REQUIRED COMPONENTS sqlite lz4)
+target_link_libraries(recorder PRIVATE forgecpp::sqlite forgecpp::lz4)
 ```
 
 Without CMake: `pkg-config --cflags --libs forgecpp`.
@@ -175,6 +216,7 @@ Without CMake: `pkg-config --cflags --libs forgecpp`.
 | [Commands and streams](docs/messaging.md) | The message standard; [adding a command](docs/commands.md); [the wire format](docs/protocol.md) |
 | [Running it](docs/operations.md) | Access control, leases, the audit trail, observability, forge-hub |
 | [Threads](docs/threading.md) | Which thread may do what, and how to hand work between them |
+| [Field notes](docs/field-notes.md) | The first weeks on a device: ports, debugging, persisted controls, time without an RTC, a busy main loop |
 | [GPIO and CAN](docs/hardware-io.md) | Lines, edges, the simulated chip; CAN frames, commands over ISO-TP, vcan |
 | [Storage and compression](docs/storage.md) | SQLite, store and forward (`forge::Backlog`), LZ4 |
 | [Installation](docs/installation.md) | Every `install.sh` option, cross builds, Yocto, build times |
@@ -186,6 +228,7 @@ Without CMake: `pkg-config --cflags --libs forgecpp`.
 | Example | What it shows |
 |---|---|
 | `examples/hello` | The smallest daemon (lambda style), a console command |
+| `examples/pump` | The application of the [tutorials](docs/tutorials/README.md): controls, configuration, timers, alarms, a command of its own, a stream, tests |
 | `examples/sensor-service` (`sensor-service`) | Every building block: channel, thread pool, events, control panel, own page, alarm with hysteresis |
 | `examples/pipeline` | **Multi-threaded application:** N producer threads → lock-free `Channel` → dispatcher thread → `ThreadPool` workers → result channel → main loop. Bounded in-flight work (backpressure), atomic counters, alarms raised from worker threads, clean shutdown |
 | `examples/three-threads` | **Three threads in one file:** `acquire` (a dummy sensor) → `Channel` → `process` (blocks) → `Channel` → `downlink`, results into the main loop with `post()`. Named threads with `worker()` (`[threads.<name>]` priorities, clean stop, a thread that throws shows in health and alarms), atomics for what the panel changes, a test that drives it through its controls |
@@ -227,7 +270,7 @@ FFT/windows).
 Every example has a generated systemd unit next to its binary
 (`build/forgecpp/examples/<name>.service`, `.../examples/<name>/<name>.service`
 for radio-controller, spectrum-analyzer, qam-modem and channel-emulator) with a restart policy that suits it:
-hello on-failure without a watchdog, sensor-service, pipeline, three-threads,
+hello on-failure without a watchdog, pump, sensor-service, pipeline, three-threads,
 payload-power, can-node and telemetry-store on-failure with a watchdog, thermostat `always`, radio-controller, spectrum-analyzer,
 qam-modem and channel-emulator on-failure (3 in 10 minutes) with a 30 s watchdog.
 

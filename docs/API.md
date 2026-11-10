@@ -14,7 +14,8 @@ in CI on every change.
 | HTTP routes under `/forge/api/`, `/health`, `/metrics` | yes | the framework tests |
 | `forgectl` commands, application command line flags | yes | the CI smoke test |
 | CMake: `forge_add_app`, `forge_add_web`, `forge_add_test`, `forge_add_proto`, `forge_install_python` | yes | examples, scaffolder, CI |
-| Python: `forge` package (`framing`, `c2`, `messages_pb2`) | yes | CI (the clients) |
+| Python: `forge` package (`framing`, `c2`, `serial`, `messages_pb2`, `hub_pb2`) | yes | CI (the clients) |
+| The optional components `forgecpp::sqlite`, `forgecpp::lz4` (`find_package(forgecpp COMPONENTS sqlite lz4)`) | yes | their tests; `tools/api-check.py` records `libforgecpp.so` only, not their libraries |
 | Log text, metric names of internals, web page markup | no | |
 
 ## Versions
@@ -58,7 +59,8 @@ still carry a third-party library do so on purpose, and say so at the top:
 `http.hpp` (cpp-httplib's `Request`/`Response` are the handler types),
 `zmq.hpp` (cppzmq), `channel.hpp` / `buffer_pool.hpp` (moodycamel),
 `thread_pool.hpp` (BS), `log_rt.hpp` (quill's macros), `json.hpp` (nlohmann,
-forgecpp's JSON type everywhere), `pb.hpp` (nanopb's descriptors).
+forgecpp's JSON type everywhere), `pb.hpp` (nanopb's descriptors), `forge.hpp`
+(CLI11, for `setup_cli`), `testing.hpp` (doctest).
 
 **Why the library still exports everything.** Hidden visibility
 (`-fvisibility=hidden` with an export macro) is the 1.0 step, and it is not

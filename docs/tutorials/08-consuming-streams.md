@@ -9,6 +9,8 @@ version, with reconnection and a health report).
 // monitor.hpp: raises an alarm when the pump's pressure is out of range.
 #include <forge/forge.hpp>
 
+#include "pump.forge.hpp"  // the pump's messages (forge_add_proto)
+
 class Monitor : public forge::Application {
 public:
     Monitor() : Application({"monitor", "1.0.0", "Watches the pump"}) {}
@@ -34,7 +36,7 @@ protected:
         rx_ = std::make_unique<forge::zmq::Receiver>(
             forge::zmq::Receiver::Kind::sub, cfg.value<std::string>("pump.data"),
             [this](forge::zmq::Message&& m) {
-                const auto sample = m.as<pump_sample>();  // checks the header's type
+                const auto sample = m.as<pump_reading>();  // checks the header's type
                 post([this, sample] { on_sample(sample); });
             },
             forge::zmq::Receiver::Options{.topics = {"pressure"}});
@@ -49,12 +51,12 @@ protected:
     void on_stop() override { rx_.reset(); }
 
 private:
-    void on_sample(const pump_sample& s) {
-        pressure_ = s.bar;
+    void on_sample(const pump_reading& s) {
+        pressure_ = s.pressure_bar;
         last_seen_ = now();
         health().set("pump", forge::HealthState::ok);
-        if (s.bar > max_bar_) {
-            alarms().raise("pump.pressure", forge::Severity::error, std::format("{:.2f} bar", s.bar));
+        if (s.pressure_bar > max_bar_) {
+            alarms().raise("pump.pressure", forge::Severity::error, std::format("{:.2f} bar", s.pressure_bar));
         } else {
             alarms().clear("pump.pressure");
         }
@@ -70,17 +72,17 @@ Points worth keeping:
 
 - **The receiver's callback runs on the receiver's thread.** `post()` moves
   the work to the main loop; the controls, alarms and health are touched
-  there only ([threading.md](threading.md)).
+  there only ([threading.md](../threading.md)).
 - **`m.as<T>()` checks the type** named in the stream header and throws when
   the publisher sends something else; `Receiver::lost()` counts the gaps in
   the sequence numbers.
 - **Liveness is the consumer's job.** A stream carries no heartbeat
-  ([protocol.md](protocol.md#what-is-guaranteed)); a timer that notices
+  ([protocol.md](../protocol.md#what-is-guaranteed)); a timer that notices
   silence and reports it under health is the pattern.
 - **The endpoint is configuration**, declared in the schema with a default
   that matches the device's port plan ([field-notes.md](../field-notes.md#ports-on-a-device)).
 
-The messages: `pump_sample` comes from the pump's `.proto`; the monitor's
+The messages: `pump_reading` comes from the pump's `.proto`; the monitor's
 CMakeLists.txt compiles the same file with `forge_add_proto(... PROTOS
 pump/pump.proto)` (installed by the pump in `share/pump/proto`), so both
 programs share one definition.

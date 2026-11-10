@@ -176,8 +176,8 @@ guarantees are those of the sockets and of c2, and they are these:
 - **Time in a header is the wall clock** (`time_unix_ns`); it moves with NTP.
   Use `seq` for loss and order, time for display.
 - **A serial line adds**: a message is cut into at most 255 fragments of
-  `frame_size - 8` bytes (236 with the default 244), so the longest message
-  on a line is about 60 kB, below c2's 65 535-byte payload; a damaged or lost
+  `frame_size - 8` bytes (236 with the default 244), and a message is at most
+  16384 bytes (`FramingOptions::max_message`); a damaged or lost
   fragment loses that one message; there is no acknowledgement and no
   retransmission below c2.
 - **There is no heartbeat on the command link**: a peer that is gone is
@@ -211,11 +211,11 @@ link decodes them.
 
 ## On a serial line
 
-`[forge].serial = "/dev/ttyUSB0"` answers the same commands on a UART (or USB
+`[serial].device = "/dev/ttyUSB0"` answers the same commands on a UART (or USB
 CDC), as zephyrus does on its links (`modules/lib/cobs`). The two ends are
 equal: either may send requests, answers and reports. A c2 frame is one
 *message*; a message is cut into *fragments* that fit one frame of at most
-`[forge].serial_frame_size` bytes (244, zephyrus's
+`[serial].frame_size` bytes (244, zephyrus's
 `CONFIG_ZEPHYRUS_COBS_FRAME_SIZE`):
 
 ```
@@ -245,12 +245,12 @@ equal: either may send requests, answers and reports. A c2 frame is one
   (`CONFIG_ZEPHYRUS_COBS_MAX_MESSAGE_SIZE`): a device that asks for the long
   lists needs more.
 - 8 data bits, no parity, one stop bit, no flow control;
-  `[forge].serial_baud` (115200).
+  `[serial].baud` (115200).
 
 `tests/compat/zephyrus` checks this against zephyrus's own C code: the same
 bytes for the same message, the same messages from the same damaged stream.
 
-From code (to a device, or to a program with `[forge].serial`):
+From code (to a device, or to a program with `[serial].device`):
 
 ```cpp
 forge::serial::Link link({.device = "/dev/ttyUSB0", .baud = 115200});

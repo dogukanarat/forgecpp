@@ -3,8 +3,9 @@
 The front page of a device: every forgecpp application that runs on it, with
 its state, health, alarms, uptime, CPU and memory, its systemd restart policy
 and restarts, and **Open** / **Control panel** buttons, so nobody has to
-remember ports. Built and installed with forgecpp (`FORGECPP_BUILD_HUB`, on by
-default; Yocto: the `hub` PACKAGECONFIG, package `forgecpp-hub`).
+remember ports. Built and installed with forgecpp (`FORGECPP_BUILD_HUB`, on
+when forgecpp is built on its own; `install.sh --without-hub` leaves it out;
+Yocto: the `hub` PACKAGECONFIG, package `forgecpp-hub`).
 
 ```
 application ──register (pid, ports)──▶ forge-hub  tcp://127.0.0.1:5550 (localhost)

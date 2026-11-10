@@ -20,9 +20,10 @@ LIC_FILES_CHKSUM = " \
 "
 CVE_PRODUCT = "forgecpp"
 
-# The libraries: meta-oe's zeromq, cppzmq, nlohmann-json, cli11, tomlplusplus,
-# doctest, protobuf (protoc on the build machine); this layer's quill,
-# cpp-httplib and concurrentqueue. The messages are generated on the build
+# The libraries: zeromq, cppzmq, nlohmann-json, cli11, protobuf (protoc on the
+# build machine) from meta-oe, or from this layer's backfill without it; this
+# layer's quill, cpp-httplib, concurrentqueue, tomlplusplus and doctest; SQLite
+# and LZ4 (PACKAGECONFIG sqlite, lz4) from oe-core. The messages are generated on the build
 # machine with protoc and nanopb's generator (python3-protobuf); the target
 # gets C code only.
 DEPENDS = " \

@@ -19,7 +19,8 @@ table in the project's README):
 | channel-emulator | 8083 | 5587 | 5589 | 5585 | 2326 |
 
 The rule the examples follow: one block of ten per program (`55x0`..`55x9`:
-control `x7`, events `x9`, data `x5`), HTTP from 8080 up, telnet from 2323 up.
+control `x7`, events `x9`, data `x5`; spectrum-analyzer's data is `x6`), HTTP
+from 8080 up, telnet from 2323 up. forge-hub has 5551..5553.
 forge-hub shows every program's endpoints, so an operator never has to
 remember them; for programs on the same device, `ipc://` endpoints need no
 plan at all:
@@ -51,8 +52,8 @@ The generated unit is hardened (`ProtectSystem=full`, `PrivateTmp`,
   raises the alarm `forge.crashed` with its path.
 - The flight recorder: `forgectl -e http://device:8080 trace -o trace.json`
   and ui.perfetto.dev show the last seconds of every thread; a stuck main
-  loop shows as one long `loop.task` span (`[loop].slow_task_ms` logs its
-  name).
+  loop shows as one long `loop.task` span (`[loop].slow_task_ms` logs how
+  long it took; the trace shows which task).
 - Logs: `journalctl -u radio-controller -f`; `forgectl logs -n 200`; the
   panel's log card filters by level and text.
 
@@ -60,7 +61,8 @@ The generated unit is hardened (`ProtectSystem=full`, `PrivateTmp`,
 
 Controls marked `.persist()` are saved in `[state].file` (`state.json`) by
 their id. Renaming a control loses its saved value: the old id is ignored
-with a warning at start ("state: cannot restore 'old'"). To migrate, keep the
+without a warning ("state: cannot restore" only appears when a control refuses
+a saved value). To migrate, keep the
 old id, or read the old value once in `on_start()` from the file and set the
 new control.
 
@@ -84,9 +86,11 @@ Grafana, use the underscore form.
 
 ## When the main loop is busy
 
-A control change, a command or `/health` answers 503 "main loop busy" after
-`[loop].request_timeout_ms` (2000). The cause is a task on the main loop that
-runs too long: `[loop].slow_task_ms` logs its name, the trace shows it. Move
+A control change or a command answers 503 "main loop busy" (on a link: a NACK
+`EAGAIN`) after `[loop].request_timeout_ms` (2000), and `/health` reports
+`"stalled"`. The cause is a task on the main loop that runs too long:
+`[loop].slow_task_ms` logs a warning with its duration, the trace shows which
+task it was. Move
 the work off the loop with `background()` or a `worker()`
 ([threading.md](threading.md)). The queue of the loop is bounded
 (`[loop].max_pending_tasks`); beyond it `forge.loop.dropped` counts.

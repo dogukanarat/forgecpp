@@ -117,8 +117,8 @@ forgectl -e tcp://board:5557 lease group:Receiver 300  # keep others away from t
 
 Errors carry a status: 400 invalid value, 403 role, 409 conflict (AGC owns
 the gain, leased by someone else), 502 rejected by the device, 503 radio not
-connected. The older JSON commands (`{"cmd": "set", "id": "rx_lo_mhz",
-"value": 2437}`) are still accepted on the same socket.
+connected. Only c2 frames are taken on `[forge].control`; JSON goes to
+`POST /forge/api/commands/<name>`.
 
 | Control | Kind | Range / values |
 |---|---|---|
@@ -152,11 +152,12 @@ register), `radio.temperature` (above `temperature_alarm_c`).
 Two typed commands (`radio.proto`) for programs and microcontrollers: `tune`
 (changes the RX LO, rate or bandwidth, 0 keeps one; needs the operator role
 and is audited) and `status` (a query). They answer the same on ZeroMQ, on a
-serial line (`[forge].serial = "/dev/ttyS1"`, e.g. from a zephyrus board) and
+serial line (`[serial].device = "/dev/ttyS1"`, e.g. from a zephyrus board), on a CAN bus
+(`[can].interface`) and
 as JSON:
 
 ```sh
-curl -X POST http://board:8080/forge/api/tmtc/tune -d '{"rx_lo_hz": 915.5e6}'
+curl -X POST http://board:8080/forge/api/commands/tune -d '{"rx_lo_hz": 915.5e6}'
 ```
 
 ```python

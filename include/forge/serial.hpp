@@ -18,8 +18,9 @@
 //   my_reply r{};
 //   auto s = link.call(my_msg_id_status, my_request{}, r);   // ask the device
 //
-// In an application, [forge].serial = "/dev/ttyUSB0" answers the program's
-// commands on that line, like [forge].control does on ZeroMQ.
+// In an application, [serial].device = "/dev/ttyUSB0" answers the program's
+// commands on that line, like [forge].control does on ZeroMQ ([can] does the
+// same on a CAN bus: forge/can.hpp).
 
 #include "forge/c2.hpp"
 #include "forge/pb.hpp"

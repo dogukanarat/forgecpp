@@ -27,10 +27,11 @@ under `http://<device>/apps/pump/`.
 **Yocto.** `yocto/` is a layer (`meta-forgecpp`). An application recipe:
 
 ```bitbake
-DEPENDS = "forgecpp forgecpp-protoc-native"
-inherit cmake systemd
-EXTRA_OECMAKE += "-DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/forgecpp-protoc \
-                  -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir}"
+DEPENDS = "forgecpp protobuf-native python3-protobuf-native"
+inherit cmake systemd python3-dir python3native
+EXTRA_OECMAKE += "-DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/protoc \
+                  -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir} \
+                  -DFORGE_PYTHON_SITEDIR=${PYTHON_SITEPACKAGES_DIR}"
 SYSTEMD_SERVICE:${PN} = "pump.service"
 ```
 

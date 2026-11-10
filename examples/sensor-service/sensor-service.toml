@@ -15,7 +15,7 @@ workers = 2               # 0 = number of CPUs
 enabled = true
 host = "127.0.0.1"
 port = 8080
-# threads = 8             # each open browser tab keeps one thread for live updates
+# threads = 12            # each open browser tab keeps one thread for live updates
 
 # [http.auth]             # protect the web UI and API (recommended on a network)
 # user = "admin"

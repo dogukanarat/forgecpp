@@ -44,8 +44,9 @@ while (q.step()) logger()->info("{}: {} passes", q.text(0), q.integer(1));
 - **Transactions** make many writes one write on flash:
   `forge::sqlite::Transaction tx(db); ...; tx.commit();` (rolled back if
   `commit()` is not reached).
-- Files go under `StateDirectory` (`$STATE_DIRECTORY`, `/var/lib/<app>`): the
-  generated unit makes the rest of the file system read-only.
+- Files go under `StateDirectory` (`$STATE_DIRECTORY`, `/var/lib/<app>`), the
+  place meant for data: the generated unit makes `/usr`, `/boot` and `/etc`
+  read-only (`ProtectSystem=full`).
 
 ## Store and forward (`forge/backlog.hpp`)
 

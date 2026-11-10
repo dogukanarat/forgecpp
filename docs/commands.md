@@ -126,12 +126,13 @@ print(link.call(pump_pb2.history, pump_pb2.history_request(count=3), pump_pb2.hi
 ```cpp
 TEST_CASE("pump: history over the link") {
     forge::testing::AppRunner<Pump> r({"-D", "forge.control=tcp://127.0.0.1:*", "-D", "http.enabled=false"});
-    forge::zmq::Client link(r->endpoints().at("control"));
+    forge::Remote pump(r->endpoints().at("control"));
     REQUIRE(forge::testing::wait_until([&] { return r->invoke([&] { return r->history.size() >= 3; }); }));
     pump_history_reply h{};
-    REQUIRE(link.call(pump_msg_id_history, pump_history_request{3}, h).ok());
+    REQUIRE(pump.client().call(pump_msg_id_history, pump_history_request{3}, h).ok());
     CHECK(h.pressure_bar_count == 3);
 }
 ```
 
-`examples/pump/test_pump.cpp` has it, next to the tests of the controls.
+`examples/pump/test_pump.cpp` does the same at the end of its test "controls
+through the command link, like forgectl".

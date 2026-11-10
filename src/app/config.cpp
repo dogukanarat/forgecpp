@@ -97,7 +97,8 @@ void Application::Impl::declare_framework_config() {
     s.boolean("http.enabled", false, "Serve HTTP");
     s.string("http.host", "0.0.0.0", "Listen address");
     s.integer("http.port", 8080, "Listen port").range(0, 65535);
-    s.integer("http.threads", 8, "Worker threads").range(2, 256);
+    s.integer("http.threads", 12, "Worker threads (at least [web].max_clients + 4: every open page holds one)")
+        .range(2, 256);
     s.open_section("http.auth", "Older single-user credentials (prefer [auth])");
 
     s.section("web", "Control panel");

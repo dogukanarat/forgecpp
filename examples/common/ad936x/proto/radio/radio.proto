@@ -25,8 +25,8 @@ message tx_block {
     bool cyclic = 2;                            // repeat this frame until stopped (test tones, beacons)
 }
 
-// Commands (c2 frames on [forge].control or [forge].serial; JSON at
-// /forge/api/tmtc/<name>). 0x0001..0x00FF are forgecpp's.
+// Commands (c2 frames on [forge].control, [serial].device or [can]; JSON at
+// /forge/api/commands/<name>). 0x0001..0x00FF are forgecpp's.
 enum msg_id {
     none = 0;
     tune = 0x0100;    // tune_request -> status_reply: change the RX tuning, answer the result

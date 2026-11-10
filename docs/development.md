@@ -7,9 +7,12 @@ export FORGECPP_DEPS=$HOME/forgecpp-deps     # once: ./install.sh --deps-only --
 cmake --workflow --preset dev                # configure, build and test (Debug, build/dev)
 tools/check.sh                               # what CI checks: format, layers, build, tests, fuzz, API records
 tools/check.sh --quick                       # the same without fuzz and the compatibility records
+tools/check.sh --format                      # only the formatting
 tools/check.sh --fix                         # apply .clang-format
 tools/check.sh --asan                        # also AddressSanitizer + UBSan
-tools/check.sh --tidy                        # clang-tidy on what changed since origin/master
+tools/check.sh --tidy                        # clang-tidy on what changed since origin/master (--tidy-all: every file)
+tools/check.sh --tsan PREFIX                 # also ThreadSanitizer (PREFIX: libraries of install.sh --sanitize thread)
+tools/check.sh --libfuzzer [S]               # the fuzz targets with clang's libFuzzer, S seconds each (60)
 tools/check.sh --install-hook                # quick checks before every commit, blame skips formatting commits
 ```
 
@@ -49,22 +52,26 @@ the CHANGELOG, commits "Release 0.4.0" and tags `v0.4.0`. Pushing is yours:
 ## Directory layout
 
 ```
-include/forge/     public headers (forge.hpp includes everything)
+include/forge/     public headers (forge.hpp includes the core; sqlite.hpp, backlog.hpp, lz4.hpp,
+                   log_rt.hpp and testing.hpp are included on their own)
 proto/forge/       forgecpp's commands and messages (messages.proto, hub.proto)
-src/               libforgecpp sources
+src/               libforgecpp sources (src/app/: the Application's internals); sqlite.cpp,
+                   backlog.cpp, lz4.cpp are the components libforgecpp-sqlite and -lz4
 src/web/           built-in control panel, forge.js, forge.css (embedded in the library)
 third_party/       submodules
-cmake/             package config, pkg-config, forge_add_app/forge_add_web/forge_add_test
+cmake/             package config, pkg-config, forge_add_app/forge_add_web/forge_add_test,
+                   third_party/sqlite (SQLite's build, which has no CMake of its own)
 tools/             forgecpp-new (project scaffolder), forgectl, forge-proto.py (message generator)
 hub/               forge-hub: device dashboard and registry (a product, not an example)
-examples/          hello, sensor-service, pipeline (multi-threaded), three-threads,
+examples/          hello, pump (the tutorials'), sensor-service, pipeline (multi-threaded), three-threads,
                    payload-power (GPIO), can-node (CAN), telemetry-store (SQLite, LZ4),
                    thermostat (web site),
                    radio-controller (AD9364 over libiio + ZeroMQ),
                    spectrum-analyzer (AD936x spectrum analyzer), qam-modem (16QAM over
                    radio-controller), channel-emulator, common/ad936x, common/channel
 tests/             doctest unit tests
-yocto/             bitbake recipes (forgecpp, radio-controller, spectrum-analyzer, qam-modem,
-                   channel-emulator)
+yocto/             the meta-forgecpp layer (needs only oe-core): forgecpp, forgecpp-tools, the
+                   example applications, quill/cpp-httplib/concurrentqueue/tomlplusplus/doctest,
+                   backfill/ for the meta-oe and meta-python libraries, kas/, lib/oeqa
 install.sh, get.sh installation
 ```

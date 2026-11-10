@@ -6,7 +6,7 @@
 //   2. TOML configuration (file + `-D key=value` overrides + flags)
 //   3. logging (console / rotating file / syslog) configured from [log]
 //   4. a thread pool sized from [threads].workers
-//   5. a main loop (post / call / timers / events all run on it)
+//   5. a main loop (post / invoke / timers / events all run on it)
 //   6. optional HTTP server ([http] or --http) with GET /health, your own
 //      routes, your embedded web pages and the built-in control dashboard
 //      (/forge/) with live updates
@@ -263,7 +263,7 @@ public:
     Scheduler& scheduler();
     /// nullptr unless the HTTP server is enabled.
     http::Server* http();
-    /// Control registry declared in setup_web(); valid from on_start() until run()
+    /// Control registry declared in setup_controls(); valid from on_start() until run()
     /// returns, with or without HTTP. Served at /forge/ when the web UI is enabled,
     /// and by the console and the built-in commands.
     web::Dashboard* dashboard();
@@ -309,7 +309,7 @@ public:
     /// operator, is for a command that changes something, and those are
     /// written to the audit trail with their request; Role::viewer is for a
     /// query (no check, no audit record).
-    /// Add commands in the constructor or setup_web(): the links read the
+    /// Add commands in the constructor or setup_controls(): the links read the
     /// registry from their own threads once they run.
     template <pb::Message Req, pb::Message Rsp>
     void command(std::uint16_t id, std::string name, tmtc::Handler<Req, Rsp> handler, Role role = Role::operator_) {
@@ -376,10 +376,11 @@ protected:
     virtual void setup_console(Console& console);
     /// Declare the controls and actions (groups, buttons, switches, sliders,
     /// values, links): one registry for the web panel, forgectl, the console,
-    /// telnet and the links. Order at start-up: setup_config() -> command line
-    /// -> setup_controls() -> the persisted values ([state].file) are restored
-    /// -> on_start(). A control's setter must therefore work before on_start():
-    /// read the configuration here (config()) when a value depends on it.
+    /// telnet and the links. Order at start-up: setup_cli() (the command line
+    /// is parsed) -> setup_config() -> the file is loaded -> setup_controls()
+    /// -> the persisted values ([state].file) are restored -> on_start().
+    /// A control's setter must therefore work before on_start(): read the
+    /// configuration here (config()) when a value depends on it.
     virtual void setup_controls(Controls& controls);
     /// The old name of setup_controls(); both are called.
     virtual void setup_web(web::Dashboard& dashboard);

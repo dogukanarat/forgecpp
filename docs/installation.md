@@ -46,6 +46,7 @@ install it). LZ4 brings the `lz4` tool too.
 | `--package [--arch A]` | Produce `forgecpp-<version>-<arch>.tar.gz` without touching the system |
 | `--without-ssl`, `--with-ssl`, `--without-zlib` | cpp-httplib features |
 | `--without-iio`, `--iio-usb` | Skip libiio, or build libiio's USB backend |
+| `--without-hub` | Do not build forge-hub |
 | `--without-sqlite`, `--without-lz4` | Skip SQLite or LZ4, and with them the components `forgecpp::sqlite` / `forgecpp::lz4` |
 | `--system-protobuf`, `--protoc PATH` | Use the `protoc` on the PATH, or this one (default: built from the bundled sources with `HOST_CC`/`HOST_CXX`; it only runs on the build machine) |
 | `--profile embedded` | MinSizeRel and LTO for small targets; the libraries stay shared |
@@ -62,14 +63,20 @@ forgecpp is meant to run on embedded Linux. The whole stack cross-compiles with
 a Yocto-style toolchain; on aarch64 the full test suite passes and the example
 daemons run with their web UI. Stripped sizes on aarch64: `libforgecpp.so`
 ≈ 2.1 MB (logging and line editing are compiled into libforgecpp); a scaffolded
-application with its embedded web page ≈ 580 KB. Runtime dependencies are only
-libstdc++/libc (plus OpenSSL/zlib when enabled).
+application with its embedded web page ≈ 580 KB. Runtime dependencies: the
+shared libraries forgecpp installs (libforgecpp, libzmq, libcpp-httplib,
+libiio; libsqlite3 and liblz4 for the components), libstdc++/libc, and
+OpenSSL/zlib when enabled; with `--static`, only libstdc++/libc.
 
 - **With bitbake:** `yocto/` is a layer that needs nothing but poky
-  (oe-core): it has a recipe for every library forgecpp uses (or takes it
-  from meta-oe / meta-python when the build has them), and
+  (oe-core). SQLite, LZ4, OpenSSL, zlib and libxml2 come from oe-core;
+  quill, cpp-httplib, concurrentqueue, tomlplusplus and doctest are always
+  the layer's; zeromq, cppzmq, nlohmann-json, cli11, libiio, protobuf and
+  python3-protobuf come from meta-oe / meta-python, or from the layer's
+  `backfill/` when those are not in the build.
   `recipes-support/forgecpp/forgecpp_git.bb` builds forgecpp against them,
-  each library a shared library in its own package. Applications then only
+  each library a shared library in its own package (the components in
+  `forgecpp-sqlite` and `forgecpp-lz4`). Applications then only
   need `DEPENDS = "forgecpp"` and `inherit cmake systemd`; see
   [yocto/README.md](../yocto/README.md).
 - **Without bitbake:** with an SDK toolchain,

@@ -33,7 +33,8 @@ role = "operator"
   result and trace id: `forgectl audit`, the panel's Audit page, the
   `audit` event topic and optionally a JSON-lines file.
 - **Persistence:** `.persist()` on a control keeps its value in `[state].file`.
-- **Commands (RPC):** typed parameters with defaults and ranges:
+- **Actions:** typed parameters with defaults and ranges (`POST /forge/api/actions/<id>`,
+  `forgectl call`, the console's `call`):
 
 ```cpp
 g.action("scan", "Scan", {forge::web::number_param("from", 2400).range(70, 6000),

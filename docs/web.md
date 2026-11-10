@@ -89,22 +89,30 @@ default; the built-in `/forge/` panel does not).
 | `GET /forge/api/ui` | Panel description + values |
 | `GET /forge/api/state` | `{"id": value, ...}` |
 | `GET/POST /forge/api/controls/<id>` | Read / write with `{"value": ...}`; empty body for buttons |
+| `POST /forge/api/actions/<id>` | Run an action with its arguments (`{"seconds": 2}`) |
+| `GET /forge/api/commands`, `GET/POST /forge/api/commands/<name>` | The application's commands; one command's schema; run it with a JSON request (`/forge/api/tmtc` is the old path) |
+| `GET/POST/DELETE /forge/api/leases[/<id>]` | Leases: who holds which control |
+| `GET /forge/api/whoami` | The caller's user and role |
 | `GET /forge/api/alarms` | Alarm list (active + history) |
 | `POST /forge/api/alarms/<id>/ack`, `POST /forge/api/alarms/ack` | Acknowledge one / all alarms |
-| `GET /forge/api/events` | SSE: `state`, `alarms`, `log`, `app` events |
+| `GET /forge/api/events` | SSE: `state`, `alarms`, `log`, `audit`, `app`, `reload` events |
 | `GET /forge/api/logs` | Recent log lines |
+| `GET /forge/api/health`, `/metrics`, `/audit`, `/streams`, `/trace` | Health, metrics (JSON), the audit trail, the streams, the flight recorder |
+| `GET /forge/api/streams/<name>/watch` | SSE: a stream's messages, decoded to JSON |
 | `GET/PUT/DELETE /forge/api/layout/<page>` | Card layout of a page (`{"items": [{id, x, y, w, h, fit}]}`) |
 | `GET /health` | Status + alarm summary (for monitoring; no auth required) |
+| `GET /metrics` | Prometheus text format (no auth required) |
 
 ```sh
 curl -u admin:secret -X POST http://device:8080/forge/api/controls/speed -d '{"value": 1500}'
 ```
 
-**Security:** `[http.auth]` enables Basic auth and/or a Bearer token
-(everything is protected, pages included, except `/health`). A warning is
-logged at startup when a network-facing device has no auth configured. For
-HTTPS, put the application behind a reverse proxy or use cpp-httplib's
-`SSLServer` through `native()`.
+**Security:** `[auth]` users (or the older single `[http.auth]` user, who
+becomes an admin) sign in with Basic auth or a Bearer token. With
+`[auth] anonymous = false` everything except `/health` and `/metrics` needs
+credentials; otherwise an anonymous caller gets `[auth].default_role`
+(viewer). A warning is logged at startup when a network-facing device has no
+auth configured. For HTTPS, put the application behind a reverse proxy.
 
 **The console is the backup:** in the console opened with `-i`, the same
 controls are available through `controls`, `set <id> <value>`, `press <id>`,

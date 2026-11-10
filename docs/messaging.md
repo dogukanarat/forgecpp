@@ -11,7 +11,7 @@ microcontroller. forgecpp's own are in [`proto/forge`](../proto/forge)
 **Commands** ([adding one, step by step](commands.md); the wire format:
 [docs/protocol.md](protocol.md)). Every command is a request and a reply with a number (unique in
 the program; `0x0001..0x00FF` are forgecpp's: ping, info, controls, get, set,
-press, call, alarms, ack, logs, metrics, audit, lease, release, health,
+press, call, commands, alarms, ack, logs, metrics, audit, lease, release, health,
 streams, log level). One handler answers both ways in:
 
 ```proto
@@ -33,7 +33,7 @@ command<pump_flush_request, pump_flush_reply>(pump_msg_id_flush, "flush", [this]
 });
 ```
 
-- On a link (`[forge].control`, ZeroMQ REQ/REP) each message is one **c2
+- On a link (`[forge].control`, ZeroMQ ROUTER, REQ clients) each message is one **c2
   frame**: an 8-byte header (version, flags, command number, sequence number,
   length) and the encoded request. The answer is a reply, an ACK (empty
   reply), a NACK with the 32-bit status (module and errno, numbered like
@@ -58,12 +58,13 @@ link = c2.Client("tcp://board:5557")
 link.call(m.set, m.set_request(id="rx_lo_mhz", value="2412"), m.set_reply)
 ```
 
-| Endpoint (`[forge]`) | Socket | Carries |
+| Endpoint | Socket | Carries |
 |---|---|---|
-| `control` | ROUTER (REQ clients) | c2 commands (forgecpp's and the application's) |
-| `serial` | a tty (`/dev/ttyUSB0`) | the same commands on a UART, framed as zephyrus does ([protocol.md](protocol.md#on-a-serial-line)); a line that is missing or goes away (an unplugged adapter) is reported under health as `serial` and opened again every second |
-| `events` | PUB | topics `state`, `alarms`, `log`, `audit`, `health`, `metrics` |
-| `data` | PUB | the application's own streams (its messages, e.g. `radio.iq_block`) |
+| `[forge].control` | ROUTER (REQ clients) | c2 commands (forgecpp's and the application's) |
+| `[forge].events` | PUB | topics `state`, `alarms`, `log`, `audit`, `health`, `metrics` |
+| `[forge].data` | PUB | the application's own streams (its messages, e.g. `radio.iq_block`) |
+| `[serial].device` | a tty (`/dev/ttyUSB0`) | the same commands on a UART, framed as zephyrus does ([protocol.md](protocol.md#on-a-serial-line)); a line that is missing or goes away (an unplugged adapter) is reported under health as `serial` and opened again every second |
+| `[can].interface` | an ISO-TP channel (`can0`, `tx_id`/`rx_id`) | the same commands on a CAN bus ([protocol.md](protocol.md#on-a-can-bus)); health `can`, tried again every second |
 
 What the links guarantee (at most once, order per publisher, the size cap of a serial line):
 [protocol.md](protocol.md#what-is-guaranteed).
@@ -104,7 +105,7 @@ forgectl -e tcp://board:5557 set rx_lo_mhz 2412
 forgectl -e tcp://board:5557 call scan from=2400 to=2480
 forgectl -e tcp://board:5557 alarms / ack all / logs -n 50 / audit / health / streams / metrics
 forgectl -e http://board:8080 trace -o trace.json # flight recorder for ui.perfetto.dev (HTTP)
-forgectl -e tcp://board:5557 watch                # live events (state, alarms, logs, audit)
+forgectl -e tcp://board:5557 watch                # live events (state, alarms, log, audit, health)
 FORGE_ENDPOINT=tcp://board:5557 forgectl --json controls
 ```
 

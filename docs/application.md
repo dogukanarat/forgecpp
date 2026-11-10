@@ -50,12 +50,13 @@ pool().detach_task([this] {
 | `alarms().raise(id, severity, message)`, `alarms().clear(id)` | Alarm management (from any thread) |
 | `publish_web(event, json)`, `notify_web(message, level)` | Send an event / a short notification to open web pages |
 | `logger()`, `pool()`, `http()`, `dashboard()`, `console()`, `cli()` | Services |
+| `worker(name, body)` | A named thread of the application (`[threads.<name>]` applied, stopped before `on_stop()`, health and an alarm if its body throws) |
 | `stop(code)`, `reload()` | Thread-safe lifecycle control |
 
 Overridable hooks: `setup_config`, `setup_cli`, `setup_controls`, `setup_http`, `setup_console`,
-`on_start`, `on_stop`, `on_reload`, in this order at start-up: `setup_config`
-→ the command line (`setup_cli`) → the file is loaded and validated →
-`setup_controls` (the control registry: panel, forgectl, console, telnet,
+`on_start`, `on_stop`, `on_reload`, in this order at start-up: `setup_cli`
+(the command line is parsed) → `setup_config` → the file is loaded and
+validated → `setup_controls` (the control registry: panel, forgectl, console, telnet,
 links) → the persisted values (`[state].file`) → `setup_http` / `setup_console`
 → `on_start` → the links and the HTTP server start taking requests. A
 control's setter must therefore work before `on_start()`. If you prefer not to
@@ -73,6 +74,7 @@ subclass, the same hooks are available as lambdas: `hook_config`, `hook_cli`,
 --log-file FILE         Rotating log file
 --syslog                Also log to syslog
 -i,--interactive        Interactive console
+--instance NAME         Instance name (default: the instance of a systemd template unit, or $FORGE_INSTANCE)
 --http [HOST:]PORT      Enable the HTTP server (includes GET /health)
 --print-config          Print the effective configuration as JSON and exit
 --help-config           Every configuration key with type, default, range and description
@@ -93,9 +95,9 @@ console = true
 pattern = "[{time}] [{level}] [{logger}] {message}"   # also {thread} {file} {line}; {level}: TRC DBG INF WRN ERR CRT
 color = "auto"           # level colours: auto (a terminal, no NO_COLOR) | always | never
 format = "text"          # text | json (one object per line)
-history = 200            # records kept for the panel, forgectl logs and telnet
-flush_level = "warning"  # records at or above are written out at once
-flush_interval_s = 1     # the others, at most this late
+history = 500            # records kept for the panel, forgectl logs and telnet
+flush_level = "warn"     # records at or above are written out at once
+flush_interval_s = 2     # the others, at most this late
 
 [threads]
 workers = 0              # 0 = number of CPUs
@@ -104,7 +106,7 @@ workers = 0              # 0 = number of CPUs
 enabled = false
 host = "0.0.0.0"
 port = 8080
-threads = 8              # each open browser tab holds one thread for live updates
+threads = 12             # each open browser tab holds one thread for live updates (max_clients + 4)
 
 [http.auth]              # older single-user credentials; prefer [auth] (users and roles, below)
 user = ""                # Basic auth (the browser prompts for user/password)
@@ -153,7 +155,7 @@ fd = false               # CAN FD frames under ISO-TP
 frame_size = 244         # largest framed piece in one ISO-TP message
 
 [loop]                   # the main loop
-slow_task_ms = 200       # a task longer than this is logged with its name (0 = never)
+slow_task_ms = 200       # a task longer than this is logged with its duration (0 = never)
 request_timeout_ms = 2000 # requests waiting for a busy main loop answer 503 after this
 max_pending_tasks = 10000 # beyond this post() drops (forge.loop.dropped)
 
@@ -161,31 +163,9 @@ max_pending_tasks = 10000 # beyond this post() drops (forge.loop.dropped)
 stall_ms = 5000          # /health says "stalled" when the loop's heartbeat is older
 watchdog_grace_s = 0     # a failed critical component stops the watchdog pings after this (0 = never)
 
-[state]
-file = ""                # controls marked persist() are saved here
-
-[crash]
-enabled = true
-dir = ""                 # default: $STATE_DIRECTORY or /tmp
-
-[trace]
-enabled = true
-capacity = 65536
-
-[metrics]
-enabled = true
-
-[hub]
-register = true
-endpoint = "tcp://127.0.0.1:5550"
-retry_s = 30
-critical = false
-group = ""
-title = ""
-
 [auth]                   # users and roles for web, the command link and telnet (see below)
 enabled = false
-anonymous = true         # false: HTTP needs credentials for everything but /health
+anonymous = true         # false: HTTP needs credentials for everything but /health and /metrics
 default_role = "viewer"
 # [auth.users.<name>] password / token / role
 
@@ -203,9 +183,6 @@ dir = ""                 # default: $STATE_DIRECTORY or /tmp
 
 [state]
 file = ""                # controls marked persist() survive restarts
-
-[health]
-watchdog_grace_s = 0     # stop systemd watchdog pings when a critical component failed this long
 
 [process]
 mlockall = false         # lock memory (real-time)
@@ -248,8 +225,8 @@ why) and apply:
 | Applied again | Not applied until a restart |
 |---|---|
 | `[log].level`; the log file is opened again (logrotate: `postrotate kill -HUP`) | the other `[log]` keys, `[log].file` itself |
-| `[loop].request_timeout_ms`, `[loop].slow_task_ms` | the endpoints (`[forge].control`, `events`, `data`, `serial`), `[forge].control_workers` |
-| `[health].watchdog_grace_s` | `[http]`, `[web]`, `[console]`, `[auth]`, `[threads]`, `[crash]`, `[state]`, `[hub]`, `[audit]`, `[metrics]`, `[trace]` |
+| `[loop].request_timeout_ms`, `[loop].slow_task_ms`, `[loop].max_pending_tasks` | the endpoints (`[forge].control`, `events`, `data`), `[serial]`, `[can]`, `[forge].control_workers` |
+| `[health].watchdog_grace_s` | `[http]`, `[web]`, `[console]`, `[auth]`, `[threads]`, `[crash]`, `[state]`, `[hub]`, `[audit]`, `[trace]` |
 | the application's own keys: `on_reload(config)` and the components' | |
 
 `--help-config` lists every key; a key that is only read at start-up says so

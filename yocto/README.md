@@ -34,11 +34,11 @@ local.conf:     IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub
 
 | Recipe | Packages | What |
 |---|---|---|
-| `recipes-support/forgecpp/forgecpp_git.bb` | `forgecpp`, `forgecpp-dev`, `forgecpp-forgectl`, `forgecpp-hub`, `python3-forge`, `forgecpp-ptest` | libforgecpp (nanopb and linenoise compiled in), forgectl, forge-hub (PACKAGECONFIG `hub`, on by default), the Python package, the test programs (PACKAGECONFIG `ptest`) |
+| `recipes-support/forgecpp/forgecpp_git.bb` | `forgecpp`, `forgecpp-dev`, `forgecpp-forgectl`, `forgecpp-hub`, `forgecpp-sqlite`, `forgecpp-lz4`, `python3-forge`, `forgecpp-ptest` | libforgecpp (nanopb and linenoise compiled in), forgectl, forge-hub (PACKAGECONFIG `hub`, on by default), forgecpp::sqlite and forgecpp::lz4 (PACKAGECONFIG `sqlite`, `lz4`, on by default), the Python package, the test programs (PACKAGECONFIG `ptest`) |
 | `recipes-devtools/forgecpp-tools/forgecpp-tools_git.bb` | `forgecpp-tools`, `nativesdk-forgecpp-tools` | `forgecpp-new`, `forge-proto.py` and nanopb's generator: for the SDK (an application with its own `.proto` files) and, if wanted, the target |
 | `recipes-support/quill`, `cpp-httplib`, `concurrentqueue`, `tomlplusplus`; `recipes-test/doctest` | the libraries no other layer has | the versions forgecpp is built and tested with (its submodules) |
 | `backfill/meta-oe/*`, `backfill/meta-python/*` | `zeromq`, `cppzmq`, `nlohmann-json`, `cli11`, `libiio`, `protobuf`, `python3-protobuf` | only when meta-oe / meta-python are not in the build |
-| `recipes-connectivity/*` | `radio-controller`, `spectrum-analyzer`, `qam-modem`, `channel-emulator` (+ `-clients`) | the example applications, from `recipes-connectivity/forgecpp-app.inc` |
+| `recipes-connectivity/*` | `radio-controller`, `spectrum-analyzer`, `qam-modem` (each + `-clients`), `channel-emulator` | the example applications, from `recipes-connectivity/forgecpp-app.inc` |
 
 The source and the commit are in one place, `recipes-support/forgecpp/forgecpp-src.inc`:
 `tools/release.sh` writes the release's commit into `FORGECPP_SRCREV`, so a

@@ -326,6 +326,22 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   python3-protobuf. `kas/qemuarm64-poky.yml` builds the image with poky and
   this layer alone; the nightly workflow builds both variants.
 
+### Fixed (documentation and defaults)
+
+- `[http].threads` is 12 by default (was 8): with the default
+  `[web].max_clients` (8) every program warned at start that it had too few
+  HTTP threads.
+- The README shows the control panel, the Commands and Metrics pages, the
+  console, forge-hub and the spectrum analyzer's page (`docs/images`).
+- The documentation was read against the code and brought up to date: the
+  start-up order (`setup_cli` first), the `[serial]` / `[can]` / `[loop]`
+  names, the log defaults, `application.md`'s configuration block (repeated
+  sections and a `[metrics]` key that does not exist removed), the HTTP routes
+  and the security text of `web.md`, actions vs. commands, tutorial 8 (the
+  pump's `reading` message), the Yocto recipe of tutorial 7, the radio
+  controller's README (no JSON commands on the link any more), the layer's
+  packages, the API page's components.
+
 ### Fixed (Yocto)
 
 - tomlplusplus and doctest are not in meta-oe: the layer did not resolve

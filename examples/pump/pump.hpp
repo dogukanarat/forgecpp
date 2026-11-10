@@ -19,7 +19,7 @@ class Pump : public forge::Application {
 public:
     Pump() : Application({"pump", "1.0.0", "Tutorial pump controller"}) {
         // A command of its own (pump.proto): binary on the link, JSON on
-        // POST /forge/api/tmtc/history. The handler runs on the main loop.
+        // POST /forge/api/commands/history. The handler runs on the main loop.
         command<pump_history_request, pump_history_reply>(pump_msg_id_history, "history",
                                                           [this](const auto& req, auto& rsp) {
             const auto n = std::min<std::size_t>(req.count, history.size());

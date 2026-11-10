@@ -24,7 +24,8 @@ void setup_controls(forge::Controls& ui) override {
 - Everything here runs on the main loop: no locks
   ([threads](../threading.md)).
 
-A **command** takes typed parameters and returns a result:
+An **action** takes typed parameters and returns a result (a numbered
+request/reply *command* is the other thing: [tutorial 6](06-streams.md)):
 
 ```cpp
 ui.group("Service").action("flush", "Flush", {forge::web::number_param("seconds", 10).range(1, 60)},
