@@ -95,7 +95,7 @@ What the program refuses before it calls a handler:
 | the number is a report (`push`) | `nack`, module tmtc, `ENOSYS` (88) |
 | the request does not decode | `nack`, module pb, `EBADMSG` (77) |
 | the reply does not fit its buffer | `nack`, module pb, `EMSGSIZE` (122) |
-| the main loop is busy for longer than `[forge].request_timeout_ms`, or every worker is | `nack`, module tmtc, `EAGAIN` (11) |
+| the main loop is busy for longer than `[loop].request_timeout_ms`, or every worker is | `nack`, module tmtc, `EAGAIN` (11) |
 
 A frame that does not decode, and any frame that is not a request, gets no answer.
 

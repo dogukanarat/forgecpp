@@ -60,7 +60,6 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
-#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -184,22 +183,6 @@ public:
 
     /// True on the thread running the main loop.
     bool on_main_loop() const;
-
-    /// Run `fn` on the main loop and get its result as a future. On the main
-    /// loop itself it runs at once (a ready future), so waiting on it never
-    /// deadlocks.
-    template <class F>
-    auto call(F&& fn) -> std::future<std::invoke_result_t<std::decay_t<F>>> {
-        using R = std::invoke_result_t<std::decay_t<F>>;
-        auto task = std::make_shared<std::packaged_task<R()>>(std::forward<F>(fn));
-        auto future = task->get_future();
-        if (on_main_loop()) {
-            (*task)();
-        } else if (!post([task] { (*task)(); })) {
-            loop_busy();  // the queue is full: 503, like invoke_for() on a stuck loop
-        }
-        return future;
-    }
 
     /// Heavy work off the main loop: `work` runs on the worker pool, then
     /// `then(result)` on the main loop (where the application's state may be
@@ -434,7 +417,6 @@ private:
     /// Run `fn` on the worker pool (the non-template part of background()).
     void run_in_pool(std::function<void()> fn);
     /// Counts the timeout and throws 503 "main loop busy".
-    [[noreturn]] void loop_busy() const;
     void background_failed(const char* what);
     /// The role check and the audit record around a command's handler.
     Status run_command(const std::string& name, Role role, const std::function<json()>& request,

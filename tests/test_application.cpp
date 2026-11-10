@@ -31,9 +31,8 @@ protected:
     void setup_cli(CLI::App& cli) override { cli.add_option("--custom", custom_flag); }
 
     void setup_http(forge::http::Server& server) override {
-        server.get_json("/api/greeting", [this](const auto&) {
-            return forge::json{{"greeting", call([this] { return greeting; }).get()}};
-        });
+        server.get_json("/api/greeting",
+                        [this](const auto&) { return forge::json{{"greeting", invoke([this] { return greeting; })}}; });
     }
 
     void on_start() override {
@@ -111,11 +110,11 @@ TEST_CASE("application: full lifecycle with config, overrides, timers, events an
     CHECK(health["version"] == "9.9.9");
     CHECK(client.get_json("/api/greeting")["greeting"] == "overridden");
 
-    CHECK(forge::testing::wait_until([&] { return app.call([&] { return app.seen_events; }).get() >= 3; }));
+    CHECK(forge::testing::wait_until([&] { return app.invoke([&] { return app.seen_events; }) >= 3; }));
     CHECK(app.pool().get_thread_count() == 2);
 
     app.reload();
-    CHECK(forge::testing::wait_until([&] { return app.call([&] { return app.reloaded.load(); }).get() == 1; }));
+    CHECK(forge::testing::wait_until([&] { return app.invoke([&] { return app.reloaded.load(); }) == 1; }));
 
     app.stop(3);
     runner.join();

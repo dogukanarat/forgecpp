@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
+#include <future>
 
 namespace forge::detail {
 
@@ -42,7 +43,15 @@ void RemoteConsole::create(const Config& cfg) {
     // Commands run on the main loop so they never race with application state.
     console_->set_executor([this](std::function<void()> fn) {
         if (app_.stopping()) return;
-        auto future = app_.call(std::move(fn));
+        if (app_.on_main_loop()) {
+            fn();
+            return;
+        }
+        // Not invoke(): the wait gives up when the application stops, so the
+        // REPL thread can be joined while the loop is shutting down.
+        auto task = std::make_shared<std::packaged_task<void()>>(std::move(fn));
+        auto future = task->get_future();
+        if (!d_.loop.post([task] { (*task)(); })) d_.loop.busy();
         while (future.wait_for(std::chrono::milliseconds(100)) != std::future_status::ready) {
             if (app_.stopping()) return;
         }

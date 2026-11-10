@@ -11,6 +11,7 @@ forge_add_test(forgecpp_tests
         test_json.cpp
         test_log.cpp
         test_scheduler.cpp
+        test_state_machine.cpp
         test_thread_pool.cpp
         test_web.cpp)
 

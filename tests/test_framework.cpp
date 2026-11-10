@@ -735,7 +735,7 @@ TEST_CASE("testing: manual time - timers run when the test advances the clock, w
     CHECK_THROWS_AS(real.advance(std::chrono::seconds(1)), std::logic_error);
 }
 
-TEST_CASE("threading: background(), call() on the loop, the dashboard's owner, slow tasks") {
+TEST_CASE("threading: background(), invoke() on the loop, the dashboard's owner, slow tasks") {
     forge::testing::AppRunner<RolesApp> r({"-D", "loop.slow_task_ms=20"});
 
     // background(): the work on a worker, the result on the main loop
@@ -764,8 +764,8 @@ TEST_CASE("threading: background(), call() on the loop, the dashboard's owner, s
     CHECK(f.first == "disk gone");
     CHECK(f.second);
 
-    // call() from the main loop runs at once instead of deadlocking on itself
-    CHECK(r->invoke([&] { return r->call([] { return 7; }).get(); }) == 7);
+    // invoke() from the main loop runs at once instead of deadlocking on itself
+    CHECK(r->invoke([&] { return r->invoke([] { return 7; }); }) == 7);
 
     // The controls' values belong to the main loop.
     CHECK_THROWS_WITH_AS(r->dashboard()->get("gain"), doctest::Contains("outside the main loop"), std::logic_error);

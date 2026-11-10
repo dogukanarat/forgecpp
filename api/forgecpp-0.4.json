@@ -77,7 +77,6 @@
   "forge::Application::instance[abi:cxx11]() const",
   "forge::Application::invoke_erased(std::optional<std::chrono::time_point<std::chrono::_V2::steady_clock, std::chrono::duration<long, std::ratio<1l, 1000000000l> > > >, std::function<void ()> const&)",
   "forge::Application::logger() const",
-  "forge::Application::loop_busy() const",
   "forge::Application::manual_clock() const",
   "forge::Application::notify_web(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)",
   "forge::Application::now() const",

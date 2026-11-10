@@ -277,6 +277,25 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 - `run()` puts the signal mask back also when it returns early (`--help-config`,
   `--check-config`, a wrong configuration).
 
+### Removed
+
+- `Application::call(fn)`: it did what `invoke(fn)` does (every use waited
+  for the future at once). Use `invoke(fn)`, or `invoke_for(timeout, fn)`
+  where the caller must not hang on a stuck loop. `<forge/application.hpp>`
+  no longer includes `<future>`.
+
+### Added (docs)
+
+- docs/threading.md, "Sequences: a state machine": steps with waits between
+  them as an explicit state machine (every wait a state, one `enter()`,
+  stale answers ignored, the state as a control), with a tested example
+  (`tests/test_state_machine.cpp`). C++20 coroutines were considered and
+  left out for now; docs/ROADMAP.md says why. If they come back, the
+  design is: `forge::Task<T>` started with `spawn()`, resumed only on the
+  main loop (`co_await sleep(d)`, `co_await on_pool(fn)`,
+  `co_await next<Event>()`), cancelled before `on_stop()`, and
+  `background()` removed in their favour.
+
 ### Changed (headers)
 
 - `forge/config.hpp` no longer includes toml++: the parser is behind

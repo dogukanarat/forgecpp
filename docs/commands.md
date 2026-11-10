@@ -81,7 +81,7 @@ Pump() : Application({"pump", "1.0.0", "Tutorial pump controller"}) {
   `[auth].default_role`.
 - The handler runs **on the main loop**, like the controls: it may read and
   change the application's state. If the loop is busy for longer than
-  `[forge].request_timeout_ms`, the request is refused with `EAGAIN` and the
+  `[loop].request_timeout_ms`, the request is refused with `EAGAIN` and the
   handler never runs.
 - It returns a `forge::Status`: `forge::Status()` for success, or
   `forge::Status::error(forge::module_id::app, EINVAL, "reason")`. Throwing

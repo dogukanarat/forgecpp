@@ -25,7 +25,7 @@ other threads reach it with `invoke()` / `post()`, heavy work leaves it with
 7. `SIGINT`/`SIGTERM` → graceful shutdown, `SIGHUP` → `on_reload()`, a second signal → forced exit
 8. Reports `READY=1`/`STOPPING=1` to systemd and feeds the watchdog when `WatchdogSec=` is set
 
-All timers, tasks submitted with `post()`/`call()`, events published with
+All timers, tasks submitted with `post()`/`invoke()`, events published with
 `emit()` and console commands run on the **main loop thread**. Application
 state is therefore accessed without locks; hand heavy work to `pool()` and
 bring the result back with `post()`:
@@ -40,10 +40,8 @@ pool().detach_task([this] {
 | API | Description |
 |---|---|
 | `post(fn)` | Run `fn` on the main loop (from any thread) |
-| `call(fn) -> std::future<R>` | Run on the main loop, get the result as a future |
 | `invoke(fn) -> R` | Run on the main loop and wait for the result (runs inline if already on the main loop; use this in HTTP handlers) |
-| `invoke_for(timeout, fn) -> R` | Same, but gives up with `forge::Error(503, "main loop busy")` when the main loop has not started `fn` in time (`fn` then never runs). The framework's request handlers use it with `request_timeout()` (`[forge].request_timeout_ms`) |
-| `call(fn) -> future` | Run on the main loop, get a future (runs at once when already on the main loop) |
+| `invoke_for(timeout, fn) -> R` | Same, but gives up with `forge::Error(503, "main loop busy")` when the main loop has not started `fn` in time (`fn` then never runs). The framework's request handlers use it with `request_timeout()` (`[loop].request_timeout_ms`) |
 | `background(work, then)` | `work` on the worker pool, `then(result)` on the main loop: heavy work without stalling the loop |
 | `now()` | The application's clock (a test's manual clock under `AppRunner({}, {.manual_time = true})`) |
 | `after(d, fn)`, `every(d, fn)`, `cancel(id)` | Timers (run on the main loop) |

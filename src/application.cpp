@@ -434,7 +434,6 @@ void Application::reload() {
 bool Application::post(Task task) { return impl_->loop.post(std::move(task)); }
 bool Application::on_main_loop() const { return impl_->loop.on_loop(); }
 std::chrono::milliseconds Application::request_timeout() const { return impl_->loop.request_timeout(); }
-void Application::loop_busy() const { impl_->loop.busy(); }
 
 void Application::invoke_erased(std::optional<std::chrono::steady_clock::time_point> deadline,
                                 const std::function<void()>& run) {
