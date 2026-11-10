@@ -1,23 +1,32 @@
 # Storage and compression
 
-Two optional components, each a shared library of its own, so that the core
-library needs neither:
+Three optional components, so that the core library needs none of them:
 
 | Component | Library | Header | Needs |
 |---|---|---|---|
 | `forgecpp::sqlite` | `libforgecpp-sqlite.so` | `forge/sqlite.hpp`, `forge/backlog.hpp` | SQLite 3 (`third_party/sqlite`; Yocto: `sqlite3` of oe-core) |
 | `forgecpp::lz4` | `libforgecpp-lz4.so` | `forge/lz4.hpp` | liblz4 (`third_party/lz4`; Yocto: `lz4` of oe-core) |
+| `forgecpp::orm` | none (headers) | `forge/orm.hpp` | sqlite_orm 1.9.1 (`third_party/sqlite_orm`; Yocto: `sqlite-orm` of this layer) and SQLite 3. **AGPL-3.0**, see [below](#license-of-sqlite_orm) |
 
-SQLite and LZ4 are submodules, built and installed by `install.sh` as shared
-libraries like every other library (`--without-sqlite`, `--without-lz4`
-leave them out). The components are built when their library is found
-(`-DFORGECPP_WITH_SQLITE=OFF`, `-DFORGECPP_WITH_LZ4=OFF` leave them out). An application links the
+SQLite, LZ4 and sqlite_orm are submodules, built and installed by
+`install.sh` like every other library: SQLite and LZ4 as shared libraries,
+sqlite_orm as its header (`--without-sqlite`, `--without-lz4`,
+`--without-sqlite-orm` leave them out). The components are there when their
+library is found (`-DFORGECPP_WITH_SQLITE=OFF`, `-DFORGECPP_WITH_LZ4=OFF`,
+`-DFORGECPP_WITH_SQLITE_ORM=OFF` leave them out). An application links the
 component:
 
 ```cmake
 find_package(forgecpp 0.4 REQUIRED COMPONENTS sqlite lz4)
 forge_add_app(recorder SOURCES main.cpp LIBS forgecpp::sqlite forgecpp::lz4)
 ```
+
+Which SQLite to use: `forge::sqlite` when the SQL is short or the queries
+are hot (you write the SQL, it costs nothing more than SQLite);
+`forge::orm` when the data is a few structs with fields and you would rather
+not write SQL (the compiler checks the queries; it costs compile time, a few
+seconds for a file that includes it). Both read and write the same files,
+and one program may use both.
 
 ## SQLite (`forge/sqlite.hpp`)
 
@@ -47,6 +56,91 @@ while (q.step()) logger()->info("{}: {} passes", q.text(0), q.integer(1));
 - Files go under `StateDirectory` (`$STATE_DIRECTORY`, `/var/lib/<app>`), the
   place meant for data: the generated unit makes `/usr`, `/boot` and `/etc`
   read-only (`ProtectSystem=full`).
+
+## Tables as structs (`forge/orm.hpp`, sqlite_orm)
+
+[sqlite_orm](https://github.com/fnc12/sqlite_orm) maps a struct to a table
+and writes the SQL: a query is a C++ expression, and a column name or type
+that does not match is a compile error, not a run-time one. `forge::orm::open()`
+gives the storage the settings `forge::sqlite::Database` has, and creates or
+updates the tables.
+
+```cpp
+#include <forge/orm.hpp>
+
+struct Fault {
+    std::int64_t id = 0;
+    std::int64_t time_ms = 0;
+    int severity = 0;
+    std::string text;
+    std::optional<std::int64_t> cleared_ms;   // std::optional: a column that may be NULL
+};
+
+// The schema, once. decltype gives the storage's type for a member.
+inline auto make_db(const std::string& path) {
+    using namespace sqlite_orm;
+    return make_storage(path,
+        make_table("faults",
+            make_column("id", &Fault::id, primary_key().autoincrement()),
+            make_column("time_ms", &Fault::time_ms),
+            make_column("severity", &Fault::severity),
+            make_column("text", &Fault::text),
+            make_column("cleared_ms", &Fault::cleared_ms)));
+}
+using Db = decltype(make_db(""));
+
+Db db = make_db("/var/lib/app/faults.db");
+forge::orm::open(db);                    // WAL, busy timeout, tables made or updated
+
+using namespace sqlite_orm;
+auto id = db.insert(Fault{.time_ms = now_ms, .severity = 2, .text = "battery low"});
+auto open = db.get_all<Fault>(where(is_null(&Fault::cleared_ms)),
+                              order_by(&Fault::id).desc(), limit(10));
+db.update_all(set(c(&Fault::cleared_ms) = now_ms), where(c(&Fault::id) == id));
+auto n = db.count<Fault>(where(c(&Fault::severity) >= 2));
+db.remove_all<Fault>(where(c(&Fault::time_ms) < now_ms - week));
+db.transaction([&] { /* several writes */ return true; });   // false: roll back
+```
+
+Joins and groups give tuples:
+`db.select(columns(&Unit::name, count(&Fault::id)), left_join<Fault>(on(c(&Fault::unit_id) == &Unit::id)), group_by(&Unit::id))`.
+BLOBs are `std::vector<char>`. Errors are `std::system_error` exceptions.
+
+- **One thread.** A storage is not thread safe: use it from the main loop
+  or from one worker, like a `forge::sqlite::Database`. `open()` keeps one
+  connection open; without it sqlite_orm opens and closes the file around
+  every query.
+- **Changing the structs.** `open()` runs sqlite_orm's `sync_schema` with
+  `preserve = true`: a new table is made, a new column is added, a removed
+  column goes, and the rows stay. **Except** a new column that is `NOT NULL`
+  without a default (a plain member, no `default_value()`): sqlite_orm can
+  only drop the table and make it again, empty. `open()` checks first and
+  throws `std::runtime_error` instead; give the column a `default_value(...)`
+  or make it `std::optional`, or pass `{.allow_data_loss = true}` if the rows
+  do not matter. The first program on a device and the update after it must
+  agree on this: test the update with a file the old program wrote.
+- **What it costs.** It is one header of 25 000 lines: 1.2 s to read, and
+  each kind of query is a template to compile (examples/fault-log/main.cpp
+  takes 15 s at -O3, telemetry-store's 11 s). Include it in the `.cpp` files
+  that use it, not in a header many files include. At run time, a query costs what the same SQL
+  costs (prepared, bound, stepped), plus building the statement text each
+  time.
+
+### License of sqlite_orm
+
+sqlite_orm 1.7 and later is **AGPL-3.0**, or **MIT** when bought from its
+author (see its `COMM-LICENSE`; it was BSD-3-Clause up to 1.6, from 2020).
+The header is compiled into the program that includes it, so that program
+is under AGPL-3.0 unless the MIT license is bought: its source must be
+offered to whoever gets the program (and, AGPL, to whoever uses it over a
+network). forgecpp itself, and every program that does not include
+`forge/orm.hpp`, are not affected: no forgecpp library contains sqlite_orm.
+
+For lab use this does not matter. Before a product ships, either buy the MIT
+license, or keep sqlite_orm out of the product's programs (`forge::sqlite`
+does the same work with SQL). Yocto lists the license in the image's
+manifest (`sqlite-orm`: AGPL-3.0-only); [yocto/README.md](../yocto/README.md)
+says how to leave it out.
 
 ## Store and forward (`forge/backlog.hpp`)
 
@@ -118,3 +212,25 @@ Its tests check that every record arrives once and in order, that the
 backlog survives a restart, that the oldest records go when it is full, and
 read the pass log back with a connection of their own
 (`sqlite3 backlog.db "SELECT * FROM passes"` does the same).
+
+`examples/fault-log` is the same kind of log without SQL, with `forge::orm`:
+two tables (`units`, and `faults` with a foreign key to them), a dummy source
+that raises faults now and then, info and warnings that clear themselves
+after a while, errors that wait for an operator (a panel button, the
+console's `clear`). The console's `faults`, `history [unit] [n]` and `stats`
+are `get_all`, `select` with a join, and `group_by`:
+
+```
+fault-log> stats
+unit        faults
+adcs             4
+eps              6
+payload          2
+radio            5
+open warning  1
+open error    3
+```
+
+Its tests raise and clear faults, run the console commands, restart the
+program with faults still open, and check that the log keeps its newest
+`[faults].keep` faults.

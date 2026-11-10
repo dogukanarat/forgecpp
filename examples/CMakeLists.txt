@@ -5,6 +5,7 @@
 # payload-power:  a payload's power switch over GPIO, as a state machine
 # can-node:       a node on a CAN bus: heartbeat, sensor frames, commands over ISO-TP
 # telemetry-store: store and forward with SQLite and LZ4 (needs forgecpp::sqlite and ::lz4)
+# fault-log:      a fault log in SQLite through sqlite_orm, no SQL (needs forgecpp::orm)
 # thermostat:     web-first application with its own multi-page site
 # radio-controller: AD9364 daemon: libiio + IQ streaming over ZeroMQ
 # spectrum-analyzer: AD9364 spectrum analyzer with a web UI
@@ -65,6 +66,18 @@ if(TARGET forgecpp::sqlite AND TARGET forgecpp::lz4)
         target_include_directories(telemetry_store_tests PRIVATE telemetry-store)
     endif()
 endif()
+if(TARGET forgecpp::orm)
+    forge_add_app(fault-log SOURCES fault-log/main.cpp
+        LIBS forgecpp::orm
+        CONFIG fault-log/fault-log.toml
+        DESCRIPTION "forgecpp fault log example (SQLite with sqlite_orm)"
+        RESTART on-failure MAX_RESTARTS 3 WATCHDOG 30
+        NO_INSTALL)
+    if(BUILD_TESTING OR FORGECPP_BUILD_TESTS)
+        forge_add_test(fault_log_tests SOURCES fault-log/test_fault_log.cpp LIBS forgecpp::orm)
+        target_include_directories(fault_log_tests PRIVATE fault-log)
+    endif()
+endif()
 forge_add_app(thermostat SOURCES thermostat/main.cpp WEB thermostat/web
     CONFIG thermostat/thermostat.toml
     DESCRIPTION "forgecpp thermostat example"
@@ -92,6 +105,7 @@ add_subdirectory(channel-emulator)  # after qam-modem: its tests use the modem
 # Run the examples from the build dir with their config next to them.
 foreach(cfg sensor-service/sensor-service.toml pipeline/pipeline.toml three-threads/three-threads.toml
             payload-power/payload-power.toml can-node/can-node.toml telemetry-store/telemetry-store.toml
+            fault-log/fault-log.toml
             thermostat/thermostat.toml pump/pump.toml)
     get_filename_component(_name "${cfg}" NAME)
     configure_file(${cfg} "${CMAKE_CURRENT_BINARY_DIR}/${_name}" COPYONLY)

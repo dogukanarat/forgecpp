@@ -47,7 +47,8 @@ install it). LZ4 brings the `lz4` tool too.
 | `--without-ssl`, `--with-ssl`, `--without-zlib` | cpp-httplib features |
 | `--without-iio`, `--iio-usb` | Skip libiio, or build libiio's USB backend |
 | `--without-hub` | Do not build forge-hub |
-| `--without-sqlite`, `--without-lz4` | Skip SQLite or LZ4, and with them the components `forgecpp::sqlite` / `forgecpp::lz4` |
+| `--without-sqlite`, `--without-lz4` | Skip SQLite or LZ4, and with them the components `forgecpp::sqlite` / `forgecpp::lz4` (without SQLite there is no `forgecpp::orm` either) |
+| `--without-sqlite-orm` | Skip sqlite_orm, and with it `forgecpp::orm` (a header; AGPL-3.0, see [storage.md](storage.md#license-of-sqlite_orm)) |
 | `--system-protobuf`, `--protoc PATH` | Use the `protoc` on the PATH, or this one (default: built from the bundled sources with `HOST_CC`/`HOST_CXX`; it only runs on the build machine) |
 | `--profile embedded` | MinSizeRel and LTO for small targets; the libraries stay shared |
 | `--sanitize LIST` | `address,undefined` or `thread`, applied to the dependencies too (use a separate prefix) |

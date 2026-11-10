@@ -129,6 +129,7 @@ and the way into each one's panel.
 | [libiio](https://github.com/analogdevicesinc/libiio) | v0.26 | Industrial I/O devices (ADI transceivers, ADCs, ...) | `examples/radio-controller`, `examples/spectrum-analyzer` |
 | [SQLite](https://github.com/sqlite/sqlite) | 3.54.1 | Database in a file (optional component `forgecpp::sqlite`; `--without-sqlite`) | `forge/sqlite.hpp`, `forge::Backlog` |
 | [LZ4](https://github.com/lz4/lz4) | v1.10.0 | Fast compression, frame format (optional component `forgecpp::lz4`; `--without-lz4`) | `forge/lz4.hpp` |
+| [sqlite_orm](https://github.com/fnc12/sqlite_orm) | v1.9.1 | SQLite tables as C++ structs, no SQL (header-only, optional component `forgecpp::orm`; `--without-sqlite-orm`). **AGPL-3.0** or bought MIT: see [docs/storage.md](docs/storage.md#license-of-sqlite_orm) | `forge/orm.hpp` |
 
 ## Installation
 
@@ -235,6 +236,7 @@ Without CMake: `pkg-config --cflags --libs forgecpp`.
 | `examples/payload-power` | **GPIO:** a payload's power switch (EN) and power-good (PGOOD) as a state machine: edges from a worker thread, retries, alarms, a brown-out; runs on the simulated chip on a PC, `[payload].chip = "gpiochip0"` on a board |
 | `examples/can-node` | **CAN:** a node with a heartbeat frame, a sensor's temperature frames (alarm above a limit) and its commands over ISO-TP; `sensor.py` is the other node (vcan on a PC) |
 | `examples/telemetry-store` | **SQLite + LZ4, store and forward:** housekeeping records wait in a backlog file between passes; during a pass they go out in LZ4 batches (`lz4 -dc` opens them); survives restarts, drops the oldest when full. A pass log in plain SQL (`forge::sqlite`: prepared statements, a transaction, the console's `passes`) |
+| `examples/fault-log` | **SQLite without SQL (`forge::orm`, sqlite_orm):** a fault log as two structs (units, faults with a foreign key); a dummy source raises faults, warnings clear themselves, errors wait for the operator (panel button, console `clear`); `faults`, `history`, `stats` are queries written in C++ |
 | [`examples/radio-controller`](examples/radio-controller/README.md) | **AD936x radio daemon (libiio + ZeroMQ):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.iq_block` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.tx_block`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe |
 | [`examples/spectrum-analyzer`](examples/spectrum-analyzer/README.md) | **AD936x spectrum analyzer with a web UI** (on its own RX path, or on RX2 next to the radio controller): realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, `sa.spectrum` stream. Shares the AD936x backend with the radio controller |
 | [`examples/qam-modem`](examples/qam-modem/README.md) | **16QAM packet modem over an AD936x:** UDP packets from Ethernet go on the air through radio-controller and come back out over UDP: 750 ksym/s, about 1 MHz wide at 2.1 GHz, 2.9 Mbit/s net. Schmidl & Cox detection and frequency offset, fractional timing, phase loop, CRC-checked packets; TX paced by the RX sample clock; constellation page, test mode, `echo.py` traffic checker. DSP tested through an impaired channel; end-to-end test at 2.3 Mbit/s with the simulator |
@@ -250,6 +252,7 @@ cd build/forgecpp/examples
 ./payload-power -c payload-power.toml             # GPIO on the simulated chip
 ./can-node -c can-node.toml                       # on vcan0 (docs/hardware-io.md); python3 sensor.py vcan0
 ./telemetry-store -c telemetry-store.toml         # "Contact" on the panel starts a pass
+./fault-log -c fault-log.toml                     # console: faults, history, stats, clear
 ./thermostat -c thermostat.toml                    # http://localhost:8080/
 ./sensor-service -c sensor-service.toml -i --simulate-spikes
 ./radio-controller/radio-controller -c radio-controller/radio-controller.toml   # simulated AD9364
@@ -279,7 +282,9 @@ qam-modem and channel-emulator on-failure (3 in 10 minutes) with a 30 s watchdog
 MIT (see [LICENSE](LICENSE)). The bundled libraries come with their own
 licenses (MIT, BSD-2/3-Clause, BSL-1.0; nanopb Zlib; GridStack.js MIT in
 `src/web/vendor/gridstack`; SQLite public domain; LZ4's library BSD-2-Clause (its
-command line tool GPL-2.0); libzmq MPL-2.0; libiio LGPL-2.1-or-later
+command line tool GPL-2.0); sqlite_orm AGPL-3.0 or bought MIT, a header compiled
+only into the programs that include `forge/orm.hpp` (see
+[docs/storage.md](docs/storage.md#license-of-sqlite_orm)); libzmq MPL-2.0; libiio LGPL-2.1-or-later
 with GPL-2.0-or-later command line tools); see `third_party/*/LICENSE*` and
 `third_party/libiio/COPYING*.txt`. Link libzmq and libiio dynamically (the
 default) to keep the LGPL/MPL obligations simple.

@@ -14,10 +14,23 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   through `forge::Backlog`: a pass log (table `passes` in the same file)
   written with prepared statements and a transaction, shown on the panel and
   listed by the console's `passes`. Its test reads the log back with its own
-  connection.
+  connection. Fixed: `passes <n>` ignored `<n>` (a console handler gets the
+  words after the command name).
+- `examples/fault-log`: a fault log with `forge::orm`, no SQL. Two tables,
+  a dummy fault source, faults that clear by time or by the operator, the
+  console's `faults`, `history`, `stats`, `clear`; tests for each.
 
 ### Added
 
+- **forgecpp::orm** (`forge/orm.hpp`): SQLite tables as C++ structs through
+  sqlite_orm 1.9.1 (`third_party/sqlite_orm`, header-only, built into the
+  programs that include it). `forge::orm::open()` keeps one connection with
+  WAL, a busy timeout and `synchronous=NORMAL`, and updates the tables; it
+  refuses an update that sqlite_orm would do by dropping a table with its
+  rows (a new NOT NULL column without a default) unless `allow_data_loss`.
+  `install.sh` installs it (`--without-sqlite-orm`), CMake
+  `-DFORGECPP_WITH_SQLITE_ORM`, Yocto recipe `sqlite-orm` and PACKAGECONFIG
+  `orm`. sqlite_orm is AGPL-3.0 or bought MIT (docs/storage.md).
 - **c2** (`forge/c2.hpp`): the command-and-control message of zephyrus, byte for
   byte: the 8-byte header (version, flags, command number, sequence number,
   length), the flags, and the NACK status. forgecpp and zephyrus devices can

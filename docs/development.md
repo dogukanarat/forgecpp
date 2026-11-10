@@ -53,7 +53,7 @@ the CHANGELOG, commits "Release 0.4.0" and tags `v0.4.0`. Pushing is yours:
 
 ```
 include/forge/     public headers (forge.hpp includes the core; sqlite.hpp, backlog.hpp, lz4.hpp,
-                   log_rt.hpp and testing.hpp are included on their own)
+                   orm.hpp, log_rt.hpp and testing.hpp are included on their own)
 proto/forge/       forgecpp's commands and messages (messages.proto, hub.proto)
 src/               libforgecpp sources (src/app/: the Application's internals); sqlite.cpp,
                    backlog.cpp, lz4.cpp are the components libforgecpp-sqlite and -lz4
@@ -65,6 +65,7 @@ tools/             forgecpp-new (project scaffolder), forgectl, forge-proto.py (
 hub/               forge-hub: device dashboard and registry (a product, not an example)
 examples/          hello, pump (the tutorials'), sensor-service, pipeline (multi-threaded), three-threads,
                    payload-power (GPIO), can-node (CAN), telemetry-store (SQLite, LZ4),
+                   fault-log (SQLite through sqlite_orm),
                    thermostat (web site),
                    radio-controller (AD9364 over libiio + ZeroMQ),
                    spectrum-analyzer (AD936x spectrum analyzer), qam-modem (16QAM over

@@ -11,6 +11,7 @@ Where each library comes from:
 |---|---|
 | SQLite, LZ4, OpenSSL, zlib, libxml2 | oe-core (`sqlite3`, `lz4`, ...): every build has it |
 | quill, cpp-httplib, concurrentqueue, tomlplusplus, doctest | this layer, always (no other layer has them) |
+| sqlite-orm | this layer, always (meta-oe has 1.5, from 2020; this one is 1.9.1 and wins) |
 | zeromq, cppzmq, nlohmann-json, cli11, libiio, protobuf, python3-protobuf | meta-oe / meta-python when the build has them; otherwise this layer's `backfill/` recipes |
 
 The backfill recipes are at the versions of forgecpp's submodules and are
@@ -34,9 +35,9 @@ local.conf:     IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub
 
 | Recipe | Packages | What |
 |---|---|---|
-| `recipes-support/forgecpp/forgecpp_git.bb` | `forgecpp`, `forgecpp-dev`, `forgecpp-forgectl`, `forgecpp-hub`, `forgecpp-sqlite`, `forgecpp-lz4`, `python3-forge`, `forgecpp-ptest` | libforgecpp (nanopb and linenoise compiled in), forgectl, forge-hub (PACKAGECONFIG `hub`, on by default), forgecpp::sqlite and forgecpp::lz4 (PACKAGECONFIG `sqlite`, `lz4`, on by default), the Python package, the test programs (PACKAGECONFIG `ptest`) |
+| `recipes-support/forgecpp/forgecpp_git.bb` | `forgecpp`, `forgecpp-dev`, `forgecpp-forgectl`, `forgecpp-hub`, `forgecpp-sqlite`, `forgecpp-lz4`, `python3-forge`, `forgecpp-ptest` | libforgecpp (nanopb and linenoise compiled in), forgectl, forge-hub (PACKAGECONFIG `hub`, on by default), forgecpp::sqlite and forgecpp::lz4 (PACKAGECONFIG `sqlite`, `lz4`, on by default), forgecpp::orm (PACKAGECONFIG `orm`, on by default; headers only, in `forgecpp-dev`), the Python package, the test programs (PACKAGECONFIG `ptest`) |
 | `recipes-devtools/forgecpp-tools/forgecpp-tools_git.bb` | `forgecpp-tools`, `nativesdk-forgecpp-tools` | `forgecpp-new`, `forge-proto.py` and nanopb's generator: for the SDK (an application with its own `.proto` files) and, if wanted, the target |
-| `recipes-support/quill`, `cpp-httplib`, `concurrentqueue`, `tomlplusplus`; `recipes-test/doctest` | the libraries no other layer has | the versions forgecpp is built and tested with (its submodules) |
+| `recipes-support/quill`, `cpp-httplib`, `concurrentqueue`, `tomlplusplus`, `sqlite-orm`; `recipes-test/doctest` | the libraries no other layer has | the versions forgecpp is built and tested with (its submodules) |
 | `backfill/meta-oe/*`, `backfill/meta-python/*` | `zeromq`, `cppzmq`, `nlohmann-json`, `cli11`, `libiio`, `protobuf`, `python3-protobuf` | only when meta-oe / meta-python are not in the build |
 | `recipes-connectivity/*` | `radio-controller`, `spectrum-analyzer`, `qam-modem` (each + `-clients`), `channel-emulator` | the example applications, from `recipes-connectivity/forgecpp-app.inc` |
 
@@ -134,7 +135,7 @@ Every forgecpp application on the device registers with it by itself
 whose state the hub shows. Port 80 needs root or `CAP_NET_BIND_SERVICE`
 (`forge_add_app(... CAPABILITIES CAP_NET_BIND_SERVICE DYNAMIC_USER)`).
 
-## SQLite, LZ4, CAN, GPIO
+## SQLite, sqlite_orm, LZ4, CAN, GPIO
 
 The optional components are packages of their own, pulled in by the
 applications that link them (shlibdeps): `forgecpp-sqlite` (with `sqlite3`)
@@ -142,6 +143,15 @@ and `forgecpp-lz4` (with `lz4`). SQLite and LZ4 come from oe-core's recipes
 (`third_party/sqlite` and `third_party/lz4` are for `install.sh`, a build
 without Yocto): oe-core is in every build and keeps them patched. `PACKAGECONFIG:remove:pn-forgecpp =
 "sqlite"` leaves one out of the build.
+
+sqlite_orm (`forgecpp::orm`, [docs/storage.md](../docs/storage.md)) is a
+header: no package of the image has it. An application that includes
+`forge/orm.hpp` compiles it in and links `sqlite3`. Its license is
+AGPL-3.0 (or MIT, bought from its author), and that application takes it on:
+the recipe's `LICENSE` says so, and the image's license manifest lists it. A
+distribution with `INCOMPATIBLE_LICENSE = "AGPL-3.0*"` sets
+`PACKAGECONFIG:remove:pn-forgecpp = "orm"`; an application that bought the MIT
+license sets its own recipe's `LICENSE` accordingly.
 
 GPIO and CAN need nothing but the kernel ([docs/hardware-io.md](../docs/hardware-io.md)):
 the GPIO character device (`CONFIG_GPIO_CDEV`, on by default), and for

@@ -15,7 +15,7 @@ in CI on every change.
 | `forgectl` commands, application command line flags | yes | the CI smoke test |
 | CMake: `forge_add_app`, `forge_add_web`, `forge_add_test`, `forge_add_proto`, `forge_install_python` | yes | examples, scaffolder, CI |
 | Python: `forge` package (`framing`, `c2`, `serial`, `messages_pb2`, `hub_pb2`) | yes | CI (the clients) |
-| The optional components `forgecpp::sqlite`, `forgecpp::lz4` (`find_package(forgecpp COMPONENTS sqlite lz4)`) | yes | their tests; `tools/api-check.py` records `libforgecpp.so` only, not their libraries |
+| The optional components `forgecpp::sqlite`, `forgecpp::lz4`, `forgecpp::orm` (`find_package(forgecpp COMPONENTS sqlite lz4 orm)`) | yes | their tests; `tools/api-check.py` records `libforgecpp.so` only, not their libraries |
 | Log text, metric names of internals, web page markup | no | |
 
 ## Versions

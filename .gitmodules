@@ -48,3 +48,7 @@
 	path = third_party/sqlite
 	url = https://github.com/sqlite/sqlite
 	shallow = true
+[submodule "third_party/sqlite_orm"]
+	path = third_party/sqlite_orm
+	url = https://github.com/fnc12/sqlite_orm
+	shallow = true

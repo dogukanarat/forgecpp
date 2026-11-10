@@ -3,6 +3,7 @@
 #include <forge/forge.hpp>
 #include <forge/testing.hpp>
 
+#include <algorithm>
 #include <fstream>
 #include <iterator>
 
@@ -123,4 +124,24 @@ TEST_CASE("telemetry-store: every pass is in the pass log (SQL, forge::sqlite)")
     CHECK_FALSE(q.null(2));
     CHECK(q.integer(3) == 0);
     CHECK_FALSE(q.step());
+}
+
+TEST_CASE("telemetry-store: the console lists the passes") {
+    forge::testing::TempDir dir;
+    Runner r(args(dir), {.manual_time = true});
+    for (int i = 0; i < 3; ++i) {
+        r->invoke([&] { r->dashboard()->set("contact", true); });
+        r->invoke([&] { r->dashboard()->set("contact", false); });
+    }
+    auto run = [&](const std::string& line) {
+        std::string out;
+        forge::Console::Session session{.channel = "test", .output = [&](std::string_view s) { out += s; }};
+        r->invoke([&] { CHECK(r->console()->execute(line, session)); });
+        return out;
+    };
+    REQUIRE(r->console() != nullptr);
+    const auto lines = [](const std::string& s) { return std::count(s.begin(), s.end(), '\n'); };
+    CHECK(lines(run("passes")) == 4);    // the heading and three passes
+    CHECK(lines(run("passes 1")) == 2);  // the heading and the newest
+    CHECK(run("passes 1").find("   3  ") != std::string::npos);
 }

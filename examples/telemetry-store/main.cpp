@@ -89,7 +89,7 @@ protected:
         console.add("passes", "passes [n]  the last n ground passes (default 10)", [this, &console](const auto& args) {
             auto q =
                 db_->prepare("SELECT id, start_ms, end_ms, records, packed_bytes FROM passes ORDER BY id DESC LIMIT ?");
-            q.bind(1, args.size() > 1 ? std::stoi(args[1]) : 10);
+            q.bind(1, args.empty() ? 10 : std::stoi(args[0]));  // args: after the command name
             console.print("{:>4}  {:>19}  {:>8}  {:>8}  {:>9}", "pass", "start (UTC)", "length", "records", "sent");
             while (q.step()) {
                 const auto start = q.integer(1);

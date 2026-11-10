@@ -1,0 +1,15 @@
+# fault-log example configuration
+
+[faults]
+db = "faults.db"             # on a device: /var/lib/fault-log/faults.db
+units = ["eps", "adcs", "radio", "payload"]
+period_ms = 1000
+rate = 0.2                   # a fault in about one check of five
+clear_after_s = 30           # info and warnings clear themselves; errors wait for an operator
+keep = 10000
+seed = 1
+
+[http]
+enabled = true
+host = "127.0.0.1"
+port = 8080
