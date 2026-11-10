@@ -42,6 +42,10 @@ touches your members there, so you need no locks for them.
 
 `invoke()` runs `fn` inline when called on the loop, so it is safe everywhere.
 
+A complete program in this shape, with three named threads, the channels
+between them and a test that drives it through its controls:
+[`examples/three-threads`](../examples/three-threads/main.cpp).
+
 ## Sequences: a state machine
 
 Work in steps with waits between them (switch a payload on, give it two

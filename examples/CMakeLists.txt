@@ -1,6 +1,7 @@
 # hello:          the smallest daemon (lambda style)
 # sensor-service: every building block in one service
 # pipeline:       multi-threaded processing (threads, channels, thread pool, atomics)
+# three-threads:  three named threads and the main loop, in one file
 # thermostat:     web-first application with its own multi-page site
 # radio-controller: AD9364 daemon: libiio + IQ streaming over ZeroMQ
 # spectrum-analyzer: AD9364 spectrum analyzer with a web UI
@@ -22,6 +23,15 @@ forge_add_app(pipeline SOURCES pipeline/main.cpp
     DESCRIPTION "forgecpp processing pipeline example"
     RESTART on-failure MAX_RESTARTS 5 RESTART_WINDOW 300 RESTART_DELAY 1 WATCHDOG 20
     NO_INSTALL)
+forge_add_app(three-threads SOURCES three-threads/main.cpp
+    CONFIG three-threads/three-threads.toml
+    DESCRIPTION "forgecpp three threads example"
+    RESTART on-failure MAX_RESTARTS 3 WATCHDOG 30   # a thread that ends: restarted
+    NO_INSTALL)
+if(BUILD_TESTING OR FORGECPP_BUILD_TESTS)
+    forge_add_test(three_threads_tests SOURCES three-threads/test_three_threads.cpp)
+    target_include_directories(three_threads_tests PRIVATE three-threads)
+endif()
 forge_add_app(thermostat SOURCES thermostat/main.cpp WEB thermostat/web
     CONFIG thermostat/thermostat.toml
     DESCRIPTION "forgecpp thermostat example"
@@ -47,7 +57,8 @@ add_subdirectory(qam-modem)
 add_subdirectory(channel-emulator)  # after qam-modem: its tests use the modem
 
 # Run the examples from the build dir with their config next to them.
-foreach(cfg sensor-service/sensor-service.toml pipeline/pipeline.toml thermostat/thermostat.toml pump/pump.toml)
+foreach(cfg sensor-service/sensor-service.toml pipeline/pipeline.toml three-threads/three-threads.toml
+            thermostat/thermostat.toml pump/pump.toml)
     get_filename_component(_name "${cfg}" NAME)
     configure_file(${cfg} "${CMAKE_CURRENT_BINARY_DIR}/${_name}" COPYONLY)
 endforeach()

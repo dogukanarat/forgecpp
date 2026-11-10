@@ -180,6 +180,7 @@ Without CMake: `pkg-config --cflags --libs forgecpp`.
 | `examples/hello` | The smallest daemon (lambda style), a console command |
 | `examples/sensor-service` (`sensor-service`) | Every building block: channel, thread pool, events, control panel, own page, alarm with hysteresis |
 | `examples/pipeline` | **Multi-threaded application:** N producer threads → lock-free `Channel` → dispatcher thread → `ThreadPool` workers → result channel → main loop. Bounded in-flight work (backpressure), atomic counters, alarms raised from worker threads, clean shutdown |
+| `examples/three-threads` | **Three threads in one file:** `acquire` (a dummy sensor) → `Channel` → `process` (blocks) → `Channel` → `downlink`, results into the main loop with `post()`. Named threads with `worker()` (`[threads.<name>]` priorities, clean stop, a thread that throws shows in health and alarms), atomics for what the panel changes, a test that drives it through its controls |
 | [`examples/radio-controller`](examples/radio-controller/README.md) | **AD936x radio daemon (libiio + ZeroMQ):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.iq_block` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.tx_block`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe |
 | [`examples/spectrum-analyzer`](examples/spectrum-analyzer/README.md) | **AD936x spectrum analyzer with a web UI** (on its own RX path, or on RX2 next to the radio controller): realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, `sa.spectrum` stream. Shares the AD936x backend with the radio controller |
 | [`examples/qam-modem`](examples/qam-modem/README.md) | **16QAM packet modem over an AD936x:** UDP packets from Ethernet go on the air through radio-controller and come back out over UDP: 750 ksym/s, about 1 MHz wide at 2.1 GHz, 2.9 Mbit/s net. Schmidl & Cox detection and frequency offset, fractional timing, phase loop, CRC-checked packets; TX paced by the RX sample clock; constellation page, test mode, `echo.py` traffic checker. DSP tested through an impaired channel; end-to-end test at 2.3 Mbit/s with the simulator |
@@ -191,6 +192,7 @@ Without CMake: `pkg-config --cflags --libs forgecpp`.
 ./install.sh --prefix ~/.local --examples
 cd build/forgecpp/examples
 ./pipeline -c pipeline.toml --producers 4 -i      # http://localhost:8080/forge/
+./three-threads -c three-threads.toml -i          # http://localhost:8080/forge/
 ./thermostat -c thermostat.toml                    # http://localhost:8080/
 ./sensor-service -c sensor-service.toml -i --simulate-spikes
 ./radio-controller/radio-controller -c radio-controller/radio-controller.toml   # simulated AD9364
@@ -211,8 +213,8 @@ FFT/windows).
 Every example has a generated systemd unit next to its binary
 (`build/forgecpp/examples/<name>.service`, `.../examples/<name>/<name>.service`
 for radio-controller, spectrum-analyzer, qam-modem and channel-emulator) with a restart policy that suits it:
-hello on-failure without a watchdog, sensor-service and pipeline on-failure
-with a watchdog, thermostat `always`, radio-controller, spectrum-analyzer,
+hello on-failure without a watchdog, sensor-service, pipeline and three-threads
+on-failure with a watchdog, thermostat `always`, radio-controller, spectrum-analyzer,
 qam-modem and channel-emulator on-failure (3 in 10 minutes) with a 30 s watchdog.
 
 ## License

@@ -57,7 +57,8 @@ third_party/       submodules
 cmake/             package config, pkg-config, forge_add_app/forge_add_web/forge_add_test
 tools/             forgecpp-new (project scaffolder), forgectl, forge-proto.py (message generator)
 hub/               forge-hub: device dashboard and registry (a product, not an example)
-examples/          hello, sensor-service, pipeline (multi-threaded), thermostat (web site),
+examples/          hello, sensor-service, pipeline (multi-threaded), three-threads,
+                   thermostat (web site),
                    radio-controller (AD9364 over libiio + ZeroMQ),
                    spectrum-analyzer (AD936x spectrum analyzer), qam-modem (16QAM over
                    radio-controller), channel-emulator, common/ad936x, common/channel
