@@ -8,6 +8,14 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 
 ## Unreleased (0.4.0)
 
+### Changed (examples)
+
+- `examples/telemetry-store` uses `forge::sqlite` directly too, not only
+  through `forge::Backlog`: a pass log (table `passes` in the same file)
+  written with prepared statements and a transaction, shown on the panel and
+  listed by the console's `passes`. Its test reads the log back with its own
+  connection.
+
 ### Added
 
 - **c2** (`forge/c2.hpp`): the command-and-control message of zephyrus, byte for

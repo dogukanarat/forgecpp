@@ -93,3 +93,34 @@ TEST_CASE("telemetry-store: when the backlog is full the oldest records go") {
     const auto first = forge::json::parse(std::string(oldest[0].data.begin(), oldest[0].data.end()));
     CHECK(first["seq"] == 31);
 }
+
+TEST_CASE("telemetry-store: every pass is in the pass log (SQL, forge::sqlite)") {
+    forge::testing::TempDir dir;
+    {
+        Runner r(args(dir), {.manual_time = true});
+        r.advance(5s);  // 50 records wait
+        r->invoke([&] { r->dashboard()->set("contact", true); });
+        REQUIRE(forge::testing::wait_until([&] { return waiting(r) == 0; }));
+        r->invoke([&] { r->dashboard()->set("contact", false); });
+        CHECK(r->invoke([&] { return r->dashboard()->get("passes"); }) == 1);
+        CHECK(r->invoke([&] { return r->dashboard()->get("last_pass"); })
+                  .get<std::string>()
+                  .starts_with("#1: 50 records"));
+
+        r->invoke([&] { r->dashboard()->set("contact", true); });  // a second pass, open when the program stops
+    }
+
+    // The same file, read by anyone with SQLite: the program closed the open pass when it stopped.
+    forge::sqlite::Database db((dir / "backlog.db").string(), {.read_only = true});
+    auto q = db.prepare("SELECT id, start_ms, end_ms, records, packed_bytes FROM passes ORDER BY id");
+    REQUIRE(q.step());
+    CHECK(q.integer(0) == 1);
+    CHECK(q.integer(2) >= q.integer(1));
+    CHECK(q.integer(3) == 50);
+    CHECK(q.integer(4) > 0);
+    REQUIRE(q.step());
+    CHECK(q.integer(0) == 2);
+    CHECK_FALSE(q.null(2));
+    CHECK(q.integer(3) == 0);
+    CHECK_FALSE(q.step());
+}

@@ -99,6 +99,22 @@ lz4 -dc batch-000001.jsonl.lz4 | head        # on the ground
 
 `examples/telemetry-store` puts both together: housekeeping records into a
 backlog every 100 ms, and during a pass (the "Contact" control) batches of
-them compressed with LZ4 into an outbox through a link of a set rate. Its
-test checks that every record arrives once and in order, that the backlog
-survives a restart, and that the oldest records go when it is full.
+them compressed with LZ4 into an outbox through a link of a set rate.
+
+It also uses `forge::sqlite` directly, in the same file: a pass log, the
+table `passes` (start, end, records and bytes sent), written with plain SQL
+when a pass begins and ends (`prepare`, `bind`, `run`, a `Transaction` that
+closes the pass and prunes the log together), counted at start with a
+`SELECT`, and listed by the console's `passes` command:
+
+```
+telemetry-store> passes
+pass          start (UTC)    length   records       sent
+   2  2026-11-10 18:01:47       2 s        56        1 kB
+   1  2026-11-10 18:01:39       5 s        66        2 kB
+```
+
+Its tests check that every record arrives once and in order, that the
+backlog survives a restart, that the oldest records go when it is full, and
+read the pass log back with a connection of their own
+(`sqlite3 backlog.db "SELECT * FROM passes"` does the same).
