@@ -1,6 +1,6 @@
-# Build and boot a qemuarm64 image with forgecpp, forge-hub, radio-controller
-# (simulator) and spectrum-analyzer, all from this checkout (externalsrc), and
-# run the runtime tests in lib/oeqa/runtime/cases/forgecpp.py:
+# The image of qemuarm64-poky.yml, in a build that also has meta-oe and
+# meta-python, as most BSPs do: then their recipes of zeromq, protobuf, ...
+# are used and the layer's backfill recipes are not.
 #
 #   FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml                 # image
 #   FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml -c testimage    # boot it in QEMU and test
@@ -8,61 +8,13 @@
 # Used by .github/workflows/yocto.yml (nightly).
 header:
   version: 14
-
-distro: poky
-machine: qemuarm64
-target: core-image-minimal
-
-env:
-  FORGECPP_SRC: ""   # absolute path of the forgecpp checkout
+  includes:
+    - yocto/kas/qemuarm64-poky.yml   # kas: relative to the repository root
 
 repos:
-  forgecpp:
-    layers:
-      yocto:
-  poky:
-    url: https://git.yoctoproject.org/poky
-    branch: scarthgap
-    layers:
-      meta:
-      meta-poky:
   meta-openembedded:
     url: https://github.com/openembedded/meta-openembedded
     branch: scarthgap
     layers:
       meta-oe:
       meta-python:
-
-local_conf_header:
-  systemd: |
-    INIT_MANAGER = "systemd"
-  forgecpp: |
-    IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub radio-controller spectrum-analyzer qam-modem channel-emulator \
-                             python3-forge curl"
-    DISTRO_FEATURES:append = " ptest"
-    IMAGE_INSTALL:append = " forgecpp-ptest"
-    # No transceiver in QEMU: the radio's simulator.
-    RADIO_BACKEND:pn-radio-controller = "sim"
-    # Build this checkout, not the recipes' git URL.
-    INHERIT += "externalsrc"
-    EXTERNALSRC:pn-forgecpp = "${FORGECPP_SRC}"
-    EXTERNALSRC:pn-forgecpp-tools = "${FORGECPP_SRC}"
-    EXTERNALSRC:pn-radio-controller = "${FORGECPP_SRC}"
-    EXTERNALSRC:pn-spectrum-analyzer = "${FORGECPP_SRC}"
-    EXTERNALSRC:pn-qam-modem = "${FORGECPP_SRC}"
-    EXTERNALSRC:pn-channel-emulator = "${FORGECPP_SRC}"
-    PV:pn-forgecpp = "0.4.0+ci"
-    PV:pn-forgecpp-tools = "0.4.0+ci"
-    PV:pn-radio-controller = "1.0.0+ci"
-    PV:pn-spectrum-analyzer = "1.0.0+ci"
-    PV:pn-qam-modem = "1.0.0+ci"
-    PV:pn-channel-emulator = "1.0.0+ci"
-  testimage: |
-    IMAGE_CLASSES += "testimage"
-    IMAGE_FEATURES += "ssh-server-dropbear"
-    TEST_SUITES = "ping ssh ptest forgecpp"
-    TEST_RUNQEMUPARAMS = "slirp nographic"
-    TEST_QEMUBOOT_TIMEOUT = "1500"
-  disk: |
-    INHERIT += "rm_work"
-    BB_NUMBER_THREADS ?= "4"

@@ -5,11 +5,13 @@ library needs neither:
 
 | Component | Library | Header | Needs |
 |---|---|---|---|
-| `forgecpp::sqlite` | `libforgecpp-sqlite.so` | `forge/sqlite.hpp`, `forge/backlog.hpp` | SQLite 3 (`sqlite3` in oe-core) |
-| `forgecpp::lz4` | `libforgecpp-lz4.so` | `forge/lz4.hpp` | liblz4 (`lz4` in oe-core) |
+| `forgecpp::sqlite` | `libforgecpp-sqlite.so` | `forge/sqlite.hpp`, `forge/backlog.hpp` | SQLite 3 (`third_party/sqlite`; Yocto: `sqlite3` of oe-core) |
+| `forgecpp::lz4` | `libforgecpp-lz4.so` | `forge/lz4.hpp` | liblz4 (`third_party/lz4`; Yocto: `lz4` of oe-core) |
 
-They are built when their library is found (`-DFORGECPP_WITH_SQLITE=OFF`,
-`-DFORGECPP_WITH_LZ4=OFF` leave them out). An application links the
+SQLite and LZ4 are submodules, built and installed by `install.sh` as shared
+libraries like every other library (`--without-sqlite`, `--without-lz4`
+leave them out). The components are built when their library is found
+(`-DFORGECPP_WITH_SQLITE=OFF`, `-DFORGECPP_WITH_LZ4=OFF` leave them out). An application links the
 component:
 
 ```cmake

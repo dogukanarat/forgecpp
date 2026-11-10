@@ -207,7 +207,9 @@ if(FORGECPP_WARNINGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 # Optional components, each a shared library of its own, so that the core
-# library needs neither (find_package(forgecpp) then forgecpp::sqlite, ...):
+# library needs neither (find_package(forgecpp) then forgecpp::sqlite, ...).
+# Their libraries are submodules too (third_party/sqlite, third_party/lz4),
+# built and installed by install.sh like the others:
 #   forgecpp::sqlite   SQLite: forge::sqlite::Database, forge::Backlog (store and forward)
 #   forgecpp::lz4      LZ4 frames: forge::lz4::compress / decompress
 # Their libraries are private dependencies: an application links the
@@ -239,14 +241,24 @@ if(FORGECPP_WITH_SQLITE)
     endif()
 endif()
 if(FORGECPP_WITH_LZ4)
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(FORGE_LZ4 QUIET IMPORTED_TARGET liblz4)
+    # LZ4's CMake package (third_party/lz4, install.sh), else its pkg-config
+    # file (a build with make: distributions, OpenEmbedded).
+    find_package(lz4 CONFIG QUIET)
+    if(TARGET LZ4::lz4)
+        set(_forge_lz4 LZ4::lz4)
+    else()
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(FORGE_LZ4 QUIET IMPORTED_TARGET liblz4)
+        endif()
+        if(FORGE_LZ4_FOUND)
+            set(_forge_lz4 PkgConfig::FORGE_LZ4)
+        endif()
     endif()
-    if(FORGE_LZ4_FOUND)
+    if(_forge_lz4)
         add_library(forgecpp_lz4 SHARED src/lz4.cpp)
         _forge_component(forgecpp_lz4 lz4)
-        target_link_libraries(forgecpp_lz4 PRIVATE PkgConfig::FORGE_LZ4)
+        target_link_libraries(forgecpp_lz4 PRIVATE ${_forge_lz4})
         list(APPEND FORGECPP_COMPONENTS lz4)
     else()
         message(WARNING "liblz4 not found: forgecpp::lz4 is not built (-DFORGECPP_WITH_LZ4=OFF to silence)")

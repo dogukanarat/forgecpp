@@ -1,8 +1,10 @@
 name: yocto
 
-# Nightly: build the qemuarm64 image of yocto/kas/qemuarm64.yml (forgecpp,
-# forge-hub, radio-controller on its simulator, spectrum-analyzer) from this
-# checkout and boot it in QEMU with the runtime tests (testimage).
+# Nightly: build the qemuarm64 image (forgecpp, forge-hub, radio-controller on
+# its simulator, spectrum-analyzer) from this checkout and boot it in QEMU
+# with the runtime tests (testimage), twice: with meta-oe and meta-python
+# (yocto/kas/qemuarm64.yml, a usual BSP) and with poky and this layer only
+# (yocto/kas/qemuarm64-poky.yml: the layer's backfill recipes).
 #
 # A Yocto build needs tens of GB and hours: the job frees the runner's disk and
 # keeps downloads and sstate between runs. For a faster, roomier machine set
@@ -20,6 +22,11 @@ jobs:
   qemuarm64:
     runs-on: ${{ vars.YOCTO_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 1   # one build at a time: they share the downloads and sstate
+      matrix:
+        kas: [qemuarm64.yml, qemuarm64-poky.yml]
     env:
       KAS_WORK_DIR: ${{ github.workspace }}/../kas
       DL_DIR: ${{ github.workspace }}/../kas/downloads
@@ -57,16 +64,16 @@ jobs:
         env:
           FORGECPP_SRC: ${{ github.workspace }}
           LANG: en_US.UTF-8
-        run: ~/.local/bin/kas build yocto/kas/qemuarm64.yml
+        run: ~/.local/bin/kas build yocto/kas/${{ matrix.kas }}
       - name: Boot it in QEMU and run the runtime tests
         env:
           FORGECPP_SRC: ${{ github.workspace }}
           LANG: en_US.UTF-8
-        run: ~/.local/bin/kas build yocto/kas/qemuarm64.yml -c testimage
+        run: ~/.local/bin/kas build yocto/kas/${{ matrix.kas }} -c testimage
       - name: Logs
         if: failure()
         run: |
-          find "$KAS_WORK_DIR/build/tmp/work" -name 'log.do_*' -newer yocto/kas/qemuarm64.yml -path '*forgecpp*' \
-            -o -name 'log.do_*' -newer yocto/kas/qemuarm64.yml -path '*radio-controller*' | head -20 | xargs -r tail -n 80
+          find "$KAS_WORK_DIR/build/tmp/work" -name 'log.do_*' -newer yocto/kas/${{ matrix.kas }} -path '*forgecpp*' \
+            -o -name 'log.do_*' -newer yocto/kas/${{ matrix.kas }} -path '*radio-controller*' | head -20 | xargs -r tail -n 80
           find "$KAS_WORK_DIR/build/tmp/log/oeqa" -type f | xargs -r tail -n 200
           df -h /

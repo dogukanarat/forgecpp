@@ -310,6 +310,34 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 - The links of `[serial]` and `[can]` share one implementation in the
   framework (a list of links, each with its health component and metrics).
 
+### Changed (libraries and the Yocto layer)
+
+- SQLite (3.54.1) and LZ4 (v1.10.0) are submodules (`third_party/sqlite`,
+  `third_party/lz4`, shallow), built and installed by `install.sh` as shared
+  libraries like every other library, with their tools (`sqlite3`, `lz4`);
+  `--without-sqlite`, `--without-lz4`. SQLite's amalgamation is made on the
+  build machine by its own configure (no Tcl needed) and compiled by
+  `cmake/third_party/sqlite`. forgecpp prefers LZ4's CMake package and falls
+  back to pkg-config.
+- The Yocto layer needs only oe-core (`LAYERDEPENDS = "core"`). The libraries
+  it took from meta-oe and meta-python have recipes in `yocto/backfill/`,
+  used only when those layers are not in the build (`BBFILES_DYNAMIC` with
+  `!`): zeromq, cppzmq, nlohmann-json, cli11, libiio, protobuf (21.12),
+  python3-protobuf. `kas/qemuarm64-poky.yml` builds the image with poky and
+  this layer alone; the nightly workflow builds both variants.
+
+### Fixed (Yocto)
+
+- tomlplusplus and doctest are not in meta-oe: the layer did not resolve
+  with meta-oe either. Their recipes are now always the layer's.
+- forgecpp-tools asked for `protobuf`; protoc is in `protobuf-compiler`.
+- `python3-pyzmq` (meta-python only) is a recommendation of python3-forge and
+  the example clients, and only when meta-python is in the build; a missing
+  recommendation stops bitbake.
+- The recipes were checked with bitbake (scarthgap): they parse and
+  `bitbake -g core-image-minimal` resolves, with poky alone and with
+  meta-oe / meta-python.
+
 ### Removed
 
 - `Application::call(fn)`: it did what `invoke(fn)` does (every use waited

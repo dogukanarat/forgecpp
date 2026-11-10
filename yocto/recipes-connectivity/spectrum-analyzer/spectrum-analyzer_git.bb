@@ -31,5 +31,7 @@ RRECOMMENDS:${PN} = "${@'radio-controller' if d.getVar('SA_BACKEND') == 'radio' 
 # spectrum_watch.py and the sa modules; .proto files are development files.
 PACKAGES =+ "${PN}-clients"
 FILES:${PN}-clients = "${datadir}/spectrum-analyzer/clients ${PYTHON_SITEPACKAGES_DIR}/sa"
-RDEPENDS:${PN}-clients = "python3-core python3-pyzmq python3-protobuf python3-forge"
+RDEPENDS:${PN}-clients = "python3-core python3-protobuf python3-forge"
+# The clients talk ZeroMQ: pyzmq comes from meta-python, when it is in the build.
+RRECOMMENDS:${PN}-clients = "${@bb.utils.contains('BBFILE_COLLECTIONS', 'meta-python', 'python3-pyzmq', '', d)}"
 FILES:${PN}-dev += "${datadir}/spectrum-analyzer/proto"

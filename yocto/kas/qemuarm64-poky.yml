@@ -1,0 +1,64 @@
+# Build and boot a qemuarm64 image with forgecpp, forge-hub and the example
+# applications from this checkout (externalsrc), with poky (oe-core) and this
+# layer ONLY: the libraries of meta-oe and meta-python come from the layer's
+# backfill recipes (conf/layer.conf). The runtime tests are in
+# lib/oeqa/runtime/cases/forgecpp.py:
+#
+#   FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64-poky.yml                 # image
+#   FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64-poky.yml -c testimage    # boot it in QEMU and test
+#
+# qemuarm64.yml is the same with meta-oe and meta-python (a usual BSP).
+header:
+  version: 14
+
+distro: poky
+machine: qemuarm64
+target: core-image-minimal
+
+env:
+  FORGECPP_SRC: ""   # absolute path of the forgecpp checkout
+
+repos:
+  forgecpp:
+    layers:
+      yocto:
+  poky:
+    url: https://git.yoctoproject.org/poky
+    branch: scarthgap
+    layers:
+      meta:
+      meta-poky:
+
+local_conf_header:
+  systemd: |
+    INIT_MANAGER = "systemd"
+  forgecpp: |
+    IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub radio-controller spectrum-analyzer qam-modem channel-emulator \
+                             python3-forge curl"
+    DISTRO_FEATURES:append = " ptest"
+    IMAGE_INSTALL:append = " forgecpp-ptest"
+    # No transceiver in QEMU: the radio's simulator.
+    RADIO_BACKEND:pn-radio-controller = "sim"
+    # Build this checkout, not the recipes' git URL.
+    INHERIT += "externalsrc"
+    EXTERNALSRC:pn-forgecpp = "${FORGECPP_SRC}"
+    EXTERNALSRC:pn-forgecpp-tools = "${FORGECPP_SRC}"
+    EXTERNALSRC:pn-radio-controller = "${FORGECPP_SRC}"
+    EXTERNALSRC:pn-spectrum-analyzer = "${FORGECPP_SRC}"
+    EXTERNALSRC:pn-qam-modem = "${FORGECPP_SRC}"
+    EXTERNALSRC:pn-channel-emulator = "${FORGECPP_SRC}"
+    PV:pn-forgecpp = "0.4.0+ci"
+    PV:pn-forgecpp-tools = "0.4.0+ci"
+    PV:pn-radio-controller = "1.0.0+ci"
+    PV:pn-spectrum-analyzer = "1.0.0+ci"
+    PV:pn-qam-modem = "1.0.0+ci"
+    PV:pn-channel-emulator = "1.0.0+ci"
+  testimage: |
+    IMAGE_CLASSES += "testimage"
+    IMAGE_FEATURES += "ssh-server-dropbear"
+    TEST_SUITES = "ping ssh ptest forgecpp"
+    TEST_RUNQEMUPARAMS = "slirp nographic"
+    TEST_QEMUBOOT_TIMEOUT = "1500"
+  disk: |
+    INHERIT += "rm_work"
+    BB_NUMBER_THREADS ?= "4"

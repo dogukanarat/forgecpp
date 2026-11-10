@@ -26,6 +26,7 @@ do_install() {
 }
 
 FILES:${PN} = "${bindir}/forgecpp-new ${datadir}/forgecpp"
-RDEPENDS:${PN} = "bash python3-core python3-protobuf protobuf"
-RDEPENDS:${PN}:class-nativesdk = "nativesdk-bash nativesdk-python3-core nativesdk-python3-protobuf nativesdk-protobuf"
+# protoc is in protobuf-compiler (meta-oe and the backfill split it the same way).
+RDEPENDS:${PN} = "bash python3-core python3-protobuf protobuf-compiler"
+RDEPENDS:${PN}:class-nativesdk = "nativesdk-bash nativesdk-python3-core nativesdk-python3-protobuf nativesdk-protobuf-compiler"
 BBCLASSEXTEND = "native nativesdk"

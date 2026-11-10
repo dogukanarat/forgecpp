@@ -89,6 +89,8 @@ kill -HUP $(pidof pump)            # reload the configuration
 | [nanopb](https://github.com/nanopb/nanopb) | 0.4.9.2 | Protobuf messages as C structs with fixed bounds (compiled in) | `forge/pb.hpp`, `proto/forge`, `forge_add_proto()` |
 | [protobuf](https://github.com/protocolbuffers/protobuf) | v21.12 | `protoc`, on the build machine only (nothing links libprotobuf) | `forge_add_proto()` |
 | [libiio](https://github.com/analogdevicesinc/libiio) | v0.26 | Industrial I/O devices (ADI transceivers, ADCs, ...) | `examples/radio-controller`, `examples/spectrum-analyzer` |
+| [SQLite](https://github.com/sqlite/sqlite) | 3.54.1 | Database in a file (optional component `forgecpp::sqlite`; `--without-sqlite`) | `forge/sqlite.hpp`, `forge::Backlog` |
+| [LZ4](https://github.com/lz4/lz4) | v1.10.0 | Fast compression, frame format (optional component `forgecpp::lz4`; `--without-lz4`) | `forge/lz4.hpp` |
 
 ## Installation
 
@@ -233,7 +235,8 @@ qam-modem and channel-emulator on-failure (3 in 10 minutes) with a 30 s watchdog
 
 MIT (see [LICENSE](LICENSE)). The bundled libraries come with their own
 licenses (MIT, BSD-2/3-Clause, BSL-1.0; nanopb Zlib; GridStack.js MIT in
-`src/web/vendor/gridstack`; libzmq MPL-2.0; libiio LGPL-2.1-or-later
+`src/web/vendor/gridstack`; SQLite public domain; LZ4's library BSD-2-Clause (its
+command line tool GPL-2.0); libzmq MPL-2.0; libiio LGPL-2.1-or-later
 with GPL-2.0-or-later command line tools); see `third_party/*/LICENSE*` and
 `third_party/libiio/COPYING*.txt`. Link libzmq and libiio dynamically (the
 default) to keep the LGPL/MPL obligations simple.

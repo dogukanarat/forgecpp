@@ -30,6 +30,8 @@ LIBDIR=""
 WITH_SSL="auto"
 WITH_ZLIB="auto"
 WITH_IIO="ON"
+WITH_SQLITE="ON"
+WITH_LZ4="ON"
 WITH_HUB="ON"
 SYSTEM_PROTOBUF="OFF"
 HOST_PROTOC=""
@@ -51,7 +53,7 @@ USE_SUDO="auto"
 QUIET="OFF"
 
 # name | source dir | extra cmake args
-DEPS=(quill CLI11 concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq libiio)
+DEPS=(quill CLI11 concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq libiio lz4 sqlite)
 
 usage() {
     cat <<EOF
@@ -83,6 +85,8 @@ Build
   --sanitize LIST       Build everything with sanitizers: address,undefined or thread (debugging;
                         use a separate --prefix, the libraries are instrumented too)
   --without-iio         Skip libiio (the AD9364 examples then only have their simulator)
+  --without-sqlite      Skip SQLite (no forgecpp::sqlite: forge::sqlite, forge::Backlog)
+  --without-lz4         Skip LZ4 (no forgecpp::lz4)
   --without-hub         Do not build forge-hub (the dashboard of the device's applications)
   --iio-usb             Build libiio's USB backend (needs libusb-1.0)
   --no-rpath            Do not set \$ORIGIN rpaths on installed libraries
@@ -169,6 +173,8 @@ while [[ $# -gt 0 ]]; do
         --sanitize)     need_arg "$@"; SANITIZE="$2"; shift 2 ;;
         --profile=*)    PROFILE="${1#*=}"; shift ;;
         --without-iio)  WITH_IIO="OFF"; shift ;;
+        --without-sqlite) WITH_SQLITE="OFF"; shift ;;
+        --without-lz4)  WITH_LZ4="OFF"; shift ;;
         --without-hub)  WITH_HUB="OFF"; shift ;;
         --iio-usb)      IIO_USB="ON"; shift ;;
         --with-zlib)    WITH_ZLIB="ON"; shift ;;
@@ -293,9 +299,13 @@ fi
 # Submodules
 missing=()
 for d in "${DEPS[@]}" thread-pool; do
-    if [[ ! -f "${TP_DIR}/${d}/CMakeLists.txt" && ! -f "${TP_DIR}/${d}/include/BS_thread_pool.hpp" ]]; then
-        missing+=("$d")
-    fi
+    case "${d}" in
+        lz4) marker="build/cmake/CMakeLists.txt" ;;
+        sqlite) marker="VERSION" ;;
+        thread-pool) marker="include/BS_thread_pool.hpp" ;;
+        *) marker="CMakeLists.txt" ;;
+    esac
+    [[ -f "${TP_DIR}/${d}/${marker}" ]] || missing+=("$d")
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
     if [[ -e "${SRC_DIR}/.git" ]] && command -v git >/dev/null 2>&1; then
@@ -408,6 +418,12 @@ dep_args() {
             echo "-DWITH_USB_BACKEND=${IIO_USB} -DOSX_PACKAGE=OFF" ;;
         doctest)
             echo "-DDOCTEST_WITH_TESTS=OFF -DDOCTEST_WITH_MAIN_IN_STATIC_LIB=ON" ;;
+        lz4)
+            # The library and the lz4 tool (it opens what forge::lz4 writes).
+            echo "-DBUILD_SHARED_LIBS=${SHARED} -DLZ4_BUILD_CLI=ON -DLZ4_BUILD_LEGACY_LZ4C=OFF"
+            if [[ "${SHARED}" == "ON" ]]; then echo "-DBUILD_STATIC_LIBS=OFF"; else echo "-DBUILD_STATIC_LIBS=ON"; fi ;;
+        sqlite)
+            echo "-DBUILD_SHARED_LIBS=${SHARED} -DSQLITE_AMALGAMATION_DIR=${BUILD_DIR}/sqlite-amalgamation" ;;
         *) ;;
     esac
 }
@@ -487,6 +503,19 @@ build_host_protoc() {
     HOST_PROTOC="${prefix}/bin/protoc"
 }
 
+# SQLite has no CMake build: its amalgamation (sqlite3.c, shell.c) is made on
+# the build machine by the checkout's own configure (it brings JimTcl, no Tcl
+# needed), then cmake/third_party/sqlite compiles it like any other library.
+build_sqlite_amalgamation() {
+    local dir="${BUILD_DIR}/sqlite-amalgamation"
+    if [[ -f "${dir}/sqlite3.c" && "${dir}/sqlite3.c" -nt "${TP_DIR}/sqlite/VERSION" ]]; then return; fi
+    info "[sqlite] amalgamation"
+    mkdir -p "${dir}"
+    run_logged "${LOG_DIR}/sqlite-amalgamation.log" \
+        env -u CFLAGS -u CXXFLAGS -u LDFLAGS -u CPPFLAGS -u CC -u CXX \
+        sh -c "cd '${dir}' && CC='${HOST_CC:-cc}' '${TP_DIR}/sqlite/configure' --disable-tcl >/dev/null && make sqlite3.c shell.c"
+}
+
 python3 -c "import google.protobuf" 2>/dev/null ||
     die "the message generator needs Python's protobuf module: apt install python3-protobuf (or pip install protobuf)"
 if [[ -z "${HOST_PROTOC}" ]]; then
@@ -504,8 +533,15 @@ COMMON_ARGS+=("-DFORGE_PROTOC=${HOST_PROTOC}")
 if [[ "${SKIP_DEPS}" != "ON" ]]; then
     for dep in "${DEPS[@]}"; do
         if [[ "${WITH_IIO}" == "OFF" && "${dep}" == "libiio" ]]; then continue; fi
+        if [[ "${WITH_SQLITE}" == "OFF" && "${dep}" == "sqlite" ]]; then continue; fi
+        if [[ "${WITH_LZ4}" == "OFF" && "${dep}" == "lz4" ]]; then continue; fi
+        src="${TP_DIR}/${dep}"
+        case "${dep}" in
+            lz4) src="${TP_DIR}/lz4/build/cmake" ;;
+            sqlite) build_sqlite_amalgamation; src="${SRC_DIR}/cmake/third_party/sqlite" ;;
+        esac
         # shellcheck disable=SC2046
-        build_project "${dep}" "${TP_DIR}/${dep}" $(dep_args "${dep}")
+        build_project "${dep}" "${src}" $(dep_args "${dep}")
     done
 fi
 
@@ -515,6 +551,8 @@ if [[ "${DEPS_ONLY}" != "ON" ]]; then
         "-DFORGECPP_BUILD_TESTS=${BUILD_TESTS}" \
         "-DFORGECPP_BUILD_EXAMPLES=${BUILD_EXAMPLES}" \
         "-DFORGECPP_BUILD_HUB=${WITH_HUB}" \
+        "-DFORGECPP_WITH_SQLITE=${WITH_SQLITE}" \
+        "-DFORGECPP_WITH_LZ4=${WITH_LZ4}" \
         "-DFORGECPP_WARNINGS=ON" \
         "-DFORGECPP_SANITIZE=${SANITIZE//,/;}"
 

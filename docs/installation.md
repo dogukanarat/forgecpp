@@ -29,12 +29,16 @@ curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh 
 
 `install.sh` builds every dependency as its own CMake project and installs it
 into the same prefix (each with its own `find_package` config), then builds
-`libforgecpp` on top.
+`libforgecpp` on top. SQLite has no CMake build: its amalgamation is made on
+the build machine with the checkout's own `configure` (no Tcl needed), then
+`cmake/third_party/sqlite` compiles it like the others (`libsqlite3.so.0`,
+`sqlite3.h`, `sqlite3.pc` and the `sqlite3` tool, as the distributions
+install it). LZ4 brings the `lz4` tool too.
 
 | Option | Description |
 |---|---|
 | `--prefix DIR` | Install location (default `/usr/local`) |
-| `--static` | Static libraries (default: shared: every application on a device uses the same `libforgecpp.so`, `libzmq.so`, `libcpp-httplib.so` and `libiio.so`) |
+| `--static` | Static libraries (default: shared: every application on a device uses the same `libforgecpp.so`, `libzmq.so`, `libcpp-httplib.so`, `libiio.so`, `libsqlite3.so` and `liblz4.so`) |
 | `--build-type T` | `Release`, `Debug`, `RelWithDebInfo`, `MinSizeRel` |
 | `--tests` / `--examples` | Build and run the unit tests / build the examples |
 | `--toolchain FILE` | Cross compile (Yocto SDK, OE `toolchain.cmake`) |
@@ -42,6 +46,7 @@ into the same prefix (each with its own `find_package` config), then builds
 | `--package [--arch A]` | Produce `forgecpp-<version>-<arch>.tar.gz` without touching the system |
 | `--without-ssl`, `--with-ssl`, `--without-zlib` | cpp-httplib features |
 | `--without-iio`, `--iio-usb` | Skip libiio, or build libiio's USB backend |
+| `--without-sqlite`, `--without-lz4` | Skip SQLite or LZ4, and with them the components `forgecpp::sqlite` / `forgecpp::lz4` |
 | `--system-protobuf`, `--protoc PATH` | Use the `protoc` on the PATH, or this one (default: built from the bundled sources with `HOST_CC`/`HOST_CXX`; it only runs on the build machine) |
 | `--profile embedded` | MinSizeRel and LTO for small targets; the libraries stay shared |
 | `--sanitize LIST` | `address,undefined` or `thread`, applied to the dependencies too (use a separate prefix) |
@@ -60,10 +65,13 @@ daemons run with their web UI. Stripped sizes on aarch64: `libforgecpp.so`
 application with its embedded web page ≈ 580 KB. Runtime dependencies are only
 libstdc++/libc (plus OpenSSL/zlib when enabled).
 
-- **With bitbake:** `yocto/recipes-support/forgecpp/forgecpp_git.bb` fetches
-  the submodules with `gitsm://` and runs `install.sh` with the Yocto
-  toolchain. Applications then only need `DEPENDS = "forgecpp"` and
-  `inherit cmake systemd`; see [yocto/README.md](../yocto/README.md).
+- **With bitbake:** `yocto/` is a layer that needs nothing but poky
+  (oe-core): it has a recipe for every library forgecpp uses (or takes it
+  from meta-oe / meta-python when the build has them), and
+  `recipes-support/forgecpp/forgecpp_git.bb` builds forgecpp against them,
+  each library a shared library in its own package. Applications then only
+  need `DEPENDS = "forgecpp"` and `inherit cmake systemd`; see
+  [yocto/README.md](../yocto/README.md).
 - **Without bitbake:** with an SDK toolchain,
   `./install.sh --package --prefix /usr --toolchain ...` produces a tar.gz;
   on the target run `tar -xzf forgecpp-*.tar.gz -C /`.

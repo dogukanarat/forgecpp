@@ -128,7 +128,7 @@ Why not all of meta-adi: it is written for PetaLinux/XSCT (depends on
 meta-xilinx-tools, which EDF does not use; its device-tree merging does not
 fit the SDT flow). What we need from it is small and MIT licensed: the ADI
 kernel source switch and `libad9361-iio` (multi-chip sync of the FMCOMMS5's
-two AD9361). libiio 0.26 comes from meta-oe.
+two AD9361). libiio comes from meta-oe (0.25), or from this layer's backfill (0.26) without it.
 
 The layer:
 

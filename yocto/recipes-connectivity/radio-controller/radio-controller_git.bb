@@ -26,7 +26,9 @@ do_install:append() {
 }
 
 # Python helpers (rx_capture.py, tx_tone.py) and the radio modules
-# need pyzmq, protobuf and numpy (meta-python).
+# need protobuf, numpy and pyzmq (pyzmq: meta-python).
 PACKAGES =+ "${PN}-clients"
 FILES:${PN}-clients = "${datadir}/radio-controller/clients ${PYTHON_SITEPACKAGES_DIR}/radio"
-RDEPENDS:${PN}-clients = "python3-core python3-pyzmq python3-protobuf python3-numpy python3-forge"
+RDEPENDS:${PN}-clients = "python3-core python3-protobuf python3-numpy python3-forge"
+# The clients talk ZeroMQ: pyzmq comes from meta-python, when it is in the build.
+RRECOMMENDS:${PN}-clients = "${@bb.utils.contains('BBFILE_COLLECTIONS', 'meta-python', 'python3-pyzmq', '', d)}"

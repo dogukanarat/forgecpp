@@ -1,12 +1,29 @@
 # forgecpp for Yocto / OpenEmbedded
 
 This directory is a layer (`meta-forgecpp`, `conf/layer.conf`) for a BSP:
-forgecpp, forge-hub, the developer tools and the example applications. It
-needs meta-oe and meta-python (for `zeromq`, `cppzmq`, `nlohmann-json`,
-`cli11`, `tomlplusplus`, `doctest`, `protobuf`, `libiio`, `python3-protobuf`,
-`python3-pyzmq`) and brings the three libraries they do not have (`quill`,
-`cpp-httplib`, `concurrentqueue`). Every library is its own package, with its
-own license and CVE record, and is shared by every program on the device.
+forgecpp, forge-hub, the developer tools, the example applications, and
+**every library forgecpp uses**. It needs nothing but poky (oe-core): add this
+one layer, and an application layer on top of it.
+
+Where each library comes from:
+
+| Library | Recipe |
+|---|---|
+| SQLite, LZ4, OpenSSL, zlib, libxml2 | oe-core (`sqlite3`, `lz4`, ...): every build has it |
+| quill, cpp-httplib, concurrentqueue, tomlplusplus, doctest | this layer, always (no other layer has them) |
+| zeromq, cppzmq, nlohmann-json, cli11, libiio, protobuf, python3-protobuf | meta-oe / meta-python when the build has them; otherwise this layer's `backfill/` recipes |
+
+The backfill recipes are at the versions of forgecpp's submodules and are
+used only when meta-oe (or meta-python) is **not** in the build
+(`BBFILES_DYNAMIC` with `!`, bitbake 2.8 / scarthgap): a BSP that already has
+meta-oe keeps its versions, nothing is built twice and no other package of
+the image changes. forgecpp builds with either (meta-oe scarthgap has CLI11
+2.3.2 and nlohmann-json 3.11.3: both checked). Every library is a shared
+library in its own package, with its own license and CVE record, shared by
+every program on the device. `python3-pyzmq` (the ZeroMQ client of
+`python3-forge`, the example clients) is only in meta-python: it is
+recommended when that layer is in the build; the serial and CAN clients work
+without it.
 
 ```
 bblayers.conf:  BBLAYERS += "/path/to/forgecpp/yocto"
@@ -19,7 +36,8 @@ local.conf:     IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub
 |---|---|---|
 | `recipes-support/forgecpp/forgecpp_git.bb` | `forgecpp`, `forgecpp-dev`, `forgecpp-forgectl`, `forgecpp-hub`, `python3-forge`, `forgecpp-ptest` | libforgecpp (nanopb and linenoise compiled in), forgectl, forge-hub (PACKAGECONFIG `hub`, on by default), the Python package, the test programs (PACKAGECONFIG `ptest`) |
 | `recipes-devtools/forgecpp-tools/forgecpp-tools_git.bb` | `forgecpp-tools`, `nativesdk-forgecpp-tools` | `forgecpp-new`, `forge-proto.py` and nanopb's generator: for the SDK (an application with its own `.proto` files) and, if wanted, the target |
-| `recipes-support/quill`, `cpp-httplib`, `concurrentqueue` | the libraries meta-oe lacks | the versions forgecpp is built and tested with (its submodules) |
+| `recipes-support/quill`, `cpp-httplib`, `concurrentqueue`, `tomlplusplus`; `recipes-test/doctest` | the libraries no other layer has | the versions forgecpp is built and tested with (its submodules) |
+| `backfill/meta-oe/*`, `backfill/meta-python/*` | `zeromq`, `cppzmq`, `nlohmann-json`, `cli11`, `libiio`, `protobuf`, `python3-protobuf` | only when meta-oe / meta-python are not in the build |
 | `recipes-connectivity/*` | `radio-controller`, `spectrum-analyzer`, `qam-modem`, `channel-emulator` (+ `-clients`) | the example applications, from `recipes-connectivity/forgecpp-app.inc` |
 
 The source and the commit are in one place, `recipes-support/forgecpp/forgecpp-src.inc`:
@@ -33,19 +51,24 @@ reproducible build of a development commit, or build a checkout with
 recipes take the unpack directory from `FORGECPP_UNPACKDIR` (`conf/layer.conf`:
 `${WORKDIR}` on scarthgap, `${UNPACKDIR}` from styhead on), so they are
 written for styhead and walnascar too; add a series to `LAYERSERIES_COMPAT`
-once a build of it has passed. The recipes of this change were read against
-the scarthgap classes; they have not been through a bitbake build or
-`yocto-check-layer` yet.
+once a build of it has passed. The recipes parse and their dependency graph
+resolves on scarthgap (with and without meta-oe / meta-python); they have
+not been through a full bitbake build or `yocto-check-layer` yet.
 
 ## Try it in QEMU (kas)
 
-`kas/qemuarm64.yml` builds a qemuarm64 image (systemd) with forgecpp,
+`kas/qemuarm64-poky.yml` builds a qemuarm64 image (systemd) with forgecpp,
 forge-hub, radio-controller on its simulator, spectrum-analyzer, qam-modem,
-channel-emulator and the ptest package, from this checkout:
+channel-emulator and the ptest package, from this checkout, with poky and
+this layer only; `kas/qemuarm64.yml` is the same image with meta-oe and
+meta-python (as most BSPs have them). Both were checked with bitbake's
+parser and dependency graph (`bitbake -g core-image-minimal`), not yet
+built:
 
 ```sh
 pip install kas
-FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml                # the image
+FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64-poky.yml           # the image, poky + this layer
+FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml                # the image, with meta-oe
 FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml -c testimage   # boot in QEMU + runtime tests
 ```
 
@@ -115,7 +138,9 @@ whose state the hub shows. Port 80 needs root or `CAP_NET_BIND_SERVICE`
 
 The optional components are packages of their own, pulled in by the
 applications that link them (shlibdeps): `forgecpp-sqlite` (with `sqlite3`)
-and `forgecpp-lz4` (with `lz4`). `PACKAGECONFIG:remove:pn-forgecpp =
+and `forgecpp-lz4` (with `lz4`). SQLite and LZ4 come from oe-core's recipes
+(`third_party/sqlite` and `third_party/lz4` are for `install.sh`, a build
+without Yocto): oe-core is in every build and keeps them patched. `PACKAGECONFIG:remove:pn-forgecpp =
 "sqlite"` leaves one out of the build.
 
 GPIO and CAN need nothing but the kernel ([docs/hardware-io.md](../docs/hardware-io.md)):
@@ -139,4 +164,4 @@ transceiver (`adi,ad9364` with the AXI AD9361 HDL cores, not forced to 1R1T
 for a 2R2T part), so that the kernel exposes `ad9361-phy`, `cf-ad9361-lpc`
 and `cf-ad9361-dds-core-lpc`; `iio_info -u local:` on the target should list
 them. The libiio command line tools come from meta-oe's `libiio-iiod` /
-`libiio` packages.
+`libiio` packages, or the backfill's `libiio-tests`.

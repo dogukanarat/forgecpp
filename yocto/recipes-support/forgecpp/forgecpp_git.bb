@@ -89,7 +89,11 @@ FILES:${PN}-lz4 = "${libdir}/libforgecpp-lz4${SOLIBS}"
 LICENSE:${PN}-sqlite = "MIT"
 LICENSE:${PN}-lz4 = "MIT"
 FILES:python3-forge = "${PYTHON_SITEPACKAGES_DIR}/forge ${PYTHON_SITEPACKAGES_DIR}/nanopb_pb2.py ${PYTHON_SITEPACKAGES_DIR}/pyproject.toml"
-RDEPENDS:python3-forge = "python3-core python3-protobuf python3-pyzmq"
+RDEPENDS:python3-forge = "python3-core python3-protobuf"
+# The ZeroMQ client (forge.c2) imports pyzmq when it is used; the serial and
+# CAN clients do not. pyzmq is in meta-python, recommended when that layer is
+# in the build (a missing recommendation is an error for bitbake).
+RRECOMMENDS:python3-forge = "${@bb.utils.contains('BBFILE_COLLECTIONS', 'meta-python', 'python3-pyzmq', '', d)}"
 RPROVIDES:python3-forge = "python3-forge-v1"
 RREPLACES:python3-forge = "python3-forge-v1"
 RCONFLICTS:python3-forge = "python3-forge-v1"
