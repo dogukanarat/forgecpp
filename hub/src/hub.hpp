@@ -2,7 +2,7 @@
 // forge-hub: registry and dashboard of the forgecpp applications on a device.
 //
 //   applications --register/unregister--> [registry].listen (localhost)
-//   hub --GET /health (or forge.v1 health)--> every registered application
+//   hub --GET /health (or the "health" command)--> every registered application
 //   hub --systemctl show--> units of the applications (state, restarts, policy)
 //   browser --> http://<device>/        overview with links to every application
 //
@@ -17,7 +17,7 @@
 #include "systemd.hpp"
 
 #include <forge/forge.hpp>
-#include <forge/v1/hub.pb.h>
+#include <forge/hub.forge.hpp>
 #include <forge/zmq.hpp>
 
 #include <atomic>
@@ -34,11 +34,10 @@
 
 namespace forgehub {
 
-namespace v1 = forge::v1;
 using forge::json;
 
 struct Entry {
-    v1::AppRegistration app;
+    forge_hub_app_registration app{};
     bool static_entry = false;
     std::string url, health_url;  ///< static entries
 
@@ -48,7 +47,7 @@ struct Entry {
 
     int pid = 0;
     std::uint64_t ticks = 0;      ///< process start time (pid reuse)
-    v1::AppStatus::State state = v1::AppStatus::STATE_UNKNOWN;
+    forge_hub_app_state state = forge_hub_app_state_STATE_UNKNOWN;
     std::string message;
     bool stop_requested = false;  ///< stopped from the dashboard: not a crash
 
@@ -68,13 +67,20 @@ struct Entry {
     std::uint64_t rss = 0;
 };
 
+/// What the dashboard shows (GET /api/apps).
+struct AppList {
+    std::string hub, boot_id;
+    std::vector<forge_hub_app_status> apps;
+};
+json to_json(const AppList& l);
+
 class Hub : public forge::Application {
 public:
     explicit Hub(std::unique_ptr<Systemd> systemd = make_systemctl());
 
     /// Registration endpoint as bound (valid after start-up).
     std::string registry_endpoint() const;
-    v1::AppList list() const;
+    AppList list() const;
     std::optional<Entry> entry(const std::string& name) const;
 
     // Operator actions (also commands on the dashboard and forgectl call).
@@ -85,26 +91,26 @@ public:
 
 protected:
     void setup_config(forge::config::Schema& schema) override;
-    void setup_web(forge::web::Dashboard& ui) override;
+    void setup_controls(forge::Controls& ui) override;
     void setup_http(forge::http::Server& server) override;
     void setup_console(forge::Console& console) override;
     void on_start() override;
     void on_stop() override;
 
 private:
-    std::string handle(std::string_view request);  // registration thread
+    std::vector<std::string> handle(std::string_view request);  // registration thread
     void proxy_request(const forge::http::Request& req, forge::http::Response& res);  // HTTP threads
-    v1::HubReply on_register(const v1::AppRegistration& app);
-    void on_unregister(const v1::Unregister& u);
+    forge::Status on_register(const forge_hub_app_registration& app, forge_hub_register_reply& reply);
+    void on_unregister(const forge_hub_unregister_request& u);
 
     void tick();
     void apply_units(const std::map<std::string, UnitState>& units);
     void probe_done(const std::string& name, int pid, bool ok, const json& health, const std::string& error);
-    void unit_action(const std::string& name, std::vector<std::string> verbs);
+    void unit_action(const std::string& name, const std::vector<std::string>& verbs);
 
     // with mutex_ held
     void ended(Entry& e, const std::string& why, bool failure);
-    v1::AppStatus status_of(const Entry& e) const;
+    forge_hub_app_status status_of(const Entry& e) const;
     void raise(const Entry& e, const std::string& kind, forge::Severity severity, const std::string& text);
     void clear(const Entry& e, const std::string& kind);
     std::string title_of(const Entry& e) const;
@@ -119,6 +125,7 @@ private:
     bool querying_units_ = false;
     std::int64_t next_unit_query_ = 0;
 
+    forge::tmtc::Registry registry_commands_;
     std::unique_ptr<forge::zmq::Server> registry_;
     forge::zmq::Stream* apps_stream_ = nullptr;
     std::string instance_;

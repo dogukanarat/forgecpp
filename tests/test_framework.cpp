@@ -1,28 +1,32 @@
 // Framework services: metrics, trace, config schema, roles, leases, audit,
 // commands, persistence, health, buffer pool, real-time settings, telnet,
-// HTTP RPC, JSON logs and crash reports.
+// tmtc over HTTP, JSON logs and crash reports.
 #include <forge/buffer_pool.hpp>
 #include <forge/control.hpp>
 #include <forge/crash.hpp>
 #include <forge/forge.hpp>
-#include <forge/proto.hpp>
+#include <forge/messages.forge.hpp>
 #include <forge/rt.hpp>
 #include <forge/testing.hpp>
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <cstring>
 #include <forge/trace.hpp>
 
 #include <httplib.h>
 
 #include <arpa/inet.h>
-#include <fstream>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <fstream>
 
 using forge::json;
 using namespace std::chrono_literals;
-namespace v1 = forge::v1;
 
 TEST_CASE("metrics: counters, gauges, histograms, Prometheus text and snapshots") {
     forge::metrics::Registry reg;
@@ -49,13 +53,15 @@ TEST_CASE("metrics: counters, gauges, histograms, Prometheus text and snapshots"
     CHECK(text.find("queue_depth{app=\"t\"} 7") != std::string::npos);
 
     const auto snap = reg.snapshot("rx.");
-    CHECK(snap.metrics_size() == 3);
-    const auto hist = std::find_if(snap.metrics().begin(), snap.metrics().end(),
-                                   [](const v1::Metric& m) { return m.name() == "rx.read_seconds"; });
-    REQUIRE(hist != snap.metrics().end());
-    CHECK(hist->count() == 3);
-    CHECK(hist->buckets(0) == 1);
-    CHECK(hist->buckets(2) == 2);
+    CHECK(snap.metrics.size() == 3);
+    const auto hist = std::find_if(snap.metrics.begin(), snap.metrics.end(),
+                                   [](const forge::metrics::Sample& m) { return m.name == "rx.read_seconds"; });
+    REQUIRE(hist != snap.metrics.end());
+    CHECK(hist->type == forge::metrics::Type::histogram);
+    CHECK(hist->count == 3);
+    CHECK(hist->buckets[0] == 1);
+    CHECK(hist->buckets[2] == 2);
+    CHECK(forge::metrics::to_json(snap)["metrics"].size() == 3);
 }
 
 TEST_CASE("trace: spans, counters, thread names and the trace id in a Chrome trace") {
@@ -127,15 +133,15 @@ struct RolesApp : forge::Application {
 
 protected:
     void setup_config(forge::config::Schema& s) override { s.number("rolesapp.limit", 5, "A limit").range(0, 10); }
-    void setup_web(forge::web::Dashboard& ui) override {
+    void setup_controls(forge::Controls& ui) override {
         auto& g = ui.group("RF");
         g.number("gain", "Gain", gain).range(0, 70).persist();
         g.number("power", "Power", power).range(0, 10).role(forge::Role::admin);
         g.button("cal", "Calibrate", [this] { ++calibrations; });
-        g.command("sweep", "Sweep",
-                  {forge::web::number_param("start", 100).range(70, 6000), forge::web::integer_param("points", 101),
-                   forge::web::select_param("mode", {"fast", "slow"}, "fast"), forge::web::bool_param("save", false)},
-                  [](const json& a) { return a; });
+        g.action("sweep", "Sweep",
+                 {forge::web::number_param("start", 100).range(70, 6000), forge::web::integer_param("points", 101),
+                  forge::web::select_param("mode", {"fast", "slow"}, "fast"), forge::web::bool_param("save", false)},
+                 [](const json& a) { return a; });
     }
 };
 }  // namespace
@@ -144,10 +150,13 @@ TEST_CASE("control: roles, leases, audit, commands and persistence") {
     forge::testing::TempDir dir;
     const auto state = (dir / "state.json").string();
     std::vector<std::string> args{"-D", "auth.enabled=true",
-                                  "-D", "auth.users.vera.token=\"v\"",   "-D", "auth.users.vera.role=\"viewer\"",
-                                  "-D", "auth.users.otto.token=\"o\"",   "-D", "auth.users.otto.role=\"operator\"",
+                                  "-D", "auth.users.vera.token=\"v\"",
+                                  "-D", "auth.users.vera.role=\"viewer\"",
+                                  "-D", "auth.users.otto.token=\"o\"",
+                                  "-D", "auth.users.otto.role=\"operator\"",
                                   "-D", "auth.users.otto.password=\"pw\"",
-                                  "-D", "auth.users.ada.token=\"a\"",    "-D", "auth.users.ada.role=\"admin\"",
+                                  "-D", "auth.users.ada.token=\"a\"",
+                                  "-D", "auth.users.ada.role=\"admin\"",
                                   "-D", "state.file=\"" + state + "\""};
     {
         forge::testing::AppRunner<RolesApp> r(args);
@@ -197,40 +206,50 @@ TEST_CASE("control: roles, leases, audit, commands and persistence") {
         // Audit: who, what, old and new value; refusals too.
         const auto audit = r->audit().list();
         auto find = [&](const std::string& user, const std::string& target, bool ok) {
-            return std::find_if(audit.begin(), audit.end(), [&](const v1::AuditRecord& a) {
-                return a.user() == user && a.target() == target && a.ok() == ok;
+            return std::find_if(audit.begin(), audit.end(), [&](const forge::Audit::Record& a) {
+                return a.user == user && a.target == target && a.ok == ok;
             });
         };
         auto set = find("otto", "gain", true);
         REQUIRE(set != audit.end());
-        CHECK(forge::proto::to_json(set->old_value()) == 10);
-        CHECK(forge::proto::to_json(set->new_value()) == 20);
-        CHECK(set->channel() == "zmq");
-        CHECK(set->client() == "o-host");
+        CHECK(set->old_value == 10);
+        CHECK(set->new_value == 20);
+        CHECK(set->channel == "zmq");
+        CHECK(set->client == "o-host");
         CHECK(find("vera", "gain", false) != audit.end());
-        CHECK(find("otto", "sweep", true)->action() == "call");
+        CHECK(find("otto", "sweep", true)->action == "call");
 
-        // forge.v1 request with a token
-        v1::Request req;
-        req.set_token("v");
-        req.mutable_set()->set_id("gain");
-        *req.mutable_set()->mutable_value() = forge::proto::to_value(40);
-        const auto reply = svc.handle(req, svc.identify("zmq", "x", req.token()));
-        CHECK_FALSE(reply.ok());
-        CHECK(reply.status() == 403);
-        CHECK(reply.error().find("vera") != std::string::npos);
-        // schema shows roles and persistence
-        const auto schema = svc.schema();
-        const auto power = std::find_if(schema.controls().begin(), schema.controls().end(),
-                                        [](const v1::Control& c) { return c.id() == "power"; });
-        CHECK(power->role() == "admin");
-        CHECK(schema.commands(0).params_size() == 4);
+        // A token names the user.
+        try {
+            svc.set("gain", 40, svc.identify("link", "x", "v"));
+            FAIL("no error");
+        } catch (const forge::Error& e) {
+            CHECK(e.status() == 403);
+            CHECK(std::string(e.what()).find("vera") != std::string::npos);
+        }
+        // The command lists show roles and parameters.
+        const auto controls = r->commands().find("controls")->run_json({});
+        bool power = false;
+        for (const auto& page : controls.is_array() ? controls : json::array({controls})) {
+            for (const auto& c : page["controls"]) power = power || (c["id"] == "power" && c["role"] == "admin");
+        }
+        CHECK(power);
+        const auto commands = r->commands().find("commands")->run_json({});
+        const auto& first = commands.is_array() ? commands[0] : commands;
+        CHECK(first["commands"][0]["params"].size() == 4);
     }
     // persist(): gain survives a restart, power does not.
     CHECK(forge::load_json(state)["gain"] == 30);
     forge::testing::AppRunner<RolesApp> again(args);
     CHECK(again->gain == 30);
     CHECK(again->power == 1);
+}
+
+TEST_CASE("testing: AppRunner says at once when the application does not start") {
+    const auto t0 = std::chrono::steady_clock::now();
+    CHECK_THROWS_WITH(forge::testing::AppRunner<RolesApp>({"-D", "log.level=loud"}),
+                      doctest::Contains("ended with code 1 before it started"));
+    CHECK(std::chrono::steady_clock::now() - t0 < 5s);  // not the 20 s start timeout
 }
 
 TEST_CASE("config: an invalid configuration stops the start with the reason") {
@@ -245,7 +264,8 @@ TEST_CASE("config: an invalid configuration stops the start with the reason") {
 }
 
 TEST_CASE("health: components, overall state, strict /health and HTTP endpoints") {
-    forge::testing::AppRunner<RolesApp> r({"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\""});
+    forge::testing::AppRunner<RolesApp> r(
+        {"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\""});
     httplib::Client http("127.0.0.1", r->http()->port());
     r->health().set("radio", forge::HealthState::ok);
     r->health().set("gps", forge::HealthState::failed, "no fix", false);
@@ -267,24 +287,17 @@ TEST_CASE("health: components, overall state, strict /health and HTTP endpoints"
     res = http.Get("/forge/api/trace?seconds=60");
     CHECK(json::parse(res->body).contains("traceEvents"));
 
-    // forge.v1 over HTTP: protobuf and its JSON mapping.
-    v1::Request req;
-    req.mutable_set()->set_id("gain");
-    *req.mutable_set()->mutable_value() = forge::proto::to_value(33);
-    std::string body;
-    req.SerializeToString(&body);
-    res = http.Post("/forge/api/rpc", body, "application/x-protobuf");
-    v1::Reply reply;
-    REQUIRE(reply.ParseFromString(res->body));
-    CHECK(reply.ok());
-    CHECK(forge::proto::to_json(reply.value()) == 33);
-    res = http.Post("/forge/api/rpc", R"({"get":{"id":"gain"}})", "application/json");
-    CHECK(json::parse(res->body)["value"] == 33);
+    // The commands of the link, in JSON.
+    res = http.Post("/forge/api/tmtc/set", R"({"id": "gain", "value": "33"})", "application/json");
+    REQUIRE(res);
+    CHECK(res->status == 200);
+    res = http.Post("/forge/api/tmtc/get", R"({"id": "gain"})", "application/json");
+    CHECK(json::parse(json::parse(res->body)["value"].get<std::string>()) == 33);
     // The web JSON API goes through the same audit trail.
     res = http.Post("/forge/api/controls/gain", R"({"value": 34})", "application/json");
     CHECK(res->status == 200);
     const auto audit = r->audit().list(1);
-    CHECK(audit.back().channel() == "web");
+    CHECK(audit.back().channel == "web");
     CHECK(r->gain == 34);
 }
 
@@ -313,7 +326,8 @@ TEST_CASE("buffer pool: buffers are recycled, allocations stay flat") {
 }
 
 TEST_CASE("rt: thread settings from the configuration") {
-    const auto cfg = forge::Config::parse("[threads.rx]\npolicy = 'other'\nnice = 0\ncpus = [0]\n[threads.bad]\npolicy = 'x'");
+    const auto cfg =
+        forge::Config::parse("[threads.rx]\npolicy = 'other'\nnice = 0\ncpus = [0]\n[threads.bad]\npolicy = 'x'");
     const auto s = forge::rt::thread_settings(cfg, "rx");
     REQUIRE(s);
     CHECK(s->cpus == std::vector<int>{0});
@@ -365,10 +379,10 @@ struct Telnet {
 }  // namespace
 
 TEST_CASE("telnet: remote console sessions with login, roles, commands and live logs") {
-    forge::testing::AppRunner<RolesApp> r({"-D", "console.telnet=\"127.0.0.1:0\"", "-D", "auth.enabled=true",
-                                           "-D", "auth.users.otto.password=\"pw\"", "-D",
-                                           "auth.users.otto.role=\"operator\"", "-D", "auth.users.vera.password=\"pv\"",
-                                           "-D", "auth.users.vera.role=\"viewer\""});
+    forge::testing::AppRunner<RolesApp> r({"-D", "console.telnet=\"127.0.0.1:0\"", "-D", "auth.enabled=true", "-D",
+                                           "auth.users.otto.password=\"pw\"", "-D", "auth.users.otto.role=\"operator\"",
+                                           "-D", "auth.users.vera.password=\"pv\"", "-D",
+                                           "auth.users.vera.role=\"viewer\""});
     const auto ep = r->endpoints().at("telnet");
     const int port = std::stoi(ep.substr(ep.rfind(':') + 1));
     {
@@ -411,8 +425,8 @@ TEST_CASE("telnet: remote console sessions with login, roles, commands and live 
     }
     CHECK(r->gain == 42);
     const auto audit = r->audit().list();
-    CHECK(std::any_of(audit.begin(), audit.end(), [](const v1::AuditRecord& a) {
-        return a.channel() == "telnet" && a.user() == "otto" && a.target() == "gain";
+    CHECK(std::any_of(audit.begin(), audit.end(), [](const forge::Audit::Record& a) {
+        return a.channel == "telnet" && a.user == "otto" && a.target == "gain";
     }));
 }
 
@@ -425,15 +439,19 @@ TEST_CASE("logs: JSON format with trace id, history and listeners") {
     o.file = file;
     o.format = "json";
     forge::log::init(o);
+    std::mutex seen_mutex;
     std::vector<std::string> seen;
-    const int id = forge::log::add_listener([&](const v1::LogRecord& r) { seen.push_back(r.message()); });
+    auto listener = forge::log::add_listener([&](const forge::log::Record& r) {  // on the logging thread
+        std::lock_guard lock(seen_mutex);
+        seen.push_back(r.message);
+    });
     const auto ctx = forge::trace::new_trace();
     {
         forge::trace::ContextScope scope(ctx);
         forge::log::get()->info("structured {}", 42);
     }
-    forge::log::remove_listener(id);
-    forge::log::flush();
+    forge::log::flush();  // listeners run on the logging background thread
+    listener.reset();
     std::ifstream in(file);
     std::string line;
     std::getline(in, line);
@@ -443,7 +461,7 @@ TEST_CASE("logs: JSON format with trace id, history and listeners") {
     CHECK(j["logger"] == "jsonlog");
     CHECK(j["trace"] == ctx.trace_hex());
     CHECK(seen == std::vector<std::string>{"structured 42"});
-    CHECK(forge::log::history(1).back().message() == "structured 42");
+    CHECK(forge::log::history(1).back().message == "structured 42");
     forge::log::Options plain;
     plain.console = false;
     forge::log::init(plain);
@@ -500,7 +518,7 @@ TEST_CASE("framework: invoke() runs on the main loop and carries errors back as 
 
 TEST_CASE("framework: a blocked main loop does not hang requests (invoke_for, 503 main loop busy)") {
     forge::testing::AppRunner<RolesApp> r({"-D", "http.enabled=true", "-D", "http.port=0", "-D",
-                                           "http.host=\"127.0.0.1\"", "-D", "forge.request_timeout_ms=150"});
+                                           "http.host=\"127.0.0.1\"", "-D", "loop.request_timeout_ms=150"});
     CHECK(r->request_timeout() == 150ms);
     httplib::Client http("127.0.0.1", r->http()->port());
     http.set_read_timeout(5, 0);
@@ -532,11 +550,9 @@ TEST_CASE("framework: a blocked main loop does not hang requests (invoke_for, 50
     CHECK(http.Get("/forge/api/controls/gain")->status == 503);
     res = http.Post("/forge/api/controls/gain", R"({"value": 50})", "application/json");
     CHECK(res->status == 503);
-    res = http.Post("/forge/api/rpc", R"({"get":{"id":"gain"}})", "application/json");
+    res = http.Post("/forge/api/tmtc/get", R"({"id": "gain"})", "application/json");
     REQUIRE(res);
-    const auto rpc = json::parse(res->body);
-    CHECK_FALSE(rpc.value("ok", false));
-    CHECK(rpc["status"] == 503);
+    CHECK(res->status == 503);
     CHECK_THROWS_AS(r->invoke_for(20ms, [] { return 1; }), forge::Error);
     // What does not need the main loop still answers.
     CHECK(http.Get("/health")->status == 200);
@@ -555,11 +571,12 @@ TEST_CASE("framework: a blocked main loop does not hang requests (invoke_for, 50
 TEST_CASE("web: card layouts are stored on the device and survive a restart") {
     forge::testing::TempDir dir;
     const auto file = (dir / "state" / "web-layout.json").string();
-    const json layout{{"version", 1},
-                      {"items", json::array({{{"id", "frequency"}, {"x", 0}, {"y", 0}, {"w", 6}, {"h", 30}, {"fit", false}},
-                                             {{"id", "markers"}, {"x", 6}, {"y", 0}, {"w", 6}, {"h", 50}, {"fit", true}}})}};
-    const std::vector<std::string> args{"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\"",
-                                        "-D", "web.layout_file=" + file};
+    const json layout{
+        {"version", 1},
+        {"items", json::array({{{"id", "frequency"}, {"x", 0}, {"y", 0}, {"w", 6}, {"h", 30}, {"fit", false}},
+                               {{"id", "markers"}, {"x", 6}, {"y", 0}, {"w", 6}, {"h", 50}, {"fit", true}}})}};
+    const std::vector<std::string> args{"-D", "http.enabled=true",       "-D", "http.port=0",
+                                        "-D", "http.host=\"127.0.0.1\"", "-D", "web.layout_file=" + file};
     auto stored = [](const httplib::Result& res) {  // the layout without the "scope" it was read from
         json j = json::parse(res->body);
         CHECK(j["scope"] == "device");
@@ -600,7 +617,8 @@ TEST_CASE("web: card layouts are stored on the device and survive a restart") {
         CHECK(json::parse(res->body)["saved"] == false);
     }
     // The vendored GridStack is served with the panel.
-    forge::testing::AppRunner<RolesApp> r({"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\""});
+    forge::testing::AppRunner<RolesApp> r(
+        {"-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\""});
     httplib::Client http("127.0.0.1", r->http()->port());
     const auto js = http.Get("/forge/vendor/gridstack/gridstack-all.js");
     REQUIRE(js);
@@ -611,11 +629,15 @@ TEST_CASE("web: card layouts are stored on the device and survive a restart") {
 
 TEST_CASE("web: signed-in users keep their own card layouts; the device's is the default") {
     forge::testing::TempDir dir;
-    const std::vector<std::string> args{
-        "-D", "http.enabled=true", "-D", "http.port=0", "-D", "http.host=\"127.0.0.1\"",
-        "-D", "web.layout_file=" + (dir / "layout.json").string(), "-D", "auth.enabled=true",
-        "-D", "auth.users.vera.token=\"v\"", "-D", "auth.users.vera.role=\"viewer\"",
-        "-D", "auth.users.ada.token=\"a\"", "-D", "auth.users.ada.role=\"admin\""};
+    const std::vector<std::string> args{"-D", "http.enabled=true",
+                                        "-D", "http.port=0",
+                                        "-D", "http.host=\"127.0.0.1\"",
+                                        "-D", "web.layout_file=" + (dir / "layout.json").string(),
+                                        "-D", "auth.enabled=true",
+                                        "-D", "auth.users.vera.token=\"v\"",
+                                        "-D", "auth.users.vera.role=\"viewer\"",
+                                        "-D", "auth.users.ada.token=\"a\"",
+                                        "-D", "auth.users.ada.role=\"admin\""};
     const json device{{"items", json::array({{{"id", "a"}, {"x", 0}, {"y", 0}, {"w", 12}, {"h", 10}}})}};
     const json mine{{"items", json::array({{{"id", "a"}, {"x", 6}, {"y", 0}, {"w", 6}, {"h", 20}}})}};
     forge::testing::AppRunner<RolesApp> r(args);
@@ -668,7 +690,8 @@ protected:
             if (hot) {
                 cool_since = {};
                 if (hot_since == forge::Scheduler::Clock::time_point{}) hot_since = now();
-                if (now() - hot_since >= std::chrono::seconds(3)) alarms().raise("hot", forge::Severity::warning, "too hot");
+                if (now() - hot_since >= std::chrono::seconds(3))
+                    alarms().raise("hot", forge::Severity::warning, "too hot");
             } else {
                 hot_since = {};
                 if (cool_since == forge::Scheduler::Clock::time_point{}) cool_since = now();
@@ -712,14 +735,15 @@ TEST_CASE("testing: manual time - timers run when the test advances the clock, w
     CHECK_THROWS_AS(real.advance(std::chrono::seconds(1)), std::logic_error);
 }
 
-TEST_CASE("threading: background(), call() on the loop, the dashboard's owner, slow tasks") {
-    forge::testing::AppRunner<RolesApp> r({"-D", "forge.slow_task_ms=20"});
+TEST_CASE("threading: background(), invoke() on the loop, the dashboard's owner, slow tasks") {
+    forge::testing::AppRunner<RolesApp> r({"-D", "loop.slow_task_ms=20"});
 
     // background(): the work on a worker, the result on the main loop
     std::promise<std::pair<int, bool>> got;
     r->post([&] {
-        r->background([&] { return std::make_pair(42, r->on_main_loop()); },
-                      [&](std::pair<int, bool> v) { got.set_value({v.first + (r->on_main_loop() ? 1 : 0), v.second}); });
+        r->background([&] { return std::make_pair(42, r->on_main_loop()); }, [&](std::pair<int, bool> v) {
+            got.set_value({v.first + (r->on_main_loop() ? 1 : 0), v.second});
+        });
     });
     const auto v = got.get_future().get();
     CHECK(v.first == 43);   // then() ran on the main loop
@@ -730,9 +754,18 @@ TEST_CASE("threading: background(), call() on the loop, the dashboard's owner, s
         r->background([] {}, [&] { after_failure.set_value(); });
     });
     after_failure.get_future().get();
+    // With on_error: the reason, on the main loop.
+    std::promise<std::pair<std::string, bool>> failed;
+    r->post([&] {
+        r->background([]() -> int { throw std::runtime_error("disk gone"); }, [](int) { FAIL("not called"); },
+                      [&](const std::string& why) { failed.set_value({why, r->on_main_loop()}); });
+    });
+    const auto f = failed.get_future().get();
+    CHECK(f.first == "disk gone");
+    CHECK(f.second);
 
-    // call() from the main loop runs at once instead of deadlocking on itself
-    CHECK(r->invoke([&] { return r->call([] { return 7; }).get(); }) == 7);
+    // invoke() from the main loop runs at once instead of deadlocking on itself
+    CHECK(r->invoke([&] { return r->invoke([] { return 7; }); }) == 7);
 
     // The controls' values belong to the main loop.
     CHECK_THROWS_WITH_AS(r->dashboard()->get("gain"), doctest::Contains("outside the main loop"), std::logic_error);
@@ -740,9 +773,12 @@ TEST_CASE("threading: background(), call() on the loop, the dashboard's owner, s
     CHECK(r->invoke([&] { return r->dashboard()->get("gain"); }) == 10.0);
 
     // A slow task is counted (and logged).
-    const auto before = forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics(0).value();
+    const auto before = forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics.at(0).value;
     r->invoke([] { std::this_thread::sleep_for(std::chrono::milliseconds(60)); });
-    CHECK(forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics(0).value() == before + 1);
+    // Counted once the task has returned, which is just after invoke() has its result.
+    CHECK(forge::testing::wait_until([&] {
+        return forge::metrics::registry().snapshot("forge.loop.slow_tasks").metrics.at(0).value == before + 1;
+    }));
 }
 
 TEST_CASE("instances: --instance names the application <name>@<instance>") {
@@ -764,4 +800,123 @@ TEST_CASE("daemon naming standard: lowercase words separated by '-'") {
                             "radio controller", ""}) {
         CHECK_FALSE_MESSAGE(forge::is_standard_name(bad), bad);
     }
+}
+
+TEST_CASE("threading: worker() threads stop before on_stop; one that throws raises an alarm") {
+    std::atomic<int> loops{0};
+    std::atomic<bool> stopped_first{false};
+    {
+        forge::testing::AppRunner<RolesApp> r({});
+        r->invoke([&] {
+            r->worker("ticker", [&](std::stop_token stop) {
+                while (!forge::sleep_for(stop, std::chrono::milliseconds(5))) ++loops;
+                stopped_first = true;
+            });
+            r->worker("broken", [](std::stop_token) { throw std::runtime_error("device gone"); });
+        });
+        CHECK(forge::testing::wait_until([&] { return loops > 2; }));
+        CHECK(forge::testing::wait_until([&] {
+            return r->invoke([&] {
+                const auto a = r->alarms().list();
+                return std::any_of(a.begin(), a.end(), [](const auto& x) {
+                    return x.id == "worker.broken" && x.message.find("device gone") != std::string::npos;
+                });
+            });
+        }));
+    }
+    CHECK(stopped_first);  // the runner's end stopped and joined it
+}
+
+TEST_CASE("threading: forge::Worker and sleep_for wake at once on stop") {
+    std::atomic<bool> done{false};
+    const auto t0 = std::chrono::steady_clock::now();
+    {
+        forge::Worker w("sleeper", [&](std::stop_token stop) {
+            CHECK(forge::sleep_for(stop, std::chrono::seconds(30)));
+            done = true;
+        });
+        CHECK(w.running());
+    }
+    CHECK(done);
+    CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5));
+}
+
+TEST_CASE("metrics: labels make series of one name") {
+    forge::metrics::Registry r;
+    r.set_labels({{"app", "t"}});
+    r.counter("forge.stream.sent", {{"topic", "iq"}}, "sent").inc(3);
+    r.counter("forge.stream.sent", {{"topic", "samples"}}, "sent").inc(5);
+    r.gauge_fn("forge.stream.subscribers", {{"topic", "iq"}}, [] { return 2.0; });
+    const auto text = r.prometheus();
+    CHECK(text.find("forge_stream_sent{app=\"t\",topic=\"iq\"} 3") != std::string::npos);
+    CHECK(text.find("forge_stream_sent{app=\"t\",topic=\"samples\"} 5") != std::string::npos);
+    CHECK(text.find("forge_stream_subscribers{app=\"t\",topic=\"iq\"} 2") != std::string::npos);
+    CHECK(r.names().size() == 3);
+    r.remove("forge.stream.sent", {{"topic", "iq"}});
+    CHECK(r.names().size() == 2);
+    CHECK_THROWS_AS(r.gauge("forge.stream.sent", {{"topic", "samples"}}), std::invalid_argument);  // a counter
+}
+
+TEST_CASE("systemd: notify() writes to $NOTIFY_SOCKET, watchdog_interval() reads the environment") {
+    forge::testing::TempDir dir;
+    const auto path = (dir / "notify.sock").string();
+    const int fd = ::socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    REQUIRE(fd >= 0);
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
+    REQUIRE(::bind(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) == 0);
+
+    CHECK_FALSE(forge::systemd::available());
+    CHECK_FALSE(forge::systemd::notify("READY=1"));  // not under systemd: nothing happens
+    ::setenv("NOTIFY_SOCKET", path.c_str(), 1);
+    CHECK(forge::systemd::available());
+    CHECK(forge::systemd::notify("READY=1\nSTATUS=running"));
+    char buf[128] = {};
+    const auto n = ::recv(fd, buf, sizeof(buf) - 1, 0);
+    CHECK(std::string(buf, static_cast<std::size_t>(std::max<ssize_t>(n, 0))) == "READY=1\nSTATUS=running");
+    ::unsetenv("NOTIFY_SOCKET");
+    ::close(fd);
+
+    CHECK_FALSE(forge::systemd::watchdog_interval());
+    ::setenv("WATCHDOG_USEC", "3000000", 1);
+    ::setenv("WATCHDOG_PID", "1", 1);  // for another process
+    CHECK_FALSE(forge::systemd::watchdog_interval());
+    ::setenv("WATCHDOG_PID", std::to_string(::getpid()).c_str(), 1);
+    REQUIRE(forge::systemd::watchdog_interval());
+    CHECK(*forge::systemd::watchdog_interval() == std::chrono::seconds(3));
+    ::unsetenv("WATCHDOG_USEC");
+    ::unsetenv("WATCHDOG_PID");
+}
+
+TEST_CASE("audit: the file gets every record, from its own thread; flush() waits for it") {
+    forge::testing::TempDir dir;
+    const auto first = (dir / "audit.jsonl").string(), second = (dir / "audit2.jsonl").string();
+    const auto lines = [](const std::string& path) {
+        std::ifstream in(path);
+        std::vector<std::string> out;
+        for (std::string line; std::getline(in, line);) out.push_back(line);
+        return out;
+    };
+    {
+        forge::Audit audit(10);
+        audit.record({.action = "set", .target = "before-the-file"});  // no file yet: memory only
+        audit.configure(10, first);
+        for (int i = 0; i < 200; ++i)
+            audit.record({.channel = "test", .action = "set", .target = "t" + std::to_string(i)});
+        audit.flush();
+        const auto written = lines(first);
+        REQUIRE(written.size() == 200);  // all of them, as soon as flush() returns
+        CHECK(json::parse(written.front())["target"] == "t0");
+        CHECK(json::parse(written.back())["target"] == "t199");
+        CHECK(audit.list().size() == 10);  // the memory keeps the newest
+
+        audit.configure(10, second);  // another file from here on
+        audit.record({.action = "ack", .target = "moved"});
+        audit.record({.action = "ack", .target = "last"});
+    }  // the destructor writes what is still queued
+    CHECK(lines(first).size() == 200);
+    const auto moved = lines(second);
+    REQUIRE(moved.size() == 2);
+    CHECK(json::parse(moved[1])["target"] == "last");
 }

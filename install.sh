@@ -30,6 +30,8 @@ LIBDIR=""
 WITH_SSL="auto"
 WITH_ZLIB="auto"
 WITH_IIO="ON"
+WITH_SQLITE="ON"
+WITH_LZ4="ON"
 WITH_HUB="ON"
 SYSTEM_PROTOBUF="OFF"
 HOST_PROTOC=""
@@ -51,7 +53,7 @@ USE_SUDO="auto"
 QUIET="OFF"
 
 # name | source dir | extra cmake args
-DEPS=(spdlog CLI11 replxx concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq protobuf libiio)
+DEPS=(quill CLI11 concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq libiio lz4 sqlite)
 
 usage() {
     cat <<EOF
@@ -68,19 +70,23 @@ Install location
 Build
   --build-type TYPE     Release | Debug | RelWithDebInfo | MinSizeRel (default: ${BUILD_TYPE})
   -j, --jobs N          Parallel jobs (default: ${JOBS})
-  --static              Build static libraries (default: shared)
+  --static              Build static libraries (default: shared, so the applications
+                        of a device share one copy of each library)
   --toolchain FILE      CMake toolchain file for cross compiling (Yocto SDK, OE, ...)
   --generator GEN       CMake generator (default: Ninja if available)
   --without-ssl         Build cpp-httplib without OpenSSL (no HTTPS)
   --with-ssl            Require OpenSSL (fail if missing)
   --without-zlib        Build cpp-httplib without zlib compression
-  --system-protobuf     Use the system's protobuf (libprotobuf-dev + protoc) instead of the bundled one
-  --protoc PATH         protoc for the build machine (cross builds; default: built from the bundled
-                        protobuf with HOST_CC / HOST_CXX, or cc / c++)
-  --profile embedded    Size/speed settings for small targets: MinSizeRel, LTO, static, no tests
+  --system-protobuf     Use the protoc on the PATH instead of building the bundled one
+  --protoc PATH         protoc for the build machine (default: built from the bundled protobuf
+                        with HOST_CC / HOST_CXX, or cc / c++). Only the build machine needs
+                        protobuf (protoc and Python's protobuf module); nothing links it
+  --profile embedded    Size/speed settings for small targets: MinSizeRel, LTO, shared libraries
   --sanitize LIST       Build everything with sanitizers: address,undefined or thread (debugging;
                         use a separate --prefix, the libraries are instrumented too)
   --without-iio         Skip libiio (the AD9364 examples then only have their simulator)
+  --without-sqlite      Skip SQLite (no forgecpp::sqlite: forge::sqlite, forge::Backlog)
+  --without-lz4         Skip LZ4 (no forgecpp::lz4)
   --without-hub         Do not build forge-hub (the dashboard of the device's applications)
   --iio-usb             Build libiio's USB backend (needs libusb-1.0)
   --no-rpath            Do not set \$ORIGIN rpaths on installed libraries
@@ -159,7 +165,7 @@ while [[ $# -gt 0 ]]; do
         --without-ssl)  WITH_SSL="OFF"; shift ;;
         --with-ssl)     WITH_SSL="ON"; shift ;;
         --without-zlib) WITH_ZLIB="OFF"; shift ;;
-        --without-zmq)  die "--without-zmq: ZeroMQ is part of forgecpp now (the forge.v1 control and streams use it)" ;;
+        --without-zmq)  die "--without-zmq: ZeroMQ is part of forgecpp now (the command link and the streams use it)" ;;
         --system-protobuf) SYSTEM_PROTOBUF="ON"; shift ;;
         --protoc)       need_arg "$@"; HOST_PROTOC="$2"; shift 2 ;;
         --protoc=*)     HOST_PROTOC="${1#*=}"; shift ;;
@@ -167,6 +173,8 @@ while [[ $# -gt 0 ]]; do
         --sanitize)     need_arg "$@"; SANITIZE="$2"; shift 2 ;;
         --profile=*)    PROFILE="${1#*=}"; shift ;;
         --without-iio)  WITH_IIO="OFF"; shift ;;
+        --without-sqlite) WITH_SQLITE="OFF"; shift ;;
+        --without-lz4)  WITH_LZ4="OFF"; shift ;;
         --without-hub)  WITH_HUB="OFF"; shift ;;
         --iio-usb)      IIO_USB="ON"; shift ;;
         --with-zlib)    WITH_ZLIB="ON"; shift ;;
@@ -194,9 +202,10 @@ done
 case "${PROFILE}" in
     "") ;;
     embedded)
-        # Small targets (e.g. Zynq-7000): compact, link-time optimized, self-contained binaries.
+        # Small targets (e.g. Zynq-7000): compact, link-time optimized. The libraries
+        # stay shared: a device runs several forgecpp applications, and they share one
+        # copy of libforgecpp, libzmq, cpp-httplib and libiio (--static to change it).
         BUILD_TYPE="MinSizeRel"
-        SHARED="OFF"
         EXTRA_CMAKE_ARGS+=("-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON")
         ;;
     *) die "unknown profile '${PROFILE}' (embedded)" ;;
@@ -253,7 +262,7 @@ if [[ "${ACTION}" == "uninstall" ]]; then
     if [[ -f "${SAVED_MANIFEST}" ]]; then ${SUDO} rm -f "${SAVED_MANIFEST}"; fi
     # Remove now-empty directories we created.
     for d in "${PREFIX}/include/forge" "${PREFIX}/include/nlohmann" "${PREFIX}/include/CLI" \
-             "${PREFIX}/include/spdlog" "${PREFIX}/include/toml++" "${PREFIX}/include/doctest" \
+             "${PREFIX}/include/quill" "${PREFIX}/include/toml++" "${PREFIX}/include/doctest" \
              "${PREFIX}/include/concurrentqueue" "${PREFIX}"/lib*/cmake/forgecpp \
              "${PREFIX}/share/doc/forgecpp" "${PREFIX}/share/forgecpp"; do
         [[ -d "$d" ]] && ${SUDO} find "$d" -depth -type d -empty -delete 2>/dev/null || true
@@ -290,9 +299,13 @@ fi
 # Submodules
 missing=()
 for d in "${DEPS[@]}" thread-pool; do
-    if [[ ! -f "${TP_DIR}/${d}/CMakeLists.txt" && ! -f "${TP_DIR}/${d}/include/BS_thread_pool.hpp" ]]; then
-        missing+=("$d")
-    fi
+    case "${d}" in
+        lz4) marker="build/cmake/CMakeLists.txt" ;;
+        sqlite) marker="VERSION" ;;
+        thread-pool) marker="include/BS_thread_pool.hpp" ;;
+        *) marker="CMakeLists.txt" ;;
+    esac
+    [[ -f "${TP_DIR}/${d}/${marker}" ]] || missing+=("$d")
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
     if [[ -e "${SRC_DIR}/.git" ]] && command -v git >/dev/null 2>&1; then
@@ -365,13 +378,11 @@ COMMON_ARGS+=("${EXTRA_CMAKE_ARGS[@]+"${EXTRA_CMAKE_ARGS[@]}"}")
 
 dep_args() {
     case "$1" in
-        spdlog)
-            echo "-DSPDLOG_BUILD_SHARED=${SHARED} -DSPDLOG_BUILD_PIC=ON -DSPDLOG_INSTALL=ON"
-            echo "-DSPDLOG_BUILD_EXAMPLE=OFF -DSPDLOG_BUILD_TESTS=OFF -DSPDLOG_BUILD_BENCH=OFF" ;;
+        quill)
+            # header-only: installs the headers and quillConfig.cmake
+            echo "-DQUILL_BUILD_TESTS=OFF -DQUILL_BUILD_EXAMPLES=OFF -DQUILL_BUILD_BENCHMARKS=OFF" ;;
         CLI11)
             echo "-DCLI11_BUILD_TESTS=OFF -DCLI11_BUILD_EXAMPLES=OFF -DCLI11_BUILD_DOCS=OFF -DCLI11_PRECOMPILED=OFF" ;;
-        replxx)
-            echo "-DBUILD_SHARED_LIBS=${SHARED} -DREPLXX_BUILD_EXAMPLES=OFF -DREPLXX_BUILD_PACKAGE=OFF" ;;
         json)
             echo "-DJSON_BuildTests=OFF -DJSON_Install=ON" ;;
         tomlplusplus)
@@ -399,12 +410,6 @@ dep_args() {
             else echo "-DBUILD_SHARED=OFF -DBUILD_STATIC=ON"; fi ;;
         cppzmq)
             echo "-DCPPZMQ_BUILD_TESTS=OFF" ;;
-        protobuf)
-            # Cross builds use a protoc built for the build machine (see build_host_protoc).
-            echo "-Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_BUILD_EXAMPLES=OFF -Dprotobuf_WITH_ZLIB=OFF"
-            echo "-Dprotobuf_BUILD_SHARED_LIBS=${SHARED} -Dprotobuf_INSTALL=ON -Dprotobuf_BUILD_LIBPROTOC=ON"
-            if [[ -n "${TOOLCHAIN}" ]]; then echo "-Dprotobuf_BUILD_PROTOC_BINARIES=OFF"
-            else echo "-Dprotobuf_BUILD_PROTOC_BINARIES=ON"; fi ;;
         libiio)
             # Local (in-kernel IIO) + network (iiod, e.g. ip:192.168.2.1) + XML backends.
             echo "-DBUILD_SHARED_LIBS=${SHARED} -DWITH_IIOD=OFF -DWITH_TESTS=ON -DWITH_EXAMPLES=OFF"
@@ -413,6 +418,12 @@ dep_args() {
             echo "-DWITH_USB_BACKEND=${IIO_USB} -DOSX_PACKAGE=OFF" ;;
         doctest)
             echo "-DDOCTEST_WITH_TESTS=OFF -DDOCTEST_WITH_MAIN_IN_STATIC_LIB=ON" ;;
+        lz4)
+            # The library and the lz4 tool (it opens what forge::lz4 writes).
+            echo "-DBUILD_SHARED_LIBS=${SHARED} -DLZ4_BUILD_CLI=ON -DLZ4_BUILD_LEGACY_LZ4C=OFF"
+            if [[ "${SHARED}" == "ON" ]]; then echo "-DBUILD_STATIC_LIBS=OFF"; else echo "-DBUILD_STATIC_LIBS=ON"; fi ;;
+        sqlite)
+            echo "-DBUILD_SHARED_LIBS=${SHARED} -DSQLITE_AMALGAMATION_DIR=${BUILD_DIR}/sqlite-amalgamation" ;;
         *) ;;
     esac
 }
@@ -470,9 +481,9 @@ echo "    libraries   : $([[ ${SHARED} == ON ]] && echo shared || echo static)"
 [[ -n "${SUDO}" ]] && echo "    install via : sudo"
 echo
 
-# protoc must run on the build machine. Native builds use the protoc they build;
-# cross builds get one built from the same protobuf sources for the host (the
-# generated code has to match the target's libprotobuf version exactly).
+# The messages are generated on the build machine (protoc, nanopb's generator in
+# Python); the target only gets the generated C code. protoc is built once from
+# the bundled sources with the host compiler, for native and cross builds alike.
 build_host_protoc() {
     local bdir="${BUILD_DIR}/host-protobuf"
     local prefix="${BUILD_DIR}/host-tools"
@@ -492,26 +503,45 @@ build_host_protoc() {
     HOST_PROTOC="${prefix}/bin/protoc"
 }
 
-if [[ -n "${TOOLCHAIN}" && -z "${HOST_PROTOC}" ]]; then
+# SQLite has no CMake build: its amalgamation (sqlite3.c, shell.c) is made on
+# the build machine by the checkout's own configure (it brings JimTcl, no Tcl
+# needed), then cmake/third_party/sqlite compiles it like any other library.
+build_sqlite_amalgamation() {
+    local dir="${BUILD_DIR}/sqlite-amalgamation"
+    if [[ -f "${dir}/sqlite3.c" && "${dir}/sqlite3.c" -nt "${TP_DIR}/sqlite/VERSION" ]]; then return; fi
+    info "[sqlite] amalgamation"
+    mkdir -p "${dir}"
+    run_logged "${LOG_DIR}/sqlite-amalgamation.log" \
+        env -u CFLAGS -u CXXFLAGS -u LDFLAGS -u CPPFLAGS -u CC -u CXX \
+        sh -c "cd '${dir}' && CC='${HOST_CC:-cc}' '${TP_DIR}/sqlite/configure' --disable-tcl >/dev/null && make sqlite3.c shell.c"
+}
+
+python3 -c "import google.protobuf" 2>/dev/null ||
+    die "the message generator needs Python's protobuf module: apt install python3-protobuf (or pip install protobuf)"
+if [[ -z "${HOST_PROTOC}" ]]; then
     if [[ "${SYSTEM_PROTOBUF}" == "ON" ]]; then
         HOST_PROTOC="$(command -v protoc || true)"
-        [[ -n "${HOST_PROTOC}" ]] || die "--system-protobuf with --toolchain needs --protoc (the host protoc)"
+        [[ -n "${HOST_PROTOC}" ]] || die "--system-protobuf: no protoc on the PATH (apt install protobuf-compiler)"
     elif [[ "${SKIP_DEPS}" != "ON" || ! -x "${BUILD_DIR}/host-tools/bin/protoc" ]]; then
         build_host_protoc
     else
         HOST_PROTOC="${BUILD_DIR}/host-tools/bin/protoc"
     fi
 fi
-if [[ -n "${HOST_PROTOC}" ]]; then
-    COMMON_ARGS+=("-DFORGE_PROTOC=${HOST_PROTOC}")
-fi
+COMMON_ARGS+=("-DFORGE_PROTOC=${HOST_PROTOC}")
 
 if [[ "${SKIP_DEPS}" != "ON" ]]; then
     for dep in "${DEPS[@]}"; do
-        if [[ "${SYSTEM_PROTOBUF}" == "ON" && "${dep}" == "protobuf" ]]; then continue; fi
         if [[ "${WITH_IIO}" == "OFF" && "${dep}" == "libiio" ]]; then continue; fi
+        if [[ "${WITH_SQLITE}" == "OFF" && "${dep}" == "sqlite" ]]; then continue; fi
+        if [[ "${WITH_LZ4}" == "OFF" && "${dep}" == "lz4" ]]; then continue; fi
+        src="${TP_DIR}/${dep}"
+        case "${dep}" in
+            lz4) src="${TP_DIR}/lz4/build/cmake" ;;
+            sqlite) build_sqlite_amalgamation; src="${SRC_DIR}/cmake/third_party/sqlite" ;;
+        esac
         # shellcheck disable=SC2046
-        build_project "${dep}" "${TP_DIR}/${dep}" $(dep_args "${dep}")
+        build_project "${dep}" "${src}" $(dep_args "${dep}")
     done
 fi
 
@@ -521,6 +551,8 @@ if [[ "${DEPS_ONLY}" != "ON" ]]; then
         "-DFORGECPP_BUILD_TESTS=${BUILD_TESTS}" \
         "-DFORGECPP_BUILD_EXAMPLES=${BUILD_EXAMPLES}" \
         "-DFORGECPP_BUILD_HUB=${WITH_HUB}" \
+        "-DFORGECPP_WITH_SQLITE=${WITH_SQLITE}" \
+        "-DFORGECPP_WITH_LZ4=${WITH_LZ4}" \
         "-DFORGECPP_WARNINGS=ON" \
         "-DFORGECPP_SANITIZE=${SANITIZE//,/;}"
 
@@ -560,7 +592,10 @@ if [[ "${PACKAGE}" == "ON" ]]; then
     fi
     PKG="${BUILD_DIR}/forgecpp-${FORGECPP_VERSION}-${ARCH}.tar.gz"
     info "Creating ${PKG}"
-    tar -C "${DESTDIR_ARG}" -czf "${PKG}" .
+    # Reproducible: sorted names, no owner, a fixed time (SOURCE_DATE_EPOCH or the commit's).
+    epoch="${SOURCE_DATE_EPOCH:-$(git -C "${ROOT}" log -1 --format=%ct 2>/dev/null || date +%s)}"
+    tar -C "${DESTDIR_ARG}" --sort=name --mtime="@${epoch}" --owner=0 --group=0 --numeric-owner \
+        -cf - . | gzip -n >"${PKG}"
     echo
     info "Package ready: ${PKG}"
     echo "    install on a target with:  tar -xzf $(basename "${PKG}") -C /"

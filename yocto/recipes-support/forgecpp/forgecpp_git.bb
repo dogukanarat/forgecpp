@@ -1,113 +1,110 @@
-SUMMARY = "forgecpp - batteries-included C++17 framework for Linux daemons"
-DESCRIPTION = "spdlog, CLI11, replxx, BS::thread_pool, moodycamel::ConcurrentQueue, \
-nlohmann/json, toml++, cpp-httplib, doctest, ZeroMQ and protobuf, bundled and glued \
-together into an application framework: web control panel, forge.v1 messages, \
-forgectl, telnet console, metrics, tracing, audit trail."
-HOMEPAGE = "https://github.com/dogukanarat/forgecpp"
+SUMMARY = "forgecpp - batteries-included C++20 framework for Linux daemons"
+DESCRIPTION = "An application skeleton for embedded Linux daemons: web control panel, c2/tmtc \
+commands (wire compatible with zephyrus) over ZeroMQ and serial lines, streams, forgectl, telnet \
+console, metrics, tracing, audit trail, systemd integration. Links the distribution's ZeroMQ, \
+cpp-httplib, quill and the header-only libraries; nanopb and linenoise are compiled in."
 SECTION = "libs"
-# forgecpp (MIT) + bundled: spdlog, nlohmann/json, toml++, cpp-httplib, doctest,
-# BS::thread_pool (MIT), CLI11 (BSD-3-Clause), replxx (BSD-3-Clause),
-# moodycamel::ConcurrentQueue (BSD-2-Clause or BSL-1.0), protobuf (BSD-3-Clause),
-# GridStack.js (MIT, embedded in the web pages).
-# libzmq: MPL-2.0. libiio: LGPL-2.1-or-later, its command line tools GPL-2.0-or-later
-# (packaged separately in ${PN}-iio-tools).
-LICENSE = "MIT & BSD-3-Clause & BSD-2-Clause & MPL-2.0 & LGPL-2.1-or-later & GPL-2.0-or-later"
-LICENSE:${PN} = "MIT & BSD-3-Clause & BSD-2-Clause & MPL-2.0 & LGPL-2.1-or-later"
-LICENSE:${PN}-iio-tools = "GPL-2.0-or-later"
+require forgecpp-src.inc
+PV = "${FORGECPP_PV}"
+
+# forgecpp (MIT) with what is compiled in: nanopb (Zlib), linenoise (BSD-2-Clause),
+# BS::thread_pool (MIT), GridStack.js (MIT, in the web pages). The libraries it
+# links are packaged by their own recipes with their own licenses.
+LICENSE = "MIT & Zlib & BSD-2-Clause"
 LIC_FILES_CHKSUM = " \
-    file://LICENSE;md5=d651bd6255f4ea85c3b1b170b8dd19c6 \
-    file://third_party/CLI11/LICENSE;md5=744e78b25a90f01b35b087d9fb985ed4 \
-    file://third_party/libzmq/LICENSE;md5=9741c346eef56131163e13b9db1241b3 \
-    file://third_party/protobuf/LICENSE;md5=37b5762e07f0af8c74ce80a8bda4266b \
+    ${FORGECPP_LICENSE_CHKSUM} \
+    file://third_party/nanopb/LICENSE.txt;md5=9db4b73a55a3994384112efcdb37c01f \
+    file://third_party/linenoise/LICENSE;md5=faa55ac8cbebebcb4a84fe1ea2879578 \
+    file://third_party/thread-pool/LICENSE.txt;md5=47ca9b80e8129537a2b9e401c5d9f3fe \
     file://src/web/vendor/gridstack/LICENSE;md5=edb97b6dc3fdc07939ff20bd634870d5 \
-    file://third_party/libiio/COPYING.txt;md5=7c13b3376cea0ce68d2d2da0a1b3a72c \
-    file://third_party/libiio/COPYING_GPL.txt;md5=b234ee4d69f5fce4486a80fdaf4a4263 \
+"
+CVE_PRODUCT = "forgecpp"
+
+# The libraries: zeromq, cppzmq, nlohmann-json, cli11, protobuf (protoc on the
+# build machine) from meta-oe, or from this layer's backfill without it; this
+# layer's quill, cpp-httplib, concurrentqueue, tomlplusplus and doctest; SQLite
+# and LZ4 (PACKAGECONFIG sqlite, lz4) from oe-core. The messages are generated on the build
+# machine with protoc and nanopb's generator (python3-protobuf); the target
+# gets C code only.
+DEPENDS = " \
+    zeromq cppzmq nlohmann-json cli11 tomlplusplus quill cpp-httplib concurrentqueue \
+    openssl zlib \
+    protobuf-native python3-protobuf-native \
 "
 
-SRC_URI = "gitsm://github.com/dogukanarat/forgecpp.git;protocol=https;branch=master"
-# Pin a release commit for reproducible builds.
-SRCREV ?= "${AUTOREV}"
-PV = "0.3.0+git${SRCPV}"
+inherit cmake pkgconfig systemd python3-dir python3native ptest
 
-S = "${WORKDIR}/git"
-
-# protoc runs on the build machine: forgecpp-protoc-native is built from the
-# same protobuf sources (generated code must match libprotobuf exactly).
-DEPENDS = "openssl zlib libxml2 forgecpp-protoc-native"
-
-# python3native: cpp-httplib is split into a header and a source file at build time
-inherit cmake pkgconfig systemd python3-dir python3native
-
-# forge-hub, the dashboard of the device's applications (port 80): built with the
-# "hub" PACKAGECONFIG, installed only when the image asks for it:
+# forge-hub, the dashboard of the device's applications: built with the "hub"
+# PACKAGECONFIG, installed only when the image asks for it:
 #   IMAGE_INSTALL:append = " forgecpp-hub"
 # Remove it from the build with PACKAGECONFIG:remove:pn-forgecpp = "hub".
-PACKAGECONFIG ??= "hub"
-PACKAGECONFIG[hub] = ""
+#
+# The optional components, each in a package of its own (forgecpp-sqlite,
+# forgecpp-lz4): an image only gets SQLite or liblz4 when an application
+# links them. PACKAGECONFIG:remove:pn-forgecpp = "sqlite" leaves one out.
+PACKAGECONFIG ??= "hub sqlite lz4 ${@bb.utils.contains('DISTRO_FEATURES', 'ptest', 'ptest', '', d)}"
+PACKAGECONFIG[hub] = "-DFORGECPP_BUILD_HUB=ON,-DFORGECPP_BUILD_HUB=OFF"
+PACKAGECONFIG[sqlite] = "-DFORGECPP_WITH_SQLITE=ON,-DFORGECPP_WITH_SQLITE=OFF,sqlite3"
+PACKAGECONFIG[lz4] = "-DFORGECPP_WITH_LZ4=ON,-DFORGECPP_WITH_LZ4=OFF,lz4"
+PACKAGECONFIG[ptest] = "-DFORGECPP_BUILD_TESTS=ON,-DFORGECPP_BUILD_TESTS=OFF,doctest"
 FORGECPP_HUB_PORT ?= "80"
 
-# install.sh builds the bundled libraries and forgecpp with the toolchain file
-# generated by cmake.bbclass and stages everything into ${D}.
-FORGECPP_INSTALL_ARGS ?= ""
-
-do_configure() {
-    :
-}
-
-do_compile() {
-    ${S}/install.sh \
-        --toolchain ${WORKDIR}/toolchain.cmake \
-        --prefix ${prefix} \
-        --libdir ${baselib} \
-        --destdir ${B}/stage \
-        --build-dir ${B} \
-        --build-type Release \
-        --jobs ${@oe.utils.cpu_count()} \
-        --no-rpath \
-        --no-sudo \
-        --quiet \
-        --protoc ${STAGING_BINDIR_NATIVE}/forgecpp-protoc \
-        --cmake-arg -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir} \
-        --cmake-arg -DFORGE_PYTHON_SITEDIR=${PYTHON_SITEPACKAGES_DIR} \
-        ${@bb.utils.contains('PACKAGECONFIG', 'hub', '', '--without-hub', d)} \
-        ${FORGECPP_INSTALL_ARGS}
-}
-
-do_install() {
-    install -d ${D}
-    cp -R --no-dereference --preserve=mode,links ${B}/stage/. ${D}/
-}
-
-# Headers, CMake packages, pkg-config files, .proto files and the static test
-# helper are development files; libforgecpp, libprotobuf, libzmq, libspdlog and
-# libreplxx are runtime.
-#   forgecpp-forgectl  forge.v1 command line client (forgectl) for the target
-#   python3-forge-v1   forge-v1 Python package: forge.v1 messages and framing (site-packages)
-#   forgecpp-tools     forgecpp-new (scaffolder)
-#   forgecpp-protoc    protoc and libprotoc for the target (rarely needed)
-PACKAGES =+ "${PN}-hub ${PN}-forgectl python3-forge-v1 ${PN}-tools ${PN}-iio-tools ${PN}-protoc"
-#   forgecpp-hub       forge-hub: dashboard of the device's applications (state, health, systemd restarts)
-FILES:${PN}-hub = "${bindir}/forge-hub ${sysconfdir}/forge-hub ${systemd_system_unitdir}/forge-hub.service"
-CONFFILES:${PN}-hub = "${sysconfdir}/forge-hub/forge-hub.toml"
-RDEPENDS:${PN}-hub = "${PN}"
-SYSTEMD_PACKAGES = "${@bb.utils.contains('PACKAGECONFIG', 'hub', '${PN}-hub', '', d)}"
-SYSTEMD_SERVICE:${PN}-hub = "forge-hub.service"
-FILES:${PN}-forgectl = "${bindir}/forgectl"
-FILES:python3-forge-v1 = "${PYTHON_SITEPACKAGES_DIR}/forge"
-RDEPENDS:python3-forge-v1 = "python3-core python3-protobuf python3-pyzmq"
-RPROVIDES:python3-forge-v1 = "${PN}-python"
-RREPLACES:python3-forge-v1 = "${PN}-python"
-RCONFLICTS:python3-forge-v1 = "${PN}-python"
-FILES:${PN}-tools = "${bindir}/forgecpp-new"
-FILES:${PN}-iio-tools = "${bindir}/iio_*"
-FILES:${PN}-protoc = "${bindir}/protoc* ${libdir}/libprotoc${SOLIBS}"
-RDEPENDS:${PN}-tools = "bash"
-FILES:${PN}-dev += "${datadir}/cmake ${libdir}/cmake ${datadir}/pkgconfig ${datadir}/licenses \
-                    ${datadir}/forgecpp/proto ${datadir}/forgecpp/install_manifest.txt"
-FILES:${PN}-staticdev += "${libdir}/libforgecpp_testing.a"
+EXTRA_OECMAKE = " \
+    -DFORGECPP_BUILD_EXAMPLES=OFF \
+    -DFORGECPP_WARNINGS=OFF \
+    -DFORGECPP_INSTALL_TOOLS=OFF \
+    -DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/protoc \
+    -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir} \
+    -DFORGE_PYTHON_SITEDIR=${PYTHON_SITEPACKAGES_DIR} \
+"
 
 do_install:append() {
     if [ -f ${D}${sysconfdir}/forge-hub/forge-hub.toml ]; then
         sed -i -e 's|^port = 80 |port = ${FORGECPP_HUB_PORT} |' ${D}${sysconfdir}/forge-hub/forge-hub.toml
     fi
 }
+
+# The framework's own test programs on the target (ptest -r forgecpp).
+do_install_ptest() {
+    install -d ${D}${PTEST_PATH}/tests
+    for t in forgecpp_tests forgecpp_pb_tests forgecpp_zmq_tests forgecpp_framework_tests forgecpp_storage_tests \
+             fuzz_c2 fuzz_pb fuzz_serial; do
+        [ -f ${B}/tests/$t ] && install -m 0755 ${B}/tests/$t ${D}${PTEST_PATH}/tests/
+    done
+}
+
+PACKAGES =+ "${PN}-hub ${PN}-forgectl ${PN}-sqlite ${PN}-lz4 python3-forge"
+#   forgecpp-hub       forge-hub: dashboard of the device's applications (state, health, systemd restarts)
+#   forgecpp-sqlite    forgecpp::sqlite: SQLite and the store-and-forward backlog
+#   forgecpp-lz4       forgecpp::lz4: LZ4 frames
+#   forgecpp-forgectl  command line client (forgectl) for the target
+#   python3-forge      Python package "forge": messages, stream framing, c2 clients (site-packages)
+FILES:${PN}-hub = "${bindir}/forge-hub ${sysconfdir}/forge-hub ${systemd_system_unitdir}/forge-hub.service"
+CONFFILES:${PN}-hub = "${sysconfdir}/forge-hub/forge-hub.toml"
+RDEPENDS:${PN}-hub = "${PN}"
+SYSTEMD_PACKAGES = "${@bb.utils.contains('PACKAGECONFIG', 'hub', '${PN}-hub', '', d)}"
+SYSTEMD_SERVICE:${PN}-hub = "forge-hub.service"
+FILES:${PN}-forgectl = "${bindir}/forgectl"
+FILES:${PN}-sqlite = "${libdir}/libforgecpp-sqlite${SOLIBS}"
+FILES:${PN}-lz4 = "${libdir}/libforgecpp-lz4${SOLIBS}"
+LICENSE:${PN}-sqlite = "MIT"
+LICENSE:${PN}-lz4 = "MIT"
+FILES:python3-forge = "${PYTHON_SITEPACKAGES_DIR}/forge ${PYTHON_SITEPACKAGES_DIR}/nanopb_pb2.py ${PYTHON_SITEPACKAGES_DIR}/pyproject.toml"
+RDEPENDS:python3-forge = "python3-core python3-protobuf"
+# The ZeroMQ client (forge.c2) imports pyzmq when it is used; the serial and
+# CAN clients do not. pyzmq is in meta-python, recommended when that layer is
+# in the build (a missing recommendation is an error for bitbake).
+RRECOMMENDS:python3-forge = "${@bb.utils.contains('BBFILE_COLLECTIONS', 'meta-python', 'python3-pyzmq', '', d)}"
+RPROVIDES:python3-forge = "python3-forge-v1"
+RREPLACES:python3-forge = "python3-forge-v1"
+RCONFLICTS:python3-forge = "python3-forge-v1"
+# Development: headers, the CMake package (forgecpp::testing is an INTERFACE
+# target with testing_main.cpp as its source: no static library), pkg-config,
+# the .proto files and the message generator.
+FILES:${PN}-dev += "${libdir}/cmake ${datadir}/forgecpp ${includedir}/forgecpp"
+RDEPENDS:${PN}-dev += "doctest-dev"
+RDEPENDS:${PN}-ptest += "python3-core"
+LICENSE:${PN}-dev = "MIT"
+LICENSE:${PN}-forgectl = "MIT"
+LICENSE:${PN}-hub = "MIT"
+LICENSE:python3-forge = "MIT"

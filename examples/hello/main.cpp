@@ -13,10 +13,17 @@ int main(int argc, char** argv) {
     forge::Application app({"hello", "1.0.0", "forgecpp hello world daemon"});
 
     int count = 0;
-    app.cli().add_option("-n,--count", count, "Stop after N greetings (0 = forever)");
+    app.hook_cli([&](forge::Application&, CLI::App& cli) {
+        cli.add_option("-n,--count", count, "Stop after N greetings (0 = forever)");
+    });
+    // Declared keys: validated, listed by --help-config, their default in one place.
+    app.hook_config([](forge::Application&, forge::config::Schema& s) {
+        s.section("app", "Greeting");
+        s.string("app.name", "world", "Who is greeted");
+    });
 
     app.hook_start([&](forge::Application& a) {
-        const auto name = a.config().get_or<std::string>("app.name", "world");
+        const auto name = a.config().value<std::string>("app.name");
         a.every(1s, [&a, &count, name, i = 0]() mutable {
             a.logger()->info("hello {} #{}", name, ++i);
             if (count > 0 && i >= count) a.stop();

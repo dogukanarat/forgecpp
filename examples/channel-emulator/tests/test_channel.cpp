@@ -22,7 +22,8 @@ std::vector<cf> tone(std::size_t n, double hz, float amp = 0.25f, double rate = 
 /// Mean frequency from the phase steps.
 double frequency(const std::vector<cf>& x, std::size_t from, std::size_t to, double rate = kRate) {
     std::complex<double> acc{};
-    for (std::size_t i = from + 1; i < to; ++i) acc += std::complex<double>(x[i]) * std::conj(std::complex<double>(x[i - 1]));
+    for (std::size_t i = from + 1; i < to; ++i)
+        acc += std::complex<double>(x[i]) * std::conj(std::complex<double>(x[i - 1]));
     return std::arg(acc) * rate / (2 * kPi);
 }
 

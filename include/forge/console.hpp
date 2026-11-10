@@ -1,7 +1,8 @@
 #pragma once
-// Interactive command console (REPL) built on replxx: history, tab completion,
-// hints and syntax colouring. While it runs, log output is routed through the
-// console so log lines never corrupt the prompt.
+// Interactive command console (REPL) built on linenoise: history, tab completion
+// and hints (the rest of a command name, then its arguments from the help text).
+// While it runs, log output and output from other threads is routed through the
+// console: the line being typed is hidden, the text printed, the line shown again.
 //
 //   forge::Console console({.prompt = "mydaemon> "});
 //   console.add("greet", "greet <name>  say hello", [&](const forge::Console::Args& a) {
@@ -11,7 +12,7 @@
 
 #include "forge/auth.hpp"
 
-#include <spdlog/fmt/fmt.h>
+#include <format>
 
 #include <functional>
 #include <memory>
@@ -37,6 +38,8 @@ public:
         bool redirect_logs = true;     ///< route log output through the console
         bool color = true;
         std::string banner;            ///< printed when the console starts
+        int input_fd = 0;              ///< terminal (or pipe) to read; default stdin
+        int output_fd = 1;             ///< where the prompt and output go; default stdout
     };
 
     /// Who runs a command and where its output goes. The local console is
@@ -59,8 +62,7 @@ public:
     Console& operator=(const Console&) = delete;
 
     /// Register a command. `help` is shown by the builtin `help` command.
-    Console& add(const std::string& name, const std::string& help, Handler handler,
-                 Completer completer = {});
+    Console& add(const std::string& name, const std::string& help, Handler handler, Completer completer = {});
     bool remove(const std::string& name);
     std::vector<std::string> commands() const;
 
@@ -77,13 +79,14 @@ public:
     /// Thread-safe output that does not disturb the prompt.
     void write(std::string_view text);
     template <class... T>
-    void print(fmt::format_string<T...> format, T&&... args) {
-        write(fmt::format(format, std::forward<T>(args)...) + "\n");
+    void print(std::format_string<T...> format, T&&... args) {
+        write(std::format(format, std::forward<T>(args)...) + "\n");
     }
     void error(std::string_view message);
 
     /// Read-eval-print loop on the calling thread. Returns when the user exits
-    /// or stop() is called.
+    /// or stop() is called. A terminal gets line editing; a pipe or file is
+    /// read line by line (no prompt). One interactive console at a time.
     void run();
     /// Run the loop on a background thread.
     void start();

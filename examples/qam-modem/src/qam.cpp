@@ -58,7 +58,9 @@ std::uint16_t crc16(const std::uint8_t* data, std::size_t n) {
     std::uint16_t crc = 0xFFFF;
     for (std::size_t i = 0; i < n; ++i) {
         crc ^= static_cast<std::uint16_t>(data[i] << 8);
-        for (int b = 0; b < 8; ++b) crc = (crc & 0x8000) ? static_cast<std::uint16_t>((crc << 1) ^ 0x1021) : static_cast<std::uint16_t>(crc << 1);
+        for (int b = 0; b < 8; ++b)
+            crc =
+                (crc & 0x8000) ? static_cast<std::uint16_t>((crc << 1) ^ 0x1021) : static_cast<std::uint16_t>(crc << 1);
     }
     return crc;
 }
@@ -123,7 +125,8 @@ std::vector<float> rrc_taps(const Params& p) {
     const unsigned n = p.span * p.sps + 1, d = n / 2;
     const double norm = rrc_norm(p);
     std::vector<float> h(n);
-    for (unsigned i = 0; i < n; ++i) h[i] = static_cast<float>(norm * rrc((static_cast<double>(i) - d) / p.sps, p.rolloff));
+    for (unsigned i = 0; i < n; ++i)
+        h[i] = static_cast<float>(norm * rrc((static_cast<double>(i) - d) / p.sps, p.rolloff));
     return h;
 }
 
@@ -132,8 +135,12 @@ std::size_t packet_symbol_count(std::size_t n) { return kPreambleSymbols + kHead
 std::vector<cf> packet_symbols(const std::uint8_t* payload, std::size_t n, std::uint16_t seq) {
     std::vector<cf> s(preamble());
     s.reserve(packet_symbol_count(n));
-    std::uint8_t h[6] = {static_cast<std::uint8_t>(n >> 8), static_cast<std::uint8_t>(n), static_cast<std::uint8_t>(seq >> 8),
-                         static_cast<std::uint8_t>(seq), 0, 0};
+    std::uint8_t h[6] = {static_cast<std::uint8_t>(n >> 8),
+                         static_cast<std::uint8_t>(n),
+                         static_cast<std::uint8_t>(seq >> 8),
+                         static_cast<std::uint8_t>(seq),
+                         0,
+                         0};
     const auto c16 = crc16(h, 4);
     h[4] = static_cast<std::uint8_t>(c16 >> 8);
     h[5] = static_cast<std::uint8_t>(c16);
@@ -236,7 +243,8 @@ void Modulator::fill(std::int16_t* iq, std::size_t n, const Next& next) {
 // ---------------------------------------------------------------------------
 // Demodulator
 
-Demodulator::Demodulator(const Params& p) : p_(p), taps_(rrc_taps(p)), L_(kPreambleHalf * p.sps), D_(p.span * p.sps / 2) {
+Demodulator::Demodulator(const Params& p)
+    : p_(p), taps_(rrc_taps(p)), L_(kPreambleHalf * p.sps), D_(p.span * p.sps / 2) {
     // The preamble as it leaves the modulator (unit scale): the correlation template.
     const auto& pre = preamble();
     wave_.assign(pre.size() * p.sps + taps_.size() - 1, {});
@@ -265,7 +273,8 @@ Stats Demodulator::stats() const {
 std::vector<cf> Demodulator::constellation() const {
     std::lock_guard lock(view_mutex_);
     std::vector<cf> out(constellation_.begin() + static_cast<std::ptrdiff_t>(constellation_pos_), constellation_.end());
-    out.insert(out.end(), constellation_.begin(), constellation_.begin() + static_cast<std::ptrdiff_t>(constellation_pos_));
+    out.insert(out.end(), constellation_.begin(),
+               constellation_.begin() + static_cast<std::ptrdiff_t>(constellation_pos_));
     return out;
 }
 
@@ -629,8 +638,8 @@ bool Demodulator::try_decode(const OnPacket& on_packet) {
         body[s / 2] = static_cast<std::uint8_t>((body[s / 2] << 4) | nib);
     }
     scramble(body.data(), body.size());
-    const std::uint32_t got = std::uint32_t(body[len]) | std::uint32_t(body[len + 1]) << 8 | std::uint32_t(body[len + 2]) << 16 |
-                              std::uint32_t(body[len + 3]) << 24;
+    const std::uint32_t got = std::uint32_t(body[len]) | std::uint32_t(body[len + 1]) << 8 |
+                              std::uint32_t(body[len + 2]) << 16 | std::uint32_t(body[len + 3]) << 24;
     const bool ok = crc32(body.data(), len) == got;
 
     Packet pkt;

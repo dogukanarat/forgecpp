@@ -1,0 +1,59 @@
+// AD936x sample streams. Each ZeroMQ message is
+// [topic][forge.stream_header][body][blob]; the samples are the blob.
+//
+//   topic "iq"           iq_block + blob: every buffer of the channels radio-controller listens to
+//   topic "rx1" / "rx2"  iq_block + blob: shared channels ([radio].tap_rx), rate limited, latest only
+//   TX input (PUSH to [zmq].tx): tx_block + blob
+syntax = "proto3";
+
+import "nanopb.proto";
+
+package radio;
+
+message iq_block {
+    uint32 channel = 1;                         // 1 = RX1, 2 = RX2
+    double sample_rate = 2;                     // Hz
+    double center_freq = 3;                     // RX LO, Hz
+    uint32 samples = 4;                         // complex samples in the blob
+    string format = 5 [(nanopb).max_size = 8];  // "cs16": interleaved little-endian int16 I/Q, full scale +-32767
+    double rx_gain_db = 6;                      // gain of this channel when the block was taken
+    uint64 buffer = 7;                          // DMA buffer counter (gaps = buffers not sent)
+}
+
+message tx_block {
+    string format = 1 [(nanopb).max_size = 8];  // "cs16"
+    bool cyclic = 2;                            // repeat this frame until stopped (test tones, beacons)
+}
+
+// Commands (c2 frames on [forge].control, [serial].device or [can]; JSON at
+// /forge/api/commands/<name>). 0x0001..0x00FF are forgecpp's.
+enum msg_id {
+    none = 0;
+    tune = 0x0100;    // tune_request -> status_reply: change the RX tuning, answer the result
+    status = 0x0101;  // status_request -> status_reply
+}
+
+message tune_request {
+    double rx_lo_hz = 1;         // 0: keep
+    double sample_rate_hz = 2;   // 0: keep
+    double rx_bandwidth_hz = 3;  // 0: keep
+}
+
+message status_request {
+}
+
+message status_reply {
+    bool connected = 1;
+    double rx_lo_hz = 2;
+    double tx_lo_hz = 3;
+    double sample_rate_hz = 4;
+    double rx_bandwidth_hz = 5;
+    double rx_gain_db = 6;       // RX1, as the AGC or the operator set it
+    bool rx_enabled = 7;
+    bool tx_enabled = 8;
+    double rx_power_dbfs = 9;
+    double rx_rate_msps = 10;    // measured
+    uint64 rx_overflows = 11;
+    uint64 tx_underflows = 12;
+    double temperature_c = 13;   // NaN when the device has no sensor
+}

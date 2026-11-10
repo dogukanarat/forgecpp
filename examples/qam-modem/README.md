@@ -4,12 +4,13 @@ A 16QAM packet modem on an AD936x, built on forgecpp: UDP packets from
 Ethernet go on the air, packets heard on the air go back out over Ethernet.
 It does no device I/O itself: [radio-controller](../radio-controller/README.md)
 owns the transceiver, the modem sends it TX samples and listens to its RX
-stream, both over forge.v1 / ZeroMQ.
+stream, both over ZeroMQ; it sets the radio up through radio-controller's command
+link (`forge::Remote`).
 
 ```
  remote PC                     board (Zynq + FMCOMMS5, chip A)
  ---------                     -----------------------------------------------------------------
- echo.py --UDP:6000-->  qam-modem --PUSH TxBlock--> radio-controller --> TX1 --[att]--+
+ echo.py --UDP:6000-->  qam-modem --PUSH tx_block-> radio-controller --> TX1 --[att]--+
                           ^                                                           | splitter
          <--UDP reply---  +--SUB "iq" (RX1)------- radio-controller <-- RX1 <--[att]--+
                                                                                       |

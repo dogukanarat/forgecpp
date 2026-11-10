@@ -26,7 +26,7 @@
 
 namespace forge {
 class Config;
-}
+}  // namespace forge
 
 namespace forge::config {
 
@@ -74,6 +74,13 @@ public:
 
     const Key* find(const std::string& path) const;
 
+    /// An old name of a key: a file that still uses `old_path` works
+    /// (apply_defaults() copies its value to `path` when `path` is absent) and
+    /// validate() warns once that it is deprecated.
+    Schema& alias(const std::string& old_path, const std::string& path);
+    /// The new name of a deprecated key, or "" when `path` is not an alias.
+    std::string aliased(const std::string& path) const;
+
     struct Result {
         std::vector<std::string> errors;
         std::vector<std::string> warnings;
@@ -98,6 +105,7 @@ private:
     bool covered_by_open_section(const std::string& path) const;
     std::map<std::string, Section> sections_;
     std::map<std::string, Key> keys_;
+    std::map<std::string, std::string> aliases_;  // old path -> path
 };
 
 }  // namespace forge::config

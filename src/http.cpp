@@ -1,7 +1,9 @@
 #include "forge/http.hpp"
-#include "forge/metrics.hpp"
+#include "common.hpp"
 
+#include "forge/base64.hpp"
 #include "forge/log.hpp"
+#include "forge/metrics.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -10,29 +12,6 @@
 #include <stdexcept>
 
 namespace forge::http {
-namespace {
-// Basic auth credentials ("user:password" -> base64), without httplib's internals.
-std::string base64(const std::string& in) {
-    static constexpr char kChars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve((in.size() + 2) / 3 * 4);
-    std::size_t i = 0;
-    for (; i + 2 < in.size(); i += 3) {
-        const unsigned v = (static_cast<unsigned char>(in[i]) << 16) | (static_cast<unsigned char>(in[i + 1]) << 8) |
-                           static_cast<unsigned char>(in[i + 2]);
-        out += {kChars[v >> 18], kChars[(v >> 12) & 63], kChars[(v >> 6) & 63], kChars[v & 63]};
-    }
-    if (i + 1 == in.size()) {
-        const unsigned v = static_cast<unsigned char>(in[i]) << 16;
-        out += {kChars[v >> 18], kChars[(v >> 12) & 63], '=', '='};
-    } else if (i + 2 == in.size()) {
-        const unsigned v = (static_cast<unsigned char>(in[i]) << 16) | (static_cast<unsigned char>(in[i + 1]) << 8);
-        out += {kChars[v >> 18], kChars[(v >> 12) & 63], kChars[(v >> 6) & 63], '='};
-    }
-    return out;
-}
-}  // namespace
-
 namespace {
 thread_local std::chrono::steady_clock::time_point tls_request_start{};
 }  // namespace
@@ -94,8 +73,7 @@ Handler json_body_handler(JsonBodyHandler fn) {
 
 json parse_response(const httplib::Result& result, const char* method, const std::string& path) {
     if (!result) {
-        throw HttpError(0, std::string(method) + " " + path + " failed: " +
-                               httplib::to_string(result.error()));
+        throw HttpError(0, std::string(method) + " " + path + " failed: " + httplib::to_string(result.error()));
     }
     json body;
     if (!result->body.empty()) {
@@ -123,7 +101,7 @@ void reply_json(Response& res, const json& body, int status) {
 // Server
 
 Server::Server() {
-    server_.set_exception_handler([](const Request& req, Response& res, std::exception_ptr ep) {
+    server_.set_exception_handler([](const Request& req, Response& res, const std::exception_ptr& ep) {
         std::string what = "unknown error";
         try {
             if (ep) std::rethrow_exception(ep);
@@ -137,6 +115,7 @@ Server::Server() {
         } catch (const std::exception& e) {
             what = e.what();
         } catch (...) {
+            what = "unknown error (not a std::exception)";
         }
         log::error("http: {} {} failed: {}", req.method, req.path, what);
         reply_error(res, 500, what);
@@ -186,12 +165,8 @@ Server& Server::del(const std::string& p, Handler h) {
 
 Server& Server::get_json(const std::string& p, JsonHandler h) { return get(p, json_handler(std::move(h))); }
 Server& Server::del_json(const std::string& p, JsonHandler h) { return del(p, json_handler(std::move(h))); }
-Server& Server::post_json(const std::string& p, JsonBodyHandler h) {
-    return post(p, json_body_handler(std::move(h)));
-}
-Server& Server::put_json(const std::string& p, JsonBodyHandler h) {
-    return put(p, json_body_handler(std::move(h)));
-}
+Server& Server::post_json(const std::string& p, JsonBodyHandler h) { return post(p, json_body_handler(std::move(h))); }
+Server& Server::put_json(const std::string& p, JsonBodyHandler h) { return put(p, json_body_handler(std::move(h))); }
 Server& Server::patch_json(const std::string& p, JsonBodyHandler h) {
     return patch(p, json_body_handler(std::move(h)));
 }
@@ -251,11 +226,12 @@ Server& Server::auth(Auth a) {
 }
 
 Server& Server::events(const std::string& pattern, std::shared_ptr<EventStream> stream) {
+    auto handler = stream->handler();
     {
         std::lock_guard lock(mutex_);
-        streams_.push_back(stream);
+        streams_.push_back(std::move(stream));
     }
-    return get(pattern, stream->handler());
+    return get(pattern, std::move(handler));
 }
 
 Server& Server::assets(const std::vector<web::Asset>& list) {
@@ -268,7 +244,7 @@ Server& Server::assets(const std::vector<web::Asset>& list) {
             h ^= a.data[i];
             h *= 1099511628211ULL;
         }
-        assets_[a.path] = StoredAsset{a, fmt::format("\"{:016x}-{:x}\"", h, a.size), web::mime_type(a.path)};
+        assets_[a.path] = StoredAsset{a, std::format("\"{:016x}-{:x}\"", h, a.size), web::mime_type(a.path)};
     }
     return *this;
 }
@@ -297,14 +273,7 @@ httplib::Server::HandlerResponse Server::pre_route(const Request& req, Response&
     return R::Unhandled;
 }
 
-namespace {
-bool constant_time_equal(std::string_view a, std::string_view b) {
-    if (a.size() != b.size()) return false;
-    unsigned char diff = 0;
-    for (std::size_t i = 0; i < a.size(); ++i) diff |= static_cast<unsigned char>(a[i] ^ b[i]);
-    return diff == 0;
-}
-}  // namespace
+using detail::constant_time_equal;
 
 bool Server::authorized(const Request& req) const {
     std::lock_guard lock(mutex_);
@@ -317,7 +286,7 @@ bool Server::authorized(const Request& req) const {
     if (auth_.check) return auth_.check(header);
     if (!auth_.token.empty() && constant_time_equal(header, "Bearer " + auth_.token)) return true;
     if (!auth_.user.empty() &&
-        constant_time_equal(header, "Basic " + base64(auth_.user + ":" + auth_.password))) {
+        constant_time_equal(header, "Basic " + base64_encode(auth_.user + ":" + auth_.password))) {
         return true;
     }
     return false;
@@ -478,34 +447,31 @@ Handler EventStream::handler() {
 
         res.set_header("Cache-Control", "no-cache");
         res.set_header("X-Accel-Buffering", "no");
-        res.set_chunked_content_provider(
-            "text/event-stream",
-            [client](std::size_t, httplib::DataSink& sink) {
-                std::string out;
-                {
-                    std::unique_lock lock(client->mutex);
-                    const auto ready = [&] { return client->closed || !client->pending.empty(); };
-                    const auto deadline = std::chrono::steady_clock::now() + Impl::kHeartbeat;
+        res.set_chunked_content_provider("text/event-stream", [client](std::size_t, httplib::DataSink& sink) {
+            std::string out;
+            {
+                std::unique_lock lock(client->mutex);
+                const auto ready = [&] { return client->closed || !client->pending.empty(); };
+                const auto deadline = std::chrono::steady_clock::now() + Impl::kHeartbeat;
                     // Wake up regularly to notice browsers that went away, so
                     // their slot (and HTTP thread) is released quickly.
-                    while (!client->cv.wait_for(lock, Impl::kLivenessCheck, ready)) {
-                        lock.unlock();
-                        const bool alive = sink.is_writable();
-                        lock.lock();
-                        if (!alive) return false;
-                        if (std::chrono::steady_clock::now() >= deadline) break;
-                    }
-                    if (client->closed) {
-                        lock.unlock();
-                        sink.done();
-                        return true;
-                    }
-                    out.swap(client->pending);
+                while (!client->cv.wait_for(lock, Impl::kLivenessCheck, ready)) {
+                    lock.unlock();
+                    const bool alive = sink.is_writable();
+                    lock.lock();
+                    if (!alive) return false;
+                    if (std::chrono::steady_clock::now() >= deadline) break;
                 }
-                if (out.empty()) out = ": keep-alive\n\n";
-                return sink.is_writable() && sink.write(out.data(), out.size());
-            },
-            [impl, client](bool) { impl->remove(client); });
+                if (client->closed) {
+                    lock.unlock();
+                    sink.done();
+                    return true;
+                }
+                out.swap(client->pending);
+            }
+            if (out.empty()) out = ": keep-alive\n\n";
+            return sink.is_writable() && sink.write(out.data(), out.size());
+        }, [impl, client](bool) { impl->remove(client); });
     };
 }
 

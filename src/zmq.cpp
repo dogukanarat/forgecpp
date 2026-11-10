@@ -1,24 +1,40 @@
 #include "forge/zmq.hpp"
+#include "common.hpp"
 
-#include "forge/application.hpp"
-#include "forge/control.hpp"
 #include "forge/log.hpp"
-#include "forge/proto.hpp"
 #include "forge/trace.hpp"
 
 #include <zmq_addon.hpp>
 
+#include <cerrno>
+#include <chrono>
+#include <cstdio>
+
+#include <sys/eventfd.h>
 #include <unistd.h>
 
 namespace forge::zmq {
 namespace {
 
-constexpr auto kPollInterval = std::chrono::milliseconds(100);
+// The I/O threads sleep in poll until a message or their eventfd wakes them;
+// this is only a safety net.
+constexpr auto kIdleWait = std::chrono::seconds(1);
 
 void apply(::zmq::socket_t& s, const SocketOptions& o) {
     s.set(::zmq::sockopt::sndhwm, o.send_hwm);
     s.set(::zmq::sockopt::rcvhwm, o.recv_hwm);
     s.set(::zmq::sockopt::linger, o.linger_ms);
+    s.set(::zmq::sockopt::maxmsgsize, o.max_message_bytes);
+}
+
+constexpr std::int64_t kFrameLimit = 8 + 65535;             // a c2 frame
+constexpr std::int64_t kBlobLimit = 64LL * 1024 * 1024;     // a stream message
+constexpr std::size_t kSequenceTableLimit = 1024;           // sources a Receiver follows
+
+// What is used when the caller left the default (-1).
+SocketOptions with_limit(SocketOptions o, std::int64_t limit) {
+    if (o.max_message_bytes < 0) o.max_message_bytes = limit;
+    return o;
 }
 
 std::string resolved_endpoint(::zmq::socket_t& s, const std::string& fallback) {
@@ -30,14 +46,16 @@ std::string resolved_endpoint(::zmq::socket_t& s, const std::string& fallback) {
     }
 }
 
-// Receive one multipart forge.v1 message. Returns false on no message.
+// Receive one multipart message. Returns false on no message.
 bool receive(::zmq::socket_t& s, Message& out) {
     std::vector<::zmq::message_t> parts;
     if (!::zmq::recv_multipart(s, std::back_inserter(parts), ::zmq::recv_flags::dontwait)) return false;
     out = Message{};
     if (!parts.empty()) out.topic = parts[0].to_string();
     if (parts.size() > 1 && parts[1].size() > 0) {
-        if (!out.header.ParseFromArray(parts[1].data(), static_cast<int>(parts[1].size()))) out.header.Clear();
+        if (!pb::decode({static_cast<const std::uint8_t*>(parts[1].data()), parts[1].size()}, out.header).ok()) {
+            out.header = {};
+        }
     }
     if (parts.size() > 2) out.body.assign(static_cast<const char*>(parts[2].data()), parts[2].size());
     if (parts.size() > 3) out.blob.assign(static_cast<const char*>(parts[3].data()), parts[3].size());
@@ -46,14 +64,66 @@ bool receive(::zmq::socket_t& s, Message& out) {
 
 void free_owner(void*, void* hint) { delete static_cast<BlobOwner*>(hint); }
 
+std::string encode_to_string(const pb::Type& type, const void* msg) {
+    std::string out(pb::encoded_size(type, msg), '\0');
+    std::size_t n = 0;
+    if (!pb::encode(type, msg, {reinterpret_cast<std::uint8_t*>(out.data()), out.size()}, n).ok()) {
+        throw Error(std::string("cannot encode ") + type.name);
+    }
+    out.resize(n);
+    return out;
+}
+
+// The source name, read by every message: a shared_ptr swapped atomically,
+// so make_header() neither locks nor copies.
+std::atomic<std::shared_ptr<const std::string>>& source_holder() {
+    static std::atomic<std::shared_ptr<const std::string>> holder{std::make_shared<const std::string>("app")};
+    return holder;
+}
+
+using detail::host_name;
+
+void put_trace(forge_stream_header& h, const trace::Context& ctx) {
+    if (!ctx.valid()) return;
+    h.has_trace = true;
+    std::copy(ctx.trace_id.begin(), ctx.trace_id.end(), h.trace.trace_id);
+    std::copy(ctx.span_id.begin(), ctx.span_id.end(), h.trace.span_id);
+}
+
+trace::Context get_trace(const forge_stream_header& h) {
+    trace::Context ctx;
+    if (!h.has_trace) return ctx;
+    std::copy_n(h.trace.trace_id, ctx.trace_id.size(), ctx.trace_id.begin());
+    std::copy_n(h.trace.span_id, ctx.span_id.size(), ctx.span_id.begin());
+    return ctx;
+}
+
+// Source, host, pid, time and the trace context of the calling thread. Text
+// longer than a field is cut: a header must always go out.
+forge_stream_header make_header(std::string_view topic, const char* type) {
+    forge_stream_header h{};
+    const auto copy = [](auto& dst, std::string_view src) { pb::assign_truncated(dst, src); };
+    copy(h.source, *source_holder().load(std::memory_order_acquire));
+    copy(h.host, host_name());
+    h.pid = static_cast<std::uint32_t>(::getpid());
+    copy(h.topic, topic);
+    copy(h.type, type);
+    h.time_unix_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count();
+    put_trace(h, trace::current());
+    return h;
+}
+
 // Send [topic][header][body][blob?]; the blob without copying when owned.
-bool send_parts(::zmq::socket_t& s, std::string_view topic, const std::string& header, const std::string& body,
-                const BlobOwner& owner, const void* data, std::size_t size, bool dontwait) {
+bool send_parts(::zmq::socket_t& s, std::string_view topic, std::span<const std::uint8_t> header,
+                const std::string& body, const BlobOwner& owner, const void* data, std::size_t size, bool dontwait) {
     const bool blob = data != nullptr && size > 0;
-    const auto first = dontwait ? (::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait) : ::zmq::send_flags::sndmore;
+    const auto first =
+        dontwait ? (::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait) : ::zmq::send_flags::sndmore;
     // The first frame decides: if it is accepted, the rest follow atomically.
     if (!s.send(::zmq::buffer(topic.data(), topic.size()), first)) return false;
-    s.send(::zmq::buffer(header), ::zmq::send_flags::sndmore);
+    s.send(::zmq::buffer(header.data(), header.size()), ::zmq::send_flags::sndmore);
     s.send(::zmq::buffer(body), blob ? ::zmq::send_flags::sndmore : ::zmq::send_flags::none);
     if (blob) {
         if (owner) {
@@ -68,6 +138,41 @@ bool send_parts(::zmq::socket_t& s, std::string_view topic, const std::string& h
 
 }  // namespace
 
+std::vector<std::string> answer(const tmtc::Registry& commands, std::string_view request) {
+    std::vector<std::string> frames;
+    tmtc::Dispatcher(commands).handle(
+        {reinterpret_cast<const std::uint8_t*>(request.data()), request.size()},
+        [&](std::span<const std::uint8_t> m) { frames.emplace_back(m.begin(), m.end()); });
+    return frames;
+}
+
+Message make_message(std::string_view topic, const pb::Type& type, const void* body, std::string blob) {
+    Message m;
+    m.topic = std::string(topic);
+    m.header = make_header(topic, type.name);
+    m.body = encode_to_string(type, body);
+    m.blob = std::move(blob);
+    return m;
+}
+
+void set_source(std::string name) {
+    source_holder().store(std::make_shared<const std::string>(std::move(name)), std::memory_order_release);
+}
+
+std::string source() { return *source_holder().load(std::memory_order_acquire); }
+
+json to_json(const StreamInfo& i) {
+    return {{"name", i.name},
+            {"endpoint", i.endpoint},
+            {"topic", i.topic},
+            {"type", i.type},
+            {"policy", i.policy},
+            {"max_rate_hz", i.max_rate_hz},
+            {"subscribers", i.subscribers},
+            {"sent", i.sent},
+            {"dropped", i.dropped}};
+}
+
 ::zmq::context_t& context() {
     static ::zmq::context_t ctx(1);
     return ctx;
@@ -81,11 +186,11 @@ std::string version() {
 // ---------------------------------------------------------------------------
 // Stream / Publisher
 
-Stream::Stream(Publisher& owner, std::string name, std::string type, StreamOptions options)
-    : owner_(owner), name_(std::move(name)), type_(std::move(type)), options_(std::move(options)) {}
+Stream::Stream(Publisher& owner, std::string name, const pb::Type& type, StreamOptions options)
+    : owner_(owner), name_(std::move(name)), type_(type), options_(std::move(options)) {}
 
 bool Stream::wanted() {
-    if (subscribers_.load(std::memory_order_relaxed) == 0) return false;
+    if (subscribers_.load(std::memory_order_relaxed) == 0) return watch_due(false);
     if (options_.max_rate_hz <= 0) return true;
     std::lock_guard lock(rate_mutex_);
     const auto now = std::chrono::steady_clock::now();
@@ -95,22 +200,57 @@ bool Stream::wanted() {
     return true;
 }
 
-bool Stream::publish(const google::protobuf::Message& body) { return publish(body, nullptr, nullptr, 0); }
-
-bool Stream::publish(const google::protobuf::Message& body, BlobOwner owner, const void* data, std::size_t size) {
-    auto header = proto::make_header(name_, body.GetTypeName());
-    std::string bytes;
-    body.SerializeToString(&bytes);
-    return publish_with_header(std::move(header), std::move(bytes), std::move(owner), data, size);
+bool Stream::publish(const pb::Type& type, const void* body, BlobOwner owner, const void* data, std::size_t size) {
+    if (&type != &type_) {
+        throw std::logic_error("stream '" + name_ + "' carries " + type_.name + ", not " + type.name);
+    }
+    auto header = make_header(name_, type_.name);
+    return enqueue(header, encode_to_string(type, body), std::move(owner), data, size);
 }
 
-bool Stream::publish_with_header(v1::Header header, std::string body, BlobOwner owner, const void* data,
-                                 std::size_t size) {
-    header.set_seq(++seq_);
-    if (header.topic().empty()) header.set_topic(name_);
+bool Stream::forward(const Message& m) {
+    auto header = m.header;
+    if (header.topic[0] == '\0') std::snprintf(header.topic, sizeof(header.topic), "%s", name_.c_str());
+    BlobOwner owner;
+    const void* data = nullptr;
+    if (!m.blob.empty()) {
+        auto copy = std::make_shared<std::string>(m.blob);
+        data = copy->data();
+        owner = copy;
+    }
+    return enqueue(header, m.body, std::move(owner), data, m.blob.size());
+}
+
+Subscription Stream::watch(std::function<void(const Message&)> fn) {
+    ++*watching_;
+    auto inner = std::make_shared<Subscription>(watchers_.add(std::move(fn)));
+    return Subscription([inner, watching = watching_] {
+        inner->reset();
+        --*watching;
+    });
+}
+
+// Whether a watcher gets the next message; `take` uses the turn.
+bool Stream::watch_due(bool take) {
+    if (watching_->load(std::memory_order_relaxed) == 0) return false;
+    const std::int64_t now = std::chrono::steady_clock::now().time_since_epoch().count();
+    auto next = next_watch_ns_.load(std::memory_order_relaxed);
+    if (now < next) return false;
+    if (!take) return true;
+    const auto period = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(1.0 / watch_rate_hz));
+    return next_watch_ns_.compare_exchange_strong(next, now + period.count());
+}
+
+bool Stream::enqueue(forge_stream_header& header, std::string body, BlobOwner owner, const void* data,
+                     std::size_t size) {
+    // A watcher (the panel's inspector) gets a copy of the body: only while
+    // someone watches, a few times a second.
+    const bool watched = watch_due(true);
+    std::string watched_body;
+    if (watched) watched_body = body;
     Publisher::Outgoing out;
     out.stream = this;
-    header.SerializeToString(&out.header);
     out.body = std::move(body);
     out.owner = std::move(owner);
     out.data = data;
@@ -121,24 +261,36 @@ bool Stream::publish_with_header(v1::Header header, std::string body, BlobOwner 
         out.data = copy->data();
         out.owner = copy;
     }
-    return owner_.enqueue(*this, std::move(out));
+    // The sequence number is given where the message takes its place in the
+    // queue (Publisher::enqueue, under its mutex), so two threads publishing
+    // the same stream cannot swap the order of their numbers.
+    const bool queued = owner_.enqueue(*this, std::move(out), header);
+    if (watched) {
+        Message seen;
+        seen.topic = name_;
+        seen.header = header;
+        seen.body = std::move(watched_body);
+        watchers_.notify(seen);
+    }
+    return queued;
 }
 
-v1::StreamInfo Stream::info() const {
-    v1::StreamInfo i;
-    i.set_name(name_);
-    i.set_endpoint(owner_.endpoint());
-    i.set_topic(name_);
-    i.set_type(type_);
-    i.set_policy(options_.policy);
-    i.set_max_rate_hz(options_.max_rate_hz);
-    i.set_subscribers(subscribers_.load());
-    i.set_sent(sent_.load());
-    i.set_dropped(dropped_.load());
+StreamInfo Stream::info() const {
+    StreamInfo i;
+    i.name = name_;
+    i.endpoint = owner_.endpoint();
+    i.topic = name_;
+    i.type = type_.name;
+    i.policy = options_.policy;
+    i.max_rate_hz = options_.max_rate_hz;
+    i.subscribers = subscribers_.load();
+    i.sent = sent_.load();
+    i.dropped = dropped_.load();
     return i;
 }
 
 Publisher::Publisher(const std::string& endpoint, SocketOptions options) : options_(options) {
+    wake_fd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     auto bound = bound_.get_future();
     thread_ = std::thread([this, endpoint] {
         trace::set_thread_name("forge-pub");
@@ -153,8 +305,33 @@ Publisher::Publisher(const std::string& endpoint, SocketOptions options) : optio
             bound_.set_exception(std::current_exception());
             return;
         }
-        ::zmq::pollitem_t item{socket.handle(), 0, ZMQ_POLLIN, 0};
+        // Asleep until a subscription arrives on the socket or enqueue()/stop()
+        // write the eventfd; a long timeout only as a safety net.
+        ::zmq::pollitem_t items[] = {{socket.handle(), 0, ZMQ_POLLIN, 0}, {nullptr, wake_fd_, ZMQ_POLLIN, 0}};
+        std::vector<Outgoing> batch;
         while (running_) {
+            {
+                std::lock_guard lock(mutex_);
+                if (queue_.empty() && latest_.empty()) {
+                    // nothing to send: wait (below) without holding the lock
+                } else {
+                    for (auto& o : queue_) --o.stream->queued_;
+                    while (!queue_.empty()) {
+                        batch.push_back(std::move(queue_.front()));
+                        queue_.pop_front();
+                    }
+                    for (auto& [n, o] : latest_) batch.push_back(std::move(o));
+                    latest_.clear();
+                    for (const auto& o : batch) queued_bytes_ -= o.bytes();
+                }
+            }
+            if (batch.empty()) {
+                ::zmq::poll(items, 2, std::chrono::seconds(1));
+                if (items[1].revents & ZMQ_POLLIN) {
+                    std::uint64_t n = 0;
+                    (void)!::read(wake_fd_, &n, sizeof(n));
+                }
+            }
             // Subscriptions (XPUB): count per prefix.
             ::zmq::message_t msg;
             while (socket.recv(msg, ::zmq::recv_flags::dontwait)) {
@@ -162,23 +339,11 @@ Publisher::Publisher(const std::string& endpoint, SocketOptions options) : optio
                 const auto* p = static_cast<const char*>(msg.data());
                 update_subscriptions(std::string_view(p + 1, msg.size() - 1), p[0] == 1);
             }
-            std::vector<Outgoing> batch;
-            {
-                std::unique_lock lock(mutex_);
-                if (queue_.empty() && latest_.empty()) {
-                    cv_.wait_for(lock, std::chrono::milliseconds(20));
-                }
-                while (!queue_.empty()) {
-                    batch.push_back(std::move(queue_.front()));
-                    queue_.pop_front();
-                }
-                for (auto& [n, o] : latest_) batch.push_back(std::move(o));
-                latest_.clear();
-            }
             for (auto& o : batch) {
                 FORGE_TRACE_SCOPE("zmq.publish", "forge");
                 try {
-                    if (send_parts(socket, o.stream->name(), o.header, o.body, o.owner, o.data, o.size, true)) {
+                    if (send_parts(socket, o.stream->name(), std::span(o.header).first(o.header_size), o.body, o.owner,
+                                   o.data, o.size, true)) {
                         ++o.stream->sent_;
                     } else {
                         ++o.stream->dropped_;
@@ -188,19 +353,28 @@ Publisher::Publisher(const std::string& endpoint, SocketOptions options) : optio
                     log::warn("zmq: publish on {} failed: {}", endpoint_, e.what());
                 }
             }
-            (void)::zmq::poll(&item, 1, std::chrono::milliseconds(0));
+            batch.clear();
         }
         socket.close();
     });
-    endpoint_ = bound.get();  // rethrows bind errors
+    try {
+        endpoint_ = bound.get();  // rethrows bind errors
+    } catch (...) {
+        thread_.join();  // it has returned: a joinable thread must not be destroyed
+        throw;
+    }
 }
 
 Publisher::~Publisher() { stop(); }
 
 void Publisher::stop() {
     running_ = false;
-    cv_.notify_all();
+    wake();
     if (thread_.joinable()) thread_.join();
+    if (wake_fd_ >= 0) {
+        ::close(wake_fd_);
+        wake_fd_ = -1;
+    }
 }
 
 void Publisher::update_subscriptions(std::string_view prefix, bool subscribe) {
@@ -220,10 +394,15 @@ void Publisher::update_subscriptions(std::string_view prefix, bool subscribe) {
     }
 }
 
-Stream& Publisher::add(const std::string& name, const std::string& type, StreamOptions options) {
+Stream& Publisher::add(const std::string& name, const pb::Type& type, StreamOptions options) {
     std::lock_guard lock(mutex_);
     auto it = streams_.find(name);
-    if (it != streams_.end()) return *it->second;
+    if (it != streams_.end()) {
+        if (&it->second->type() != &type) {
+            throw std::logic_error("stream '" + name + "' already carries " + it->second->type().name);
+        }
+        return *it->second;
+    }
     auto s = std::unique_ptr<Stream>(new Stream(*this, name, type, std::move(options)));
     std::size_t count = 0;
     for (const auto& [p, c] : prefixes_) {
@@ -239,9 +418,9 @@ Stream* Publisher::find(const std::string& name) {
     return it == streams_.end() ? nullptr : it->second.get();
 }
 
-std::vector<v1::StreamInfo> Publisher::list() const {
+std::vector<StreamInfo> Publisher::list() const {
     std::lock_guard lock(mutex_);
-    std::vector<v1::StreamInfo> out;
+    std::vector<StreamInfo> out;
     for (const auto& [n, s] : streams_) out.push_back(s->info());
     return out;
 }
@@ -251,32 +430,65 @@ std::size_t Publisher::queued() const {
     return queue_.size() + latest_.size();
 }
 
-bool Publisher::enqueue(Stream& s, Outgoing out) {
+bool Publisher::enqueue(Stream& s, Outgoing out, forge_stream_header& header) {
     if (!running_) return false;
     {
         std::lock_guard lock(mutex_);
+        header.seq = ++s.seq_;
+        std::size_t n = 0;
+        if (!pb::encode(*pb::type_of<forge_stream_header>, &header, out.header, n).ok()) {
+            ++s.dropped_;
+            return false;  // cannot happen: the header's fields are bounded and the array fits them
+        }
+        out.header_size = n;
         if (s.options_.policy == "latest") {
-            if (latest_.count(s.name_)) ++s.dropped_;  // replaced before it was sent
-            latest_[s.name_] = std::move(out);
+            auto it = latest_.find(s.name_);
+            if (it != latest_.end()) {
+                ++s.dropped_;  // replaced before it was sent
+                queued_bytes_ -= it->second.bytes();
+                queued_bytes_ += out.bytes();
+                it->second = std::move(out);
+            } else {
+                queued_bytes_ += out.bytes();
+                latest_.emplace(s.name_, std::move(out));
+            }
         } else {
-            if (queue_.size() >= static_cast<std::size_t>(std::max(options_.send_hwm, 1))) {
+            // Bounded per stream (one busy stream does not starve the others)
+            // and in bytes for all of them (large blobs do not eat the memory).
+            const bool full =
+                s.queued_ >= static_cast<std::size_t>(std::max(options_.send_hwm, 1)) ||
+                (options_.send_budget_bytes > 0 && queued_bytes_ + out.bytes() > options_.send_budget_bytes);
+            if (full) {
                 ++s.dropped_;
                 return false;
             }
+            ++s.queued_;
+            queued_bytes_ += out.bytes();
             queue_.push_back(std::move(out));
         }
     }
-    cv_.notify_one();
+    wake();
     return true;
+}
+
+void Publisher::wake() {
+    if (wake_fd_ >= 0) {
+        const std::uint64_t one = 1;
+        (void)!::write(wake_fd_, &one, sizeof(one));
+    }
+}
+
+std::size_t Publisher::queued_bytes() const {
+    std::lock_guard lock(mutex_);
+    return queued_bytes_;
 }
 
 // ---------------------------------------------------------------------------
 // Sender
 
 Sender::Sender(Kind kind, const std::string& endpoint, bool bind, SocketOptions options)
-    : kind_(kind),
-      socket_(context(), kind == Kind::pub ? ::zmq::socket_type::xpub : ::zmq::socket_type::push) {
-    apply(socket_, options);
+    : kind_(kind), socket_(context(), kind == Kind::pub ? ::zmq::socket_type::xpub : ::zmq::socket_type::push) {
+    apply(socket_, with_limit(options, kBlobLimit));
     if (kind_ == Kind::pub) {
         // Report every (un)subscription so subscriptions() is accurate.
         socket_.set(::zmq::sockopt::xpub_verbose, 1);
@@ -301,11 +513,12 @@ std::size_t Sender::subscriptions() {
     return static_cast<std::size_t>(subscriptions_);
 }
 
-bool Sender::send_frames(std::string_view topic, const std::string& header, const std::string& body,
-                         const void* blob, std::size_t size) {
+bool Sender::send_frames(std::string_view topic, const std::string& header, const std::string& body, const void* blob,
+                         std::size_t size) {
     poll_subscriptions();
     try {
-        if (!send_parts(socket_, topic, header, body, nullptr, blob, size, true)) {
+        const std::span<const std::uint8_t> hdr(reinterpret_cast<const std::uint8_t*>(header.data()), header.size());
+        if (!send_parts(socket_, topic, hdr, body, nullptr, blob, size, true)) {
             ++dropped_;
             return false;
         }
@@ -318,22 +531,25 @@ bool Sender::send_frames(std::string_view topic, const std::string& header, cons
     return true;
 }
 
-bool Sender::publish(std::string_view topic, const google::protobuf::Message& body, const void* blob,
+bool Sender::publish(std::string_view topic, const pb::Type& type, const void* body, const void* blob,
                      std::size_t size) {
-    auto header = proto::make_header(topic, body.GetTypeName());
+    auto header = make_header(topic, type.name);
     auto it = seq_.find(topic);
     if (it == seq_.end()) it = seq_.emplace(std::string(topic), 0).first;
-    header.set_seq(++it->second);
-    std::string h, b;
-    header.SerializeToString(&h);
-    body.SerializeToString(&b);
-    return send_frames(topic, h, b, blob, size);
+    header.seq = ++it->second;
+    return send_frames(topic, encode_to_string(*pb::type_of<forge_stream_header>, &header),
+                       encode_to_string(type, body), blob, size);
 }
 
 bool Sender::send(const Message& m) {
-    std::string h;
-    m.header.SerializeToString(&h);
-    return send_frames(m.topic, h, m.body, m.blob.empty() ? nullptr : m.blob.data(), m.blob.size());
+    return send_frames(m.topic, encode_to_string(*pb::type_of<forge_stream_header>, &m.header), m.body,
+                       m.blob.empty() ? nullptr : m.blob.data(), m.blob.size());
+}
+
+bool Sender::send_wait(const Message& m, std::chrono::milliseconds timeout) {
+    ::zmq::pollitem_t item{socket_.handle(), 0, ZMQ_POLLOUT, 0};
+    if (::zmq::poll(&item, 1, timeout) <= 0 || (item.revents & ZMQ_POLLOUT) == 0) return false;
+    return send(m);
 }
 
 std::string Sender::endpoint() const { return resolved_endpoint(const_cast<::zmq::socket_t&>(socket_), ""); }
@@ -344,15 +560,16 @@ std::string Sender::endpoint() const { return resolved_endpoint(const_cast<::zmq
 Receiver::Receiver(Kind kind, const std::string& endpoint, Handler handler)
     : Receiver(kind, endpoint, std::move(handler), Options{}) {}
 
-Receiver::Receiver(Kind kind, const std::string& endpoint, Handler handler, Options options)
+Receiver::Receiver(Kind kind, const std::string& endpoint, Handler handler, const Options& options)
     : socket_(context(), kind == Kind::sub ? ::zmq::socket_type::sub : ::zmq::socket_type::pull),
       handler_(std::move(handler)) {
-    apply(socket_, options.socket);
+    apply(socket_, with_limit(options.socket, kBlobLimit));
     if (kind == Kind::sub) {
         for (const auto& t : options.topics) socket_.set(::zmq::sockopt::subscribe, t);
     }
     options.bind ? socket_.bind(endpoint) : socket_.connect(endpoint);
     endpoint_ = resolved_endpoint(socket_, endpoint);
+    wake_fd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     thread_ = std::thread([this] { run(); });
 }
 
@@ -360,25 +577,35 @@ Receiver::~Receiver() { stop(); }
 
 void Receiver::stop() {
     running_ = false;
+    if (wake_fd_ >= 0) {
+        const std::uint64_t one = 1;
+        (void)!::write(wake_fd_, &one, sizeof(one));
+    }
     if (thread_.joinable()) thread_.join();
+    if (wake_fd_ >= 0) {
+        ::close(wake_fd_);
+        wake_fd_ = -1;
+    }
 }
 
 void Receiver::run() {
-    ::zmq::pollitem_t item{socket_.handle(), 0, ZMQ_POLLIN, 0};
+    ::zmq::pollitem_t items[] = {{socket_.handle(), 0, ZMQ_POLLIN, 0}, {nullptr, wake_fd_, ZMQ_POLLIN, 0}};
     while (running_) {
         try {
-            if (::zmq::poll(&item, 1, kPollInterval) <= 0) continue;
+            if (::zmq::poll(items, 2, kIdleWait) <= 0) continue;
+            if (!(items[0].revents & ZMQ_POLLIN)) continue;  // woken to stop
             Message m;
             while (running_ && receive(socket_, m)) {
                 ++received_;
                 // Gaps in the sender's sequence = messages dropped on the way.
-                if (m.header.seq() > 0) {
-                    auto& last = last_seq_[m.header.source() + "/" + std::to_string(m.header.pid()) + "/" + m.topic];
-                    if (last > 0 && m.header.seq() > last + 1) lost_ += m.header.seq() - last - 1;
-                    last = m.header.seq();
+                if (m.header.seq > 0) {
+                    if (last_seq_.size() >= kSequenceTableLimit) last_seq_.clear();  // peers come and go
+                    auto& last = last_seq_[std::string(pb::view(m.header.source)) + "/" + std::to_string(m.header.pid) +
+                                           "/" + m.topic];
+                    if (last > 0 && m.header.seq > last + 1) lost_ += m.header.seq - last - 1;
+                    last = m.header.seq;
                 }
-                trace::ContextScope scope(m.header.has_trace() ? trace::from_proto(m.header.trace())
-                                                               : trace::Context{});
+                trace::ContextScope scope(get_trace(m.header));
                 try {
                     handler_(std::move(m));
                 } catch (const std::exception& e) {
@@ -405,12 +632,13 @@ Server::Server(const std::string& endpoint, Handler handler, ServerOptions serve
       server_options_(std::move(server)),
       replies_(context(), ::zmq::socket_type::pull) {
     static std::atomic<std::uint64_t> instances{0};
-    apply(socket_, options);
+    apply(socket_, with_limit(options, kFrameLimit));
     socket_.bind(endpoint);
     endpoint_ = resolved_endpoint(socket_, endpoint);
     replies_endpoint_ = "inproc://forge-server-" + std::to_string(++instances);
     replies_.set(::zmq::sockopt::linger, 0);
     replies_.bind(replies_endpoint_);
+    wake_fd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
     const int n = std::max(server_options_.workers, 1);
     for (int i = 0; i < n; ++i) {
         workers_.emplace_back([this, i, n] {
@@ -440,21 +668,34 @@ void Server::stop() {
         if (t.joinable()) t.join();
     }
     running_ = false;
+    if (wake_fd_ >= 0) {
+        const std::uint64_t one = 1;
+        (void)!::write(wake_fd_, &one, sizeof(one));
+    }
     if (thread_.joinable()) thread_.join();
+    if (wake_fd_ >= 0) {
+        ::close(wake_fd_);
+        wake_fd_ = -1;
+    }
 }
 
-void Server::send_reply(::zmq::socket_t& out, const Job& job, const std::string& reply) {
-    for (const auto& frame : job.envelope) out.send(::zmq::buffer(frame), ::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait);
-    out.send(::zmq::buffer(reply), ::zmq::send_flags::dontwait);
+void Server::send_reply(::zmq::socket_t& out, const Job& job, const std::vector<std::string>& frames) {
+    for (const auto& frame : job.envelope)
+        out.send(::zmq::buffer(frame), ::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait);
+    if (frames.empty()) {
+        out.send(::zmq::const_buffer(nullptr, 0), ::zmq::send_flags::dontwait);  // a REQ client waits for something
+        return;
+    }
+    for (std::size_t i = 0; i < frames.size(); ++i) {
+        out.send(::zmq::buffer(frames[i]), i + 1 < frames.size()
+                                               ? ::zmq::send_flags::sndmore | ::zmq::send_flags::dontwait
+                                               : ::zmq::send_flags::dontwait);
+    }
 }
 
-namespace {
-std::string busy_reply(const std::string& why) {
-    std::string out;
-    proto::error_reply(503, why).SerializeToString(&out);
-    return out;
+std::vector<std::string> Server::busy(std::string_view request) const {
+    return server_options_.busy ? server_options_.busy(request) : std::vector<std::string>{};
 }
-}  // namespace
 
 void Server::work() {
     ::zmq::socket_t out(context(), ::zmq::socket_type::push);
@@ -469,15 +710,16 @@ void Server::work() {
             job = std::move(queue_.front());
             queue_.pop_front();
         }
-        std::string reply;
+        std::vector<std::string> reply;
         if (std::chrono::steady_clock::now() - job.received > server_options_.max_queue_wait) {
             ++rejected_;
-            reply = busy_reply("server busy: the request waited too long");
+            reply = busy(job.body);
         } else {
             try {
                 reply = handler_(job.body);
             } catch (const std::exception& e) {
-                proto::error_reply(500, e.what()).SerializeToString(&reply);
+                log::error("zmq: server {}: the handler failed: {}", endpoint_, e.what());
+                reply = busy(job.body);
             }
         }
         try {
@@ -491,7 +733,9 @@ void Server::work() {
 }
 
 void Server::run() {
-    ::zmq::pollitem_t items[] = {{socket_.handle(), 0, ZMQ_POLLIN, 0}, {replies_.handle(), 0, ZMQ_POLLIN, 0}};
+    ::zmq::pollitem_t items[] = {{socket_.handle(), 0, ZMQ_POLLIN, 0},
+                                 {replies_.handle(), 0, ZMQ_POLLIN, 0},
+                                 {nullptr, wake_fd_, ZMQ_POLLIN, 0}};
     std::vector<::zmq::message_t> frames;
     const auto receive_all = [&](::zmq::socket_t& from) {
         frames.clear();
@@ -505,13 +749,13 @@ void Server::run() {
     };
     while (running_) {
         try {
-            if (::zmq::poll(items, 2, kPollInterval) <= 0) continue;
+            if (::zmq::poll(items, 3, kIdleWait) <= 0) continue;
             // Replies from the workers: forward them as they are (envelope + body).
             if (items[1].revents & ZMQ_POLLIN) {
                 while (receive_all(replies_)) {
                     for (std::size_t i = 0; i < frames.size(); ++i) {
-                        socket_.send(frames[i], i + 1 < frames.size() ? ::zmq::send_flags::sndmore
-                                                                      : ::zmq::send_flags::dontwait);
+                        socket_.send(frames[i],
+                                     i + 1 < frames.size() ? ::zmq::send_flags::sndmore : ::zmq::send_flags::dontwait);
                     }
                 }
             }
@@ -539,20 +783,16 @@ void Server::run() {
                 if (i >= frames.size()) continue;  // no request frame
                 job.body = frames[i].to_string();
                 ++requests_;
-                bool queued = false;
-                {
-                    std::lock_guard lock(mutex_);
-                    if (!stopping_ && queue_.size() < server_options_.max_queued) {
-                        queue_.push_back(std::move(job));
-                        queued = true;
-                    }
-                }
-                if (queued) {
-                    cv_.notify_one();
-                } else {
+                std::unique_lock lock(mutex_);
+                if (stopping_ || queue_.size() >= server_options_.max_queued) {
+                    lock.unlock();
                     ++rejected_;
-                    send_reply(socket_, job, busy_reply("server busy: too many requests waiting"));
+                    send_reply(socket_, job, busy(job.body));
+                    continue;
                 }
+                queue_.push_back(std::move(job));
+                lock.unlock();
+                cv_.notify_one();
             }
         } catch (const ::zmq::error_t& e) {
             if (e.num() == ETERM) break;
@@ -568,9 +808,6 @@ void Server::run() {
 
 Client::Client(std::string endpoint, std::chrono::milliseconds timeout)
     : endpoint_(std::move(endpoint)), timeout_(timeout) {
-    char host[128] = {};
-    ::gethostname(host, sizeof(host) - 1);
-    client_ = proto::source() + "@" + host;
     reconnect();
 }
 
@@ -580,101 +817,54 @@ void Client::reconnect() {
     socket_->connect(endpoint_);
 }
 
-std::string Client::exchange(const std::string& bytes) {
-    socket_->send(::zmq::buffer(bytes), ::zmq::send_flags::none);
+Status Client::request(std::uint16_t id, std::span<const std::uint8_t> payload,
+                       const std::function<Status(const c2::Message&)>& on_answer) {
+    if (payload.size() > c2::payload_max) return Status::error(module_id::zmq, EMSGSIZE, "request too large");
+    const std::uint16_t seq = ++seq_;
+    std::vector<std::uint8_t> frame(c2::header_size + payload.size());
+    std::size_t n = 0;
+    const auto hdr = c2::make_header(c2::flag::req, id, seq, static_cast<std::uint16_t>(payload.size()));
+    if (auto s = c2::encode_message(hdr, payload, frame, n); !s.ok()) return s;
+    socket_->send(::zmq::buffer(frame.data(), n), ::zmq::send_flags::none);
+
     ::zmq::pollitem_t item{socket_->handle(), 0, ZMQ_POLLIN, 0};
     if (::zmq::poll(&item, 1, timeout_) <= 0) {
-        reconnect();  // a REQ socket is stuck after a lost reply: start over
-        throw Error("no reply from " + endpoint_ + " within " + std::to_string(timeout_.count()) + " ms");
+        reconnect();  // a REQ socket is stuck after a lost answer: start over
+        return Status::error(module_id::zmq, ETIMEDOUT, "no answer");
     }
-    ::zmq::message_t msg;
-    (void)socket_->recv(msg);
-    return msg.to_string();
-}
+    std::vector<::zmq::message_t> frames;
+    (void)::zmq::recv_multipart(*socket_, std::back_inserter(frames));
 
-v1::Reply Client::request(v1::Request req) {
-    if (req.client().empty()) req.set_client(client_);
-    if (req.token().empty() && !token_.empty()) req.set_token(token_);
-    if (!req.has_trace()) {
-        const auto ctx = trace::current();
-        *req.mutable_trace() = trace::to_proto(ctx.valid() ? trace::child_of(ctx) : trace::new_trace());
-    }
-    std::string bytes;
-    req.SerializeToString(&bytes);
-    v1::Reply reply;
-    const auto answer = exchange(bytes);
-    if (!reply.ParseFromString(answer)) throw Error("invalid reply from " + endpoint_);
-    return reply;
-}
-
-v1::Reply Client::call(v1::Request req) {
-    auto reply = request(std::move(req));
-    if (!reply.ok()) throw Error(reply.error(), reply.status());
-    return reply;
-}
-
-json Client::get(const std::string& id) {
-    v1::Request r;
-    r.mutable_get()->set_id(id);
-    return proto::to_json(call(std::move(r)).value());
-}
-
-json Client::set(const std::string& id, const json& value) {
-    v1::Request r;
-    r.mutable_set()->set_id(id);
-    *r.mutable_set()->mutable_value() = proto::to_value(value);
-    return proto::to_json(call(std::move(r)).value());
-}
-
-void Client::press(const std::string& id) {
-    v1::Request r;
-    r.mutable_press()->set_id(id);
-    call(std::move(r));
-}
-
-json Client::call_command(const std::string& id, const json& args) {
-    v1::Request r;
-    r.mutable_call()->set_id(id);
-    *r.mutable_call()->mutable_args() = proto::to_struct(args);
-    return proto::to_json(call(std::move(r)).value());
-}
-
-v1::Info Client::info() {
-    v1::Request r;
-    r.mutable_info();
-    return call(std::move(r)).info();
-}
-
-json Client::request_json(const json& req) {
-    const auto answer = exchange(req.dump());
-    auto reply = json::parse(answer, nullptr, false);
-    if (reply.is_discarded()) throw Error("invalid JSON reply from " + endpoint_);
-    return reply;
-}
-
-// ---------------------------------------------------------------------------
-// serve_control
-
-std::unique_ptr<Server> serve_control(ControlService& service, const std::string& endpoint, int workers) {
-    ServerOptions options;
-    options.workers = workers;
-    options.thread_name = "forge-control";
-    return std::make_unique<Server>(endpoint, [&service](std::string_view request) -> std::string {
-        Caller transport;
-        transport.channel = "zmq";
-        // Older JSON commands: a JSON object frame.
-        if (!request.empty() && request.front() == '{') {
-            auto j = json::parse(request, nullptr, false);
-            json reply = j.is_object() ? service.handle_legacy_json(j, transport)
-                                       : json{{"ok", false}, {"error", "request must be a JSON object"}, {"status", 400}};
-            return reply.dump(-1, ' ', false, json::error_handler_t::replace);
+    Status result;
+    for (const auto& f : frames) {
+        c2::Message m;
+        if (!c2::decode_message({static_cast<const std::uint8_t*>(f.data()), f.size()}, m).ok() ||
+            m.header.seq != seq || m.header.cmd_id != id) {
+            return Status::error(module_id::zmq, EBADMSG, "an answer that is not for this request");
         }
-        return service.handle_bytes(request, transport);
-    }, options);
+        switch (c2::kind_of(m.header.flags)) {
+            case c2::Kind::nack: {
+                Status carried;
+                if (auto s = c2::nack_status(m.payload, carried); !s.ok()) return s;
+                return carried;
+            }
+            case c2::Kind::ack:
+            case c2::Kind::reply:
+                if (result.ok()) result = on_answer(m);
+                break;
+            default: return Status::error(module_id::zmq, EBADMSG, "an answer that is not a reply");
+        }
+    }
+    if (frames.empty()) return Status::error(module_id::zmq, EBADMSG, "an empty answer");
+    return result;
 }
 
-std::unique_ptr<Server> serve_application(Application& app, const std::string& endpoint) {
-    return serve_control(app.control(), endpoint);
+Status Client::call(std::uint16_t id, const pb::Type& type, const void* req,
+                    const std::function<Status(const c2::Message&)>& on_answer) {
+    std::vector<std::uint8_t> payload(pb::encoded_size(type, req));
+    std::size_t n = 0;
+    if (auto s = pb::encode(type, req, payload, n); !s.ok()) return s;
+    return request(id, std::span(payload).first(n), on_answer);
 }
 
 }  // namespace forge::zmq

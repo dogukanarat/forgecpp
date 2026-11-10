@@ -1,0 +1,4 @@
+# Not ours: formatted the way their projects format them.
+third_party/*
+tests/compat/zephyrus/private/*
+tests/compat/zephyrus/stubs/*

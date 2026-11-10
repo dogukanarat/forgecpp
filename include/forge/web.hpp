@@ -7,7 +7,7 @@
 //   * forge.js for your own pages: <input data-forge-bind="speed"> just works
 //   * console commands `controls`, `set <id> <value>`, `press <id>` as a backup
 //
-//   void setup_web(forge::web::Dashboard& ui) override {
+//   void setup_controls(forge::Controls& ui) override {
 //       auto& motor = ui.group("Motor");
 //       motor.button("start", "Start", [this] { start(); });
 //       motor.button("stop", "Stop", [this] { stop_motor(); }).confirm("Stop the motor?").danger();
@@ -23,9 +23,12 @@
 
 #include "forge/assets.hpp"
 #include "forge/auth.hpp"
+#include "forge/metrics.hpp"
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <map>
@@ -103,7 +106,9 @@ struct CommandDef {
 };
 }  // namespace detail
 
-/// Fluent options for a command.
+/// Fluent options for an action (Group::action).
+class CommandRef;
+using ActionRef = CommandRef;
 class CommandRef {
 public:
     CommandRef& help(std::string text);
@@ -128,6 +133,8 @@ public:
     Control& precision(int digits);
     /// Allowed range (validated server-side) and step for number/slider.
     Control& range(double min, double max, double step = 0);
+    /// Show a number as a slider (it needs a range).
+    Control& slider();
     Control& readonly(bool value = true);
     Control& primary();
     Control& danger();
@@ -154,31 +161,55 @@ public:
     /// Push button running `action`.
     Control button(const std::string& id, const std::string& label, std::function<void()> action);
 
-    /// Command with parameters (RPC): the panel shows a form, the console
-    /// takes `call <id> name=value ...`, forge.v1 has Request.call. Arguments
-    /// are validated (types, ranges, choices, defaults) before `handler` runs
-    /// on the main loop; its JSON result goes back to the caller.
+    /// An action with parameters: the panel shows a form, the console takes
+    /// `call <id> name=value ...`, forgectl and the links the built-in "call"
+    /// command, the web POST /forge/api/actions/<id>. Arguments are validated
+    /// (types, ranges, choices, defaults) before `handler` runs on the main
+    /// loop; its JSON result goes back to the caller. For a typed, numbered
+    /// command that other programs and devices call in binary, see
+    /// Application::command<Req, Rsp>() (docs/commands.md).
+    ActionRef action(const std::string& id, const std::string& label, std::vector<Param> params,
+                     std::function<json(const json& args)> handler);
+    [[deprecated("use action(): a command is a numbered request/reply pair (Application::command)")]]
     CommandRef command(const std::string& id, const std::string& label, std::vector<Param> params,
                        std::function<json(const json& args)> handler);
 
     /// On/off switch.
     Control toggle(const std::string& id, const std::string& label, bool& value);
+    Control toggle(const std::string& id, const std::string& label, std::atomic<bool>& value);
     Control toggle(const std::string& id, const std::string& label, std::function<bool()> get,
                    std::function<void(bool)> set);
 
     /// Slider between min and max.
     template <class T, class = std::enable_if_t<std::is_arithmetic_v<T>>>
-    Control slider(const std::string& id, const std::string& label, T& value, double min, double max,
-                   double step = 1) {
+    Control slider(const std::string& id, const std::string& label, T& value, double min, double max, double step = 1) {
         return numeric(Kind::slider, id, label, value).range(min, max, step);
     }
     Control slider(const std::string& id, const std::string& label, std::function<double()> get,
                    std::function<void(double)> set, double min, double max, double step = 1);
 
-    /// Numeric input. Use .range() to restrict it.
+    /// Numeric input. Use .range() to restrict it, .slider() to show a slider.
     template <class T, class = std::enable_if_t<std::is_arithmetic_v<T>>>
     Control number(const std::string& id, const std::string& label, T& value) {
         return numeric(Kind::number, id, label, value);
+    }
+    /// A number another thread reads (an atomic): written and read with relaxed order.
+    template <class T, class = std::enable_if_t<std::is_arithmetic_v<T>>>
+    Control number(const std::string& id, const std::string& label, std::atomic<T>& value) {
+        return add(Kind::number, id, label, [&value] {
+            return json(value.load(std::memory_order_relaxed));
+        }, [&value](const json& v) { value.store(from_double<T>(v.get<double>()), std::memory_order_relaxed); });
+    }
+    /// A duration, shown in the unit of `Unit` (e.g. std::chrono::milliseconds):
+    /// number("interval", "Interval", interval_).unit("ms"), where interval_ is a std::chrono::duration.
+    template <class Rep, class Period, class Unit = std::chrono::milliseconds>
+    Control number(const std::string& id, const std::string& label, std::chrono::duration<Rep, Period>& value,
+                   Unit = {}) {
+        return add(Kind::number, id, label, [&value] { return json(std::chrono::duration_cast<Unit>(value).count()); },
+                   [&value](const json& v) {
+            value = std::chrono::duration_cast<std::chrono::duration<Rep, Period>>(
+                Unit(static_cast<typename Unit::rep>(std::llround(v.get<double>()))));
+        });
     }
     Control number(const std::string& id, const std::string& label, std::function<double()> get,
                    std::function<void(double)> set);
@@ -193,11 +224,45 @@ public:
                    std::string& value);
     Control select(const std::string& id, const std::string& label, std::vector<std::string> options,
                    std::function<std::string()> get, std::function<void(const std::string&)> set);
+    /// A drop-down list bound to an enum: the names shown and the values they stand for.
+    template <class E, class = std::enable_if_t<std::is_enum_v<E>>>
+    Control select(const std::string& id, const std::string& label, std::vector<std::pair<std::string, E>> choices,
+                   E& value) {
+        std::vector<std::string> names;
+        for (const auto& [n, e] : choices) names.push_back(n);
+        auto table = std::make_shared<std::vector<std::pair<std::string, E>>>(std::move(choices));
+        return select(id, label, std::move(names), [&value, table] {
+            for (const auto& [n, e] : *table) {
+                if (e == value) return n;
+            }
+            return table->empty() ? std::string() : table->front().first;
+        }, [&value, table](const std::string& name) {
+            for (const auto& [n, e] : *table) {
+                if (n == name) value = e;
+            }
+        });
+    }
 
     /// Read-only value bound to a variable (anything convertible to JSON).
+    /// The variable must outlive the dashboard: a temporary (the result of a
+    /// call) is refused at compile time; use the callable overload for it.
     template <class T, class = std::enable_if_t<!std::is_invocable_v<const T&>>>
     Control value(const std::string& id, const std::string& label, const T& ref) {
         return value(id, label, Getter([&ref] { return json(ref); }));
+    }
+    template <class T, class = std::enable_if_t<!std::is_invocable_v<const T&> && !std::is_lvalue_reference_v<T>>>
+    Control value(const std::string& id, const std::string& label, T&& temporary) = delete;
+    /// Read-only value of an atomic another thread updates (a counter, a flag).
+    template <class T>
+    Control value(const std::string& id, const std::string& label, const std::atomic<T>& ref) {
+        return value(id, label, [&ref] { return ref.load(std::memory_order_relaxed); });
+    }
+    /// A counter or gauge of the metrics registry: the panel shows what /metrics shows.
+    Control value(const std::string& id, const std::string& label, const metrics::Counter& c) {
+        return value(id, label, [&c] { return c.value(); });
+    }
+    Control value(const std::string& id, const std::string& label, const metrics::Gauge& g) {
+        return value(id, label, [&g] { return g.value(); });
     }
     /// Read-only value computed by `get` (its result is converted to JSON).
     template <class F, class = std::enable_if_t<std::is_invocable_v<const F&>>, class = void>
@@ -210,16 +275,17 @@ private:
     Group(Dashboard& owner, std::string title) : owner_(owner), title_(std::move(title)) {}
 
     template <class T>
+    static T from_double(double d) {
+        if constexpr (std::is_integral_v<T>) {
+            return static_cast<T>(std::llround(d));
+        } else {
+            return static_cast<T>(d);
+        }
+    }
+    template <class T>
     Control numeric(Kind kind, const std::string& id, const std::string& label, T& value) {
         return add(kind, id, label, [&value] { return json(value); },
-                   [&value](const json& v) {
-                       const double d = v.get<double>();
-                       if constexpr (std::is_integral_v<T>) {
-                           value = static_cast<T>(std::llround(d));
-                       } else {
-                           value = static_cast<T>(d);
-                       }
-                   });
+                   [&value](const json& v) { value = from_double<T>(v.get<double>()); });
     }
     Control add(Kind kind, const std::string& id, const std::string& label, Getter get, Setter set);
     Control value_getter(const std::string& id, const std::string& label, Getter get);
@@ -298,3 +364,9 @@ private:
 };
 
 }  // namespace forge::web
+
+namespace forge {
+/// The control registry an application declares in setup_controls(): every
+/// channel (the panel, forgectl, the console, telnet, the links) uses it.
+using Controls = web::Dashboard;  // NOLINT: the same alias is in application.hpp
+}  // namespace forge

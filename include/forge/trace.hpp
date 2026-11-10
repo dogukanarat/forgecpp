@@ -25,10 +25,6 @@
 #include <string>
 #include <string_view>
 
-namespace forge::v1 {
-class TraceContext;
-}
-
 namespace forge::trace {
 
 struct Context {
@@ -46,9 +42,6 @@ void set_current(const Context& ctx);
 Context new_trace();
 /// A child of `parent` (same trace id, new span id); new trace if parent is invalid.
 Context child_of(const Context& parent);
-
-v1::TraceContext to_proto(const Context& ctx);
-Context from_proto(const v1::TraceContext& ctx);
 
 /// RAII: makes `ctx` the thread's context for the scope.
 class ContextScope {

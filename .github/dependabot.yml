@@ -1,0 +1,24 @@
+# Pull requests for new versions of the GitHub Actions and of the bundled
+# libraries (third_party/, git submodules). A submodule update is a pull
+# request with the new commit; check the library's release notes and run
+# tools/check.sh before merging. protobuf, libzmq and libiio stay on the
+# versions install.sh and Yocto expect: update them by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: third_party/protobuf
+      - dependency-name: third_party/libzmq
+      - dependency-name: third_party/libiio

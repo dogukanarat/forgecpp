@@ -1,0 +1,9 @@
+# Formatting-only commits: git blame skips them.
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub's blame view reads this file by itself.)
+
+# Format the code with .clang-format
+a0f0d8b46bb90cce277f9bc1ccc33714931680b6
+
+# Format: indent lambda bodies from the statement
+ee39f80fe6e5f2f798b7659eadb8af6f6bd8a402

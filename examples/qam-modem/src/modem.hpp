@@ -21,12 +21,12 @@
 #include <forge/forge.hpp>
 #include <forge/zmq.hpp>
 
+#include <netinet/in.h>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <memory>
 #include <mutex>
-#include <netinet/in.h>
 #include <string>
 #include <thread>
 #include <vector>
@@ -42,7 +42,7 @@ public:
 
 protected:
     void setup_config(forge::config::Schema& s) override;
-    void setup_web(forge::web::Dashboard& ui) override;
+    void setup_controls(forge::Controls& ui) override;
     void setup_http(forge::http::Server& server) override;
     void on_start() override;
     void on_stop() override;
@@ -117,8 +117,8 @@ private:
 
     // statistics (threads write atomics, the main loop reads)
     Counter udp_in_, tx_sent_, rx_ok_, udp_out_, test_ok_;
-    std::atomic<std::uint64_t> queue_dropped_{0}, oversize_{0}, rx_gaps_{0}, tx_busy_{0}, test_lost_{0},
-        test_bad_{0}, rx_blocks_{0}, tx_blocks_{0};
+    std::atomic<std::uint64_t> queue_dropped_{0}, oversize_{0}, rx_gaps_{0}, tx_busy_{0}, test_lost_{0}, test_bad_{0},
+        rx_blocks_{0}, tx_blocks_{0};
     std::atomic<std::int64_t> last_rx_buffer_{-1};
     std::atomic<std::uint64_t> rx_late_{0};
     std::uint64_t last_rx_late_ = 0;  // main loop

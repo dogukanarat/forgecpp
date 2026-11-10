@@ -7,16 +7,11 @@
 #include "forge/version.hpp"
 #include "forge/web.hpp"
 
-#include <filesystem>
 #include <unistd.h>
+#include <cstring>
+#include <filesystem>
 
 namespace forge::detail {
-
-std::string host_name() {
-    char buf[256] = {};
-    if (::gethostname(buf, sizeof(buf) - 1) != 0) return {};
-    return buf;
-}
 
 bool is_loopback(const std::string& host) { return host == "127.0.0.1" || host == "localhost" || host == "::1"; }
 
@@ -59,13 +54,32 @@ void StateStore::restore(web::Dashboard& dashboard, const std::string& file, con
     }
 }
 
-void StateStore::save(web::Dashboard& dashboard, const Logger& logger, bool force) {
-    const bool dirty = dirty_.exchange(false);
-    if (file_.empty() || !(dirty || force)) return;
+void StateStore::save(web::Dashboard& dashboard, const Logger& logger, bool force, ThreadPool* pool) {
+    if (file_.empty() || !(dirty_.load() || force)) return;
+    if (pool && writing_.load()) return;  // the last write is still on its way; dirty_ stays set
+    dirty_ = false;
     json j = json::object();
     for (const auto& id : dashboard.persistent_ids()) j[id] = dashboard.get(id);
+    const auto generation = ++generation_;
+    if (!pool) {
+        write(generation, j, logger);
+        return;
+    }
+    writing_ = true;
+    pool->detach_task([this, generation, j = std::move(j), logger] {
+        write(generation, j, logger);
+        writing_ = false;
+    });
+}
+
+void StateStore::write(std::uint64_t generation, const json& values, const Logger& logger) {
+    // The forced save at shutdown may meet a write of the pool: one at a time,
+    // and an older snapshot never replaces a newer one.
+    std::lock_guard lock(write_mutex_);
+    if (generation <= written_) return;
+    written_ = generation;
     try {
-        save_json(file_, j);
+        save_json(file_, values);
     } catch (const std::exception& e) {
         logger->warn("state: cannot save {}: {}", file_, e.what());
     }
@@ -78,8 +92,8 @@ bool Watchdog::tick(Health& health, double grace_s, const Logger& logger) {
     if (grace_s > 0) {
         if (auto failed = health.critical_failed_for(); failed && *failed > grace_s) {
             if (!paused_) {
-                logger->critical("a critical component failed {:.0f} s ago: stopping watchdog pings (systemd restarts us)",
-                                 *failed);
+                logger->critical(
+                    "a critical component failed {:.0f} s ago: stopping watchdog pings (systemd restarts us)", *failed);
             }
             paused_ = true;
             return false;
@@ -100,28 +114,32 @@ void HubRegistration::start(const Config& cfg) {
     client_ = std::make_unique<hub::Client>(endpoint, retry, [this] {
         const auto c = app_.config();
         const auto& info = app_.info();
-        v1::AppRegistration r;
-        r.set_name(app_.id());
-        r.set_instance(app_.instance());
-        r.set_version(info.version);
-        r.set_description(info.description);
-        r.set_pid(static_cast<std::uint32_t>(::getpid()));
+        forge_hub_app_registration r{};
+        const auto put = [](auto& dst, std::string_view src) { pb::assign_truncated(dst, src); };
+        put(r.name, app_.id());
+        put(r.instance, app_.instance());
+        put(r.version, info.version);
+        put(r.description, info.description);
+        r.pid = static_cast<std::uint32_t>(::getpid());
         auto* http = app_.http();
-        r.set_http_port(http ? static_cast<std::uint32_t>(std::max(http->port(), 0)) : 0);
+        r.http_port = http ? static_cast<std::uint32_t>(std::max(http->port(), 0)) : 0;
         for (const auto& [k, v] : app_.endpoints()) {
-            if (k != "http") (*r.mutable_endpoints())[k] = v;
+            if (k == "http" || r.endpoints_count == std::size(r.endpoints)) continue;
+            auto& e = r.endpoints[r.endpoints_count++];
+            put(e.name, k);
+            put(e.url, v);
         }
-        r.set_critical(c.value<bool>("hub.critical"));
-        r.set_group(c.value<std::string>("hub.group"));
-        r.set_title(c.value<std::string>("hub.title"));
-        r.set_unit(hub::unit_of(::getpid()));
-        r.set_forgecpp(version_string);
+        r.critical = c.value<bool>("hub.critical");
+        put(r.group, c.value<std::string>("hub.group"));
+        put(r.title, c.value<std::string>("hub.title"));
+        put(r.unit, hub::unit_of(::getpid()));
+        put(r.forgecpp, version_string);
         return r;
     });
     client_->start();
 }
 
-void HubRegistration::stop(v1::Unregister::Reason reason, int exit_code) {
+void HubRegistration::stop(forge_hub_unregister_reason reason, int exit_code) {
     if (client_) client_->stop(reason, exit_code);
 }
 

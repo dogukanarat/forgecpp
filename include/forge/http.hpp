@@ -36,7 +36,7 @@
 
 namespace forge {
 using json = nlohmann::json;
-}
+}  // namespace forge
 
 namespace forge::http {
 

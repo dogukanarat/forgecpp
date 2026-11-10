@@ -8,13 +8,14 @@
 
 #include <cctype>
 #include <cerrno>
+#include <charconv>
 #include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <vector>
 #include <thread>
+#include <vector>
 
 namespace forgehub {
 namespace {
@@ -30,7 +31,6 @@ std::optional<std::string> read_file(const std::string& path) {
     return ss.str();
 }
 
-
 /// Fields of /proc/<pid>/stat after the command name (field 3 = state is [0]).
 std::vector<std::string> stat_fields(int pid) {
     const auto s = read_file(proc_path(pid, "stat"));
@@ -43,18 +43,19 @@ std::vector<std::string> stat_fields(int pid) {
     return f;
 }
 
+// A decimal number; 0 when the text is not one.
+std::uint64_t number(const std::string& s) {
+    std::uint64_t v = 0;
+    const auto [end, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
+    return ec == std::errc() && end == s.data() + s.size() ? v : 0;
+}
 
 }  // namespace
 
 std::uint64_t start_ticks(int pid) {
     const auto f = stat_fields(pid);
     // field 22 (starttime) -> index 19 after the state at index 0 (field 3)
-    if (f.size() < 20) return 0;
-    try {
-        return std::stoull(f[19]);
-    } catch (...) {
-        return 0;
-    }
+    return f.size() < 20 ? 0 : number(f[19]);
 }
 
 bool alive(int pid, std::uint64_t ticks) {
@@ -62,29 +63,19 @@ bool alive(int pid, std::uint64_t ticks) {
     const auto f = stat_fields(pid);
     if (f.size() < 20) return false;
     if (f[0] == "Z" || f[0] == "X") return false;  // zombie / dead
-    if (ticks == 0) return true;
-    try {
-        return std::stoull(f[19]) == ticks;
-    } catch (...) {
-        return false;
-    }
+    return ticks == 0 || number(f[19]) == ticks;
 }
 
 std::optional<Usage> usage(int pid) {
     const auto f = stat_fields(pid);
     if (f.size() < 22) return std::nullopt;
     Usage u;
-    try {
-        u.cpu_ticks = std::stoull(f[11]) + std::stoull(f[12]);  // utime (14), stime (15)
-        const auto statm = read_file(proc_path(pid, "statm"));
-        if (statm) {
-            std::istringstream in(*statm);
-            std::uint64_t size = 0, resident = 0;
-            in >> size >> resident;
-            u.rss_bytes = resident * static_cast<std::uint64_t>(::sysconf(_SC_PAGESIZE));
-        }
-    } catch (...) {
-        return std::nullopt;
+    u.cpu_ticks = number(f[11]) + number(f[12]);  // utime (14), stime (15)
+    if (const auto statm = read_file(proc_path(pid, "statm"))) {
+        std::istringstream in(*statm);
+        std::uint64_t size = 0, resident = 0;
+        in >> size >> resident;
+        u.rss_bytes = resident * static_cast<std::uint64_t>(::sysconf(_SC_PAGESIZE));
     }
     return u;
 }
@@ -138,7 +129,8 @@ CommandResult run_command(const std::vector<std::string>& args, std::chrono::mil
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     char buf[1024];
     for (;;) {
-        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+        const auto left =
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
         if (left.count() <= 0) break;
         pollfd p{out[0], POLLIN, 0};
         if (::poll(&p, 1, static_cast<int>(left.count())) <= 0) break;
@@ -167,8 +159,8 @@ bool valid_unit_name(const std::string& unit) {
     if (unit.size() < 9 || unit.size() > 256 || unit[0] == '-') return false;
     if (unit.compare(unit.size() - 8, 8, ".service") != 0) return false;
     for (const char c : unit) {
-        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.' || c == '@' ||
-              c == ':' || c == '\\')) {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.' || c == '@' || c == ':' ||
+              c == '\\')) {
             return false;
         }
     }

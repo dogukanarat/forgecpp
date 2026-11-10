@@ -99,11 +99,13 @@ protected:
         cli.add_option("--producers", producer_count_, "Number of producer threads")->check(CLI::Range(1, 64));
     }
 
-    void setup_web(forge::web::Dashboard& ui) override {
+    void setup_controls(forge::Controls& ui) override {
         ui.title("Processing pipeline");
 
         auto& flow = ui.group("Throughput");
-        flow.value("produced_per_s", "Produced", [this] { return produced_rate_.per_second(); }).unit("jobs/s").precision(0);
+        flow.value("produced_per_s", "Produced", [this] { return produced_rate_.per_second(); })
+            .unit("jobs/s")
+            .precision(0);
         flow.value("done_per_s", "Completed", [this] { return done_rate_.per_second(); }).unit("jobs/s").precision(0);
         flow.value("queue", "Queue depth", [this] { return input_.size_approx(); }).unit("jobs");
         flow.value("in_flight", "In flight", [this] { return in_flight_.load(); }).unit("jobs");
@@ -134,19 +136,18 @@ protected:
             .range(100, 1000000, 100)
             .unit("jobs");
         work.button("reset", "Reset counters", [this] {
-                completed_ = failed_ = 0;
-                latency_avg_ = latency_max_ = 0;
-            })
-            .confirm("Reset all counters?");
+            completed_ = failed_ = 0;
+            latency_avg_ = latency_max_ = 0;
+        }).confirm("Reset all counters?");
     }
 
     void setup_console(forge::Console& console) override {
         console.add("burst", "burst [n]  enqueue n jobs at once (default 10000)",
                     [this, &console](const forge::Console::Args& a) {
-                        const auto n = a.empty() ? 10000 : std::stoul(a[0]);
-                        burst(n);
-                        console.print("queued {} jobs", n);
-                    });
+            const auto n = a.empty() ? 10000 : std::stoul(a[0]);
+            burst(n);
+            console.print("queued {} jobs", n);
+        });
     }
 
     void on_start() override {
@@ -225,7 +226,7 @@ private:
                 const auto limit = queue_limit_.load();
                 if (depth > limit) {
                     alarms().raise("pipeline.backlog", forge::Severity::warning,
-                                   fmt::format("Job backlog {} exceeds {} - workers cannot keep up", depth, limit));
+                                   std::format("Job backlog {} exceeds {} - workers cannot keep up", depth, limit));
                 } else if (depth < limit / 2) {
                     alarms().clear("pipeline.backlog");
                 }
@@ -280,7 +281,7 @@ private:
             latency_max_ = window_max_;
             const double fail_pct = 100.0 * static_cast<double>(failed_window_) / static_cast<double>(done_window_);
             alarms().set("pipeline.failures", fail_pct > 10, forge::Severity::error,
-                         fmt::format("{:.1f} % of jobs failed in the last second", fail_pct));
+                         std::format("{:.1f} % of jobs failed in the last second", fail_pct));
         }
         done_window_ = failed_window_ = 0;
         latency_sum_ = window_max_ = 0;

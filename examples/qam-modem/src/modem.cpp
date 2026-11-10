@@ -1,6 +1,6 @@
 #include "modem.hpp"
 
-#include "radio/v1/radio.pb.h"
+#include "radio/radio.forge.hpp"
 
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -25,7 +25,8 @@ double round_to(double v, double step) { return std::round(v / step) * step; }
 /// "host:port" (host may be empty or "*" = any).
 sockaddr_in parse_address(const std::string& s, const char* what) {
     const auto colon = s.rfind(':');
-    if (colon == std::string::npos) throw forge::ConfigError(std::string(what) + ": expected host:port, got '" + s + "'");
+    if (colon == std::string::npos)
+        throw forge::ConfigError(std::string(what) + ": expected host:port, got '" + s + "'");
     std::string host = s.substr(0, colon);
     const int port = std::stoi(s.substr(colon + 1));
     if (port < 0 || port > 65535) throw forge::ConfigError(std::string(what) + ": bad port in '" + s + "'");
@@ -55,7 +56,8 @@ void make_test_packet(std::vector<std::uint8_t>& p, std::uint32_t n, std::size_t
 
 }  // namespace
 
-QamModem::QamModem() : Application({"qam-modem", QAM_VERSION, "16QAM packet modem over an AD936x (radio-controller)"}) {}
+QamModem::QamModem()
+    : Application({"qam-modem", QAM_VERSION, "16QAM packet modem over an AD936x (radio-controller)"}) {}
 
 // ---------------------------------------------------------------------------
 // Configuration and controls
@@ -65,7 +67,8 @@ void QamModem::setup_config(forge::config::Schema& s) {
     s.string("modem.radio_control", "tcp://127.0.0.1:5557", "radio-controller [forge].control");
     s.string("modem.radio_data", "tcp://127.0.0.1:5555", "radio-controller [forge].data (stream \"iq\")");
     s.string("modem.radio_tx", "tcp://127.0.0.1:5556", "radio-controller [zmq].tx");
-    s.integer("modem.rx_channel", 1, "RX channel the modem demodulates (one of radio-controller's rx_channels)").range(1, 2);
+    s.integer("modem.rx_channel", 1, "RX channel the modem demodulates (one of radio-controller's rx_channels)")
+        .range(1, 2);
     s.boolean("modem.configure_radio", true, "Set radio-controller up at start (LO, rate, bandwidth, gains, TX on)");
     s.number("modem.lo_hz", 2.1e9, "RX and TX LO").range(70e6, 6e9).unit("Hz");
     s.number("modem.sample_rate_hz", 3e6, "Sample rate (symbol rate = rate / sps)").range(2.084e6, 61.44e6).unit("Hz");
@@ -82,7 +85,8 @@ void QamModem::setup_config(forge::config::Schema& s) {
     s.number("modem.rolloff", 0.35, "RRC roll-off").range(0.1, 1.0);
     s.number("modem.tx_level_dbfs", -12, "TX signal RMS").range(-40, -6).unit("dBFS");
     s.number("modem.detect_threshold", 0.6, "Preamble detector threshold (Schmidl & Cox metric)").range(0.2, 0.95);
-    s.boolean("modem.equalizer", true, "Decision feedback equalizer for echoes (off: less CPU, gain and phase tracking only)");
+    s.boolean("modem.equalizer", true,
+              "Decision feedback equalizer for echoes (off: less CPU, gain and phase tracking only)");
     s.integer("modem.eq_ff", 8, "Equalizer feed-forward taps (half-symbol spaced)").range(1, 32);
     s.integer("modem.eq_lead", 3, "... of them ahead of the symbol").range(0, 31);
     s.integer("modem.eq_fb", 3, "Equalizer feedback taps (symbols): echoes up to about eq_fb symbols").range(0, 16);
@@ -99,7 +103,7 @@ void QamModem::setup_config(forge::config::Schema& s) {
     s.integer("modem.test_size", 1400, "Test packet size").range(8, 4000).unit("bytes");
 }
 
-void QamModem::setup_web(forge::web::Dashboard& ui) {
+void QamModem::setup_controls(forge::Controls& ui) {
     auto& link = ui.group("Link");
     link.value("radio", "Radio", [this] { return radio_status_; });
     link.toggle("tx_enabled", "Transmit", [this] { return tx_enabled_.load(); }, [this](bool on) { tx_enabled_ = on; });
@@ -112,11 +116,12 @@ void QamModem::setup_web(forge::web::Dashboard& ui) {
         .range(-40, -6, 0.5)
         .unit("dBFS");
     link.value("symbol_rate", "Symbol rate", [this] { return params_.symbol_rate() / 1e3; }).unit("ksym/s");
-    link.value("bandwidth", "Occupied bandwidth", [this] { return round_to(params_.occupied_bandwidth() / 1e3, 0.1); })
-        .unit("kHz");
+    link.value("bandwidth", "Occupied bandwidth", [this] {
+        return round_to(params_.occupied_bandwidth() / 1e3, 0.1);
+    }).unit("kHz");
     link.value("raw_rate", "16QAM bit rate", [this] { return params_.symbol_rate() * 4 / 1e3; }).unit("kbit/s");
     link.value("equalizer", "Equalizer", [this] {
-        return params_.equalizer ? fmt::format("DFE {} + {} taps", params_.eq_ff, params_.eq_fb) : std::string("off");
+        return params_.equalizer ? std::format("DFE {} + {} taps", params_.eq_ff, params_.eq_fb) : std::string("off");
     });
     link.button("configure_radio", "Configure radio", [this] { configure_radio(); });
     link.button("reset_stats", "Reset statistics", [this] { reset_stats(); });
@@ -234,17 +239,18 @@ void QamModem::on_start() {
     tx_out_ = std::make_unique<forge::zmq::Sender>(forge::zmq::Sender::Kind::push, radio_tx_, false, so);
     forge::zmq::Receiver::Options ro;
     ro.topics = {"iq"};
-    rx_in_ = std::make_unique<forge::zmq::Receiver>(
-        forge::zmq::Receiver::Kind::sub, radio_data_, [this](forge::zmq::Message&& m) { on_iq(std::move(m)); }, ro);
+    rx_in_ = std::make_unique<forge::zmq::Receiver>(forge::zmq::Receiver::Kind::sub, radio_data_,
+                                                    [this](forge::zmq::Message&& m) { on_iq(std::move(m)); }, ro);
 
     credit_ = static_cast<std::int64_t>(lead_samples_);
     running_ = true;
     udp_thread_ = std::thread([this] { udp_loop(); });
     tx_thread_ = std::thread([this] { tx_loop(); });
 
-    logger()->info("modem: {:.0f} ksym/s 16QAM ({:.2f} Mbit/s raw, {:.0f} kHz wide), UDP on port {}, radio {} / {} / {}",
-                   params_.symbol_rate() / 1e3, params_.symbol_rate() * 4 / 1e6, params_.occupied_bandwidth() / 1e3,
-                   udp_port_, radio_control_, radio_data_, radio_tx_);
+    logger()->info(
+        "modem: {:.0f} ksym/s 16QAM ({:.2f} Mbit/s raw, {:.0f} kHz wide), UDP on port {}, radio {} / {} / {}",
+        params_.symbol_rate() / 1e3, params_.symbol_rate() * 4 / 1e6, params_.occupied_bandwidth() / 1e3, udp_port_,
+        radio_control_, radio_data_, radio_tx_);
     if (cfg.value<bool>("modem.configure_radio")) {
         configure_radio();
     } else {
@@ -266,7 +272,7 @@ void QamModem::on_stop() {
 }
 
 // ---------------------------------------------------------------------------
-// Radio set-up: forge.v1 requests to radio-controller, off the main loop
+// Radio set-up: commands to radio-controller (forge::Remote), off the main loop
 
 void QamModem::configure_radio() {
     if (configuring_) return;
@@ -282,47 +288,44 @@ void QamModem::configure_radio() {
     const auto max_age = cfg.value<int>("modem.radio_tx_max_age_ms");
     const std::string endpoint = radio_control_;
     const unsigned ch = rx_channel_;
-    background(
-        [=]() -> std::string {
+    background([=]() -> std::string {
+        try {
+            forge::Remote c(endpoint, 3s);
+            c.set("rx_lo_mhz", lo_mhz);
+            c.set("tx_lo_mhz", lo_mhz);
+            c.set("sample_rate_msps", rate_msps);
+            c.set("rx_bw_mhz", bw_mhz);
+            c.set("tx_bw_mhz", bw_mhz);
+            c.set(ch == 1 ? "gain_mode" : "rx2_gain_mode", "manual");
+            c.set(ch == 1 ? "rx_gain_db" : "rx2_gain_db", gain);
+            c.set("tx_atten_db", atten);
+            if (c.get("buffer_size").get<double>() != static_cast<double>(buffer)) c.set("buffer_size", buffer);
             try {
-                forge::zmq::Client c(endpoint, 3s);
-                c.set_client("qam-modem");
-                c.set("rx_lo_mhz", lo_mhz);
-                c.set("tx_lo_mhz", lo_mhz);
-                c.set("sample_rate_msps", rate_msps);
-                c.set("rx_bw_mhz", bw_mhz);
-                c.set("tx_bw_mhz", bw_mhz);
-                c.set(ch == 1 ? "gain_mode" : "rx2_gain_mode", "manual");
-                c.set(ch == 1 ? "rx_gain_db" : "rx2_gain_db", gain);
-                c.set("tx_atten_db", atten);
-                if (c.get("buffer_size").get<double>() != static_cast<double>(buffer)) c.set("buffer_size", buffer);
-                try {
-                    c.set("tx_max_age_ms", max_age);
-                } catch (const forge::zmq::Error&) {  // an older radio-controller without it: not fatal
-                }
-                c.set("rx_enabled", true);
-                c.set("tx_enabled", true);
-                return {};
-            } catch (const std::exception& e) {
-                return e.what();
+                c.set("tx_max_age_ms", max_age);
+            } catch (const forge::zmq::Error&) {  // an older radio-controller without it: not fatal
             }
-        },
-        [this, lo_mhz, rate_msps](std::string error) {
-            configuring_ = false;
-            radio_ok_ = error.empty();
-            if (radio_ok_) {
-                radio_status_ = fmt::format("{:.3f} MHz, {:.3f} MSPS", lo_mhz, rate_msps);
-                alarms().clear(kRadioAlarm);
-                logger()->info("modem: radio-controller set up ({})", radio_status_);
-            } else {
-                radio_status_ = "error: " + error;
-                alarms().raise(kRadioAlarm, forge::Severity::error, "radio-controller set-up failed: " + error);
-                logger()->warn("modem: radio-controller set-up failed: {} (retrying in 5 s)", error);
-                after(5s, [this] {
-                    if (!radio_ok_) configure_radio();
-                });
-            }
-        });
+            c.set("rx_enabled", true);
+            c.set("tx_enabled", true);
+            return {};
+        } catch (const std::exception& e) {
+            return e.what();
+        }
+    }, [this, lo_mhz, rate_msps](std::string error) {
+        configuring_ = false;
+        radio_ok_ = error.empty();
+        if (radio_ok_) {
+            radio_status_ = std::format("{:.3f} MHz, {:.3f} MSPS", lo_mhz, rate_msps);
+            alarms().clear(kRadioAlarm);
+            logger()->info("modem: radio-controller set up ({})", radio_status_);
+        } else {
+            radio_status_ = "error: " + error;
+            alarms().raise(kRadioAlarm, forge::Severity::error, "radio-controller set-up failed: " + error);
+            logger()->warn("modem: radio-controller set-up failed: {} (retrying in 5 s)", error);
+            after(5s, [this] {
+                if (!radio_ok_) configure_radio();
+            });
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -341,13 +344,13 @@ void QamModem::tick() {
     }
     const auto late = rx_late_.load();
     alarms().set("modem.rx_late", late != last_rx_late_, forge::Severity::warning,
-                 fmt::format("the receiver is behind real time and skips RX buffers ({} so far): too little CPU "
+                 std::format("the receiver is behind real time and skips RX buffers ({} so far): too little CPU "
                              "(equalizer = false saves some)",
                              late));
     last_rx_late_ = late;
     const bool rx_missing = now - last_rx > 2s;
     alarms().set(kNoRxAlarm, rx_missing && radio_ok_, forge::Severity::warning,
-                 fmt::format("no RX{} samples at {} MSPS from radio-controller ({}): is it streaming, is RX{} in its "
+                 std::format("no RX{} samples at {} MSPS from radio-controller ({}): is it streaming, is RX{} in its "
                              "rx_channels?",
                              rx_channel_, params_.sample_rate / 1e6, radio_data_, rx_channel_));
 }
@@ -417,7 +420,7 @@ void QamModem::add_credit(std::size_t samples) {
     {
         std::lock_guard lock(credit_mutex_);
         credit_ = std::min<std::int64_t>(credit_ + static_cast<std::int64_t>(samples),
-                                          static_cast<std::int64_t>(lead_samples_));
+                                         static_cast<std::int64_t>(lead_samples_));
         last_rx_block_ = std::chrono::steady_clock::now();
     }
     credit_cv_.notify_one();
@@ -426,8 +429,8 @@ void QamModem::add_credit(std::size_t samples) {
 void QamModem::tx_loop() {
     configure_thread("tx");
     std::vector<std::int16_t> block(2 * block_samples_);
-    radio::v1::TxBlock header;
-    header.set_format("cs16");
+    radio_tx_block header{};
+    std::strcpy(header.format, "cs16");
     const auto n = static_cast<std::int64_t>(block_samples_);
     auto wall = std::chrono::steady_clock::now();
     double level = tx_level_dbfs_;
@@ -474,25 +477,28 @@ void QamModem::tx_loop() {
 // RX (the Receiver thread): radio-controller -> demodulator -> Ethernet
 
 void QamModem::on_iq(forge::zmq::Message&& m) {
-    radio::v1::IqBlock b;
+    radio_iq_block b{};
     try {
-        b = m.as<radio::v1::IqBlock>();
+        b = m.as<radio_iq_block>();
     } catch (const forge::zmq::Error&) {
         return;
     }
-    if (b.channel() != rx_channel_ || b.format() != "cs16" || m.blob.size() != std::size_t(b.samples()) * 4) return;
-    rx_rate_hz_ = b.sample_rate();
-    if (std::abs(b.sample_rate() - params_.sample_rate) > 1) return;  // not set up yet (or by someone else)
+    if (b.channel != rx_channel_ || std::string_view(b.format) != "cs16" ||
+        m.blob.size() != std::size_t(b.samples) * 4) {
+        return;
+    }
+    rx_rate_hz_ = b.sample_rate;
+    if (std::abs(b.sample_rate - params_.sample_rate) > 1) return;  // not set up yet (or by someone else)
     ++rx_blocks_;
-    add_credit(b.samples());  // the samples happened, decoded or not: TX keeps its pace
-    const auto last = last_rx_buffer_.exchange(static_cast<std::int64_t>(b.buffer()));
-    bool gap = last >= 0 && b.buffer() != static_cast<std::uint64_t>(last) + 1;  // samples lost
+    add_credit(b.samples);  // the samples happened, decoded or not: TX keeps its pace
+    const auto last = last_rx_buffer_.exchange(static_cast<std::int64_t>(b.buffer));
+    bool gap = last >= 0 && b.buffer != static_cast<std::uint64_t>(last) + 1;  // samples lost
     // Behind real time (a slow CPU, a busy board): skip old blocks rather than let
     // the queue and the latency grow; the demodulator starts again with fresh ones.
-    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                            std::chrono::system_clock::now().time_since_epoch())
-                            .count();
-    if (m.header.time_unix_ns() > 0 && now_ns - m.header.time_unix_ns() > max_lag_ns_) {
+    const auto now_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count();
+    if (m.header.time_unix_ns > 0 && now_ns - m.header.time_unix_ns > max_lag_ns_) {
         ++rx_late_;
         skipping_ = true;
         return;
@@ -502,7 +508,7 @@ void QamModem::on_iq(forge::zmq::Message&& m) {
         skipping_ = false;
         demod_->reset();  // a packet across the gap cannot be decoded
     }
-    demod_->push(reinterpret_cast<const std::int16_t*>(m.blob.data()), b.samples(),
+    demod_->push(reinterpret_cast<const std::int16_t*>(m.blob.data()), b.samples,
                  [this](qam::Packet&& p) { on_packet(std::move(p)); });
 }
 
@@ -522,7 +528,8 @@ void QamModem::on_packet(qam::Packet&& p) {
         }
         test_ok_.add(p.payload.size());
         const auto want = test_expect_.load();
-        if (want >= 0 && static_cast<std::int32_t>(n) > want) test_lost_ += static_cast<std::uint32_t>(n) - static_cast<std::uint32_t>(want);
+        if (want >= 0 && static_cast<std::int32_t>(n) > want)
+            test_lost_ += static_cast<std::uint32_t>(n) - static_cast<std::uint32_t>(want);
         test_expect_ = static_cast<std::int32_t>(n + 1);
         return;
     }
@@ -532,7 +539,8 @@ void QamModem::on_packet(qam::Packet&& p) {
         if (!have_peer_) return;
         to = peer_;
     }
-    if (::sendto(udp_fd_, p.payload.data(), p.payload.size(), 0, reinterpret_cast<const sockaddr*>(&to), sizeof to) >= 0) {
+    if (::sendto(udp_fd_, p.payload.data(), p.payload.size(), 0, reinterpret_cast<const sockaddr*>(&to), sizeof to) >=
+        0) {
         udp_out_.add(p.payload.size());
     }
 }

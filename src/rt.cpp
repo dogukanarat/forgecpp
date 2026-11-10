@@ -2,16 +2,16 @@
 
 #include "forge/config.hpp"
 
-#include <spdlog/fmt/fmt.h>
+#include <format>
 
-#include <cerrno>
-#include <cstring>
 #include <pthread.h>
 #include <sched.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <cerrno>
+#include <cstring>
 
 namespace forge::rt {
 namespace {
@@ -61,20 +61,20 @@ std::string apply(const ThreadSettings& s) {
             if (c >= 0 && c < CPU_SETSIZE) CPU_SET(c, &set);
         }
         if (int r = pthread_setaffinity_np(pthread_self(), sizeof(set), &set); r != 0) {
-            add(fmt::format("affinity: {}", std::strerror(r)));
+            add(std::format("affinity: {}", std::strerror(r)));
         }
     }
     const int policy = policy_of(s.policy);
     sched_param sp{};
     sp.sched_priority = (policy == SCHED_FIFO || policy == SCHED_RR) ? s.priority : 0;
     if (int r = pthread_setschedparam(pthread_self(), policy, &sp); r != 0) {
-        add(fmt::format("policy {} priority {}: {} (needs CAP_SYS_NICE or an rtprio limit)", s.policy, s.priority,
+        add(std::format("policy {} priority {}: {} (needs CAP_SYS_NICE or an rtprio limit)", s.policy, s.priority,
                         std::strerror(r)));
     }
     if (s.nice) {
         // nice is per thread on Linux (setpriority on the thread id).
         if (::setpriority(PRIO_PROCESS, static_cast<id_t>(::syscall(SYS_gettid)), *s.nice) != 0) {
-            add(fmt::format("nice {}: {}", *s.nice, std::strerror(errno)));
+            add(std::format("nice {}: {}", *s.nice, std::strerror(errno)));
         }
     }
     return errors;
@@ -82,7 +82,7 @@ std::string apply(const ThreadSettings& s) {
 
 std::string lock_memory() {
     if (::mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
-        return fmt::format("mlockall: {} (needs CAP_IPC_LOCK or a memlock limit; systemd: LimitMEMLOCK=infinity)",
+        return std::format("mlockall: {} (needs CAP_IPC_LOCK or a memlock limit; systemd: LimitMEMLOCK=infinity)",
                            std::strerror(errno));
     }
     return {};
@@ -100,7 +100,7 @@ std::string describe_current_thread() {
             if (CPU_ISSET(c, &set)) cpus += (cpus.empty() ? "" : ",") + std::to_string(c);
         }
     }
-    return fmt::format("policy {} priority {} cpus {}", policy_name(policy), sp.sched_priority, cpus);
+    return std::format("policy {} priority {} cpus {}", policy_name(policy), sp.sched_priority, cpus);
 }
 
 }  // namespace forge::rt

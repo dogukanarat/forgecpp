@@ -102,6 +102,26 @@ TEST_CASE("dashboard: bound controls, validation and changes") {
     CHECK(controls[6]["readonly"] == true);
 }
 
+TEST_CASE("dashboard: values from atomics and metrics") {
+    forge::web::Dashboard ui("Test");
+    std::atomic<std::uint64_t> frames{3};
+    std::atomic<bool> busy{true};
+    forge::metrics::Counter errors;
+    forge::metrics::Gauge level;
+    errors.inc(2);
+    level.set(-3.5);
+    auto& g = ui.group("Counters");
+    g.value("frames", "Frames", frames);
+    g.value("busy", "Busy", busy);
+    g.value("errors", "Errors", errors);
+    g.value("level", "Level", level).unit("dB");
+    frames = 4;
+    CHECK(ui.get("frames") == 4);
+    CHECK(ui.get("busy") == true);
+    CHECK(ui.get("errors") == 2);
+    CHECK(ui.get("level") == -3.5);
+}
+
 TEST_CASE("web: mime types and built-in assets") {
     CHECK(forge::web::mime_type("/a/index.html") == "text/html; charset=utf-8");
     CHECK(forge::web::mime_type("x.JS") == "text/javascript; charset=utf-8");
@@ -237,7 +257,7 @@ TEST_CASE("application: web dashboard API end to end") {
         int presses = 0;
 
     protected:
-        void setup_web(forge::web::Dashboard& ui) override {
+        void setup_controls(forge::Controls& ui) override {
             auto& g = ui.group("Main");
             g.slider("level", "Level", level, 0, 10);
             g.toggle("on", "On", on);
@@ -245,8 +265,8 @@ TEST_CASE("application: web dashboard API end to end") {
         }
     };
 
-    std::vector<std::string> args{"webapp", "--http", "127.0.0.1:0", "-D", "log.console=false",
-                                  "-D", "web.refresh_ms=50"};
+    std::vector<std::string> args{"webapp", "--http",           "127.0.0.1:0", "-D", "log.console=false",
+                                  "-D",     "web.refresh_ms=50"};
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
 

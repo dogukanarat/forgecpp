@@ -10,6 +10,9 @@
 #include <cstring>
 #include <thread>
 
+#include <sys/prctl.h>
+#include <unistd.h>
+
 using namespace std::chrono_literals;
 
 namespace {
@@ -34,7 +37,10 @@ protected:
     }
     void on_start() override {
         if (crash_ms_ > 0) after(std::chrono::milliseconds(crash_ms_), [] { ::kill(::getpid(), SIGKILL); });
-        if (hang_ms_ > 0) after(std::chrono::milliseconds(hang_ms_), [] { for (;;) std::this_thread::sleep_for(1h); });
+        if (hang_ms_ > 0)
+            after(std::chrono::milliseconds(hang_ms_), [] {
+                for (;;) std::this_thread::sleep_for(1h);
+            });
         if (exit_ms_ > 0) after(std::chrono::milliseconds(exit_ms_), [this] { stop(exit_code_); });
     }
 
@@ -45,6 +51,10 @@ private:
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Ends with the test that started it, even when that test crashed (no orphans
+    // keeping ctest waiting for their output).
+    ::prctl(PR_SET_PDEATHSIG, SIGKILL);
+    if (::getppid() == 1) return 1;
     TestApp app(name_from(argc, argv));
     return app.run(argc, argv);
 }

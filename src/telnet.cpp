@@ -1,39 +1,32 @@
 #include "forge/telnet.hpp"
+#include "common.hpp"
 
 #include "forge/console.hpp"
 #include "forge/log.hpp"
-#include "forge/v1/observability.pb.h"
 
-#include <spdlog/fmt/fmt.h>
+#include <format>
 
 #include <arpa/inet.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <ctime>
 #include <deque>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
 #include <stdexcept>
-#include <sys/socket.h>
-#include <unistd.h>
 
 namespace forge {
 namespace {
 
 constexpr unsigned char IAC = 255, DONT = 254, DO = 253, WONT = 252, WILL = 251, SB = 250, SE = 240, IP = 244,
-                        ECHO_OPT = 1, SGA = 3;
+                        ECHO_OPT = 1;
 
-std::string crlf(std::string_view text) {
-    std::string out;
-    out.reserve(text.size() + 16);
-    for (char c : text) {
-        if (c == '\n') out += '\r';
-        out += c;
-    }
-    return out;
-}
+using detail::crlf;
 
 }  // namespace
 
@@ -42,7 +35,8 @@ struct Telnet::Session {
     std::string peer;
     std::mutex write_mutex;
     std::atomic<bool> open{true};
-    int log_listener = -1;
+    Subscription log_listener;
+    std::atomic<bool> color{true};  // ANSI level colours in followed log lines (`color on|off`)
     std::thread thread;
     std::chrono::steady_clock::time_point last_input = std::chrono::steady_clock::now();
 
@@ -119,9 +113,7 @@ struct Telnet::Session {
                 case In::sub:
                     if (c == IAC) in = In::sub_iac;
                     break;
-                case In::sub_iac:
-                    in = c == SE ? In::data : In::sub;
-                    break;
+                case In::sub_iac: in = c == SE ? In::data : In::sub; break;
             }
         }
         return lines;
@@ -192,18 +184,22 @@ std::size_t Telnet::sessions() const {
 void Telnet::accept_loop() {
     while (running_) {
         pollfd p{listen_fd_, POLLIN, 0};
-        if (::poll(&p, 1, 200) <= 0) continue;
+        if (::poll(&p, 1, 1000) <= 0) continue;
         sockaddr_in peer{};
         socklen_t len = sizeof(peer);
         const int fd = ::accept4(listen_fd_, reinterpret_cast<sockaddr*>(&peer), &len, SOCK_CLOEXEC);
         if (fd < 0) continue;
         const int one = 1;
         ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+        // A client that stops reading is disconnected instead of blocking whoever
+        // writes to it (the logging thread when it follows the log).
+        const timeval send_timeout{5, 0};
+        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout));
         char ip[INET_ADDRSTRLEN] = {};
         ::inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
         auto s = std::make_shared<Session>();
         s->fd = fd;
-        s->peer = fmt::format("{}:{}", ip, ntohs(peer.sin_port));
+        s->peer = std::format("{}:{}", ip, ntohs(peer.sin_port));
 
         std::lock_guard lock(mutex_);
         // Forget closed sessions.
@@ -216,7 +212,7 @@ void Telnet::accept_loop() {
             }
         }
         if (sessions_.size() >= options_.max_sessions) {
-            s->print(fmt::format("too many sessions ({}), try again later\n", options_.max_sessions));
+            s->print(std::format("too many sessions ({}), try again later\n", options_.max_sessions));
             ::close(fd);
             continue;
         }
@@ -246,7 +242,7 @@ void Telnet::serve(std::shared_ptr<Session> s) {
                 return l;
             }
             pollfd p{s->fd, POLLIN, 0};
-            const int r = ::poll(&p, 1, 200);
+            const int r = ::poll(&p, 1, 1000);
             if (r == 0) {
                 if (options_.idle_s > 0 &&
                     std::chrono::steady_clock::now() - s->last_input > std::chrono::seconds(options_.idle_s)) {
@@ -294,9 +290,10 @@ void Telnet::serve(std::shared_ptr<Session> s) {
         }
     }
     if (ok) {
-        s->print(fmt::format("signed in as {} ({}) - 'help' for commands, 'logs on' to follow the log, 'exit' to "
-                             "leave\n",
-                             cs.user.empty() ? "anonymous" : cs.user, to_string(cs.role)));
+        s->print(
+            std::format("signed in as {} ({}) - 'help' for commands, 'logs on' to follow the log, 'exit' to "
+                        "leave\n",
+                        cs.user.empty() ? "anonymous" : cs.user, to_string(cs.role)));
         std::vector<std::string> history;
         while (s->open && running_) {
             s->print(options_.prompt);
@@ -312,30 +309,36 @@ void Telnet::serve(std::shared_ptr<Session> s) {
                 continue;
             }
             if (cmd == "history") {
-                for (std::size_t i = 0; i < history.size(); ++i) s->print(fmt::format("{:>4}  {}\n", i + 1, history[i]));
+                for (std::size_t i = 0; i < history.size(); ++i)
+                    s->print(std::format("{:>4}  {}\n", i + 1, history[i]));
+                continue;
+            }
+            if (cmd == "color") {
+                if (args.size() > 1) s->color = args[1] == "on";
+                s->print(std::format("colours {}\n", s->color ? "on" : "off"));
                 continue;
             }
             if (cmd == "whoami") {
-                s->print(fmt::format("{} ({}) from {}\n", cs.user.empty() ? "anonymous" : cs.user, to_string(cs.role),
+                s->print(std::format("{} ({}) from {}\n", cs.user.empty() ? "anonymous" : cs.user, to_string(cs.role),
                                      s->peer));
                 continue;
             }
             if (cmd == "logs") {
-                if (s->log_listener >= 0) {
-                    log::remove_listener(s->log_listener);
-                    s->log_listener = -1;
-                }
+                s->log_listener.reset();
                 if (args.size() > 1 && args[1] == "on") {
-                    const auto min = args.size() > 2 ? log::parse_level(args[2]) : spdlog::level::info;
-                    s->log_listener = log::add_listener([weak, min](const v1::LogRecord& r) {
+                    const auto min = args.size() > 2 ? log::parse_level(args[2]) : log::Level::info;
+                    s->log_listener = log::add_listener([weak, min](const log::Record& r) {
                         auto p = weak.lock();
                         if (!p) return;
-                        if (log::parse_level(r.level()) < min) return;
-                        const auto t = static_cast<std::time_t>(r.time_unix_ns() / 1000000000);
+                        const auto level = r.level;
+                        if (level < min) return;
+                        const auto t = static_cast<std::time_t>(r.time_unix_ns / 1000000000);
                         std::tm tm{};
                         ::localtime_r(&t, &tm);
-                        p->print(fmt::format("{:02}:{:02}:{:02} [{}] [{}] {}\n", tm.tm_hour, tm.tm_min, tm.tm_sec,
-                                             r.level(), r.logger(), r.message()));
+                        const bool c = p->color;
+                        p->print(std::format("{:02}:{:02}:{:02} [{}{}{}] [{}] {}\n", tm.tm_hour, tm.tm_min, tm.tm_sec,
+                                             c ? log::level_color(level) : "", log::short_name(level),
+                                             c ? "\033[0m" : "", r.logger, r.message));
                     });
                     s->print("following the log (logs off to stop)\n");
                 } else {
@@ -346,7 +349,7 @@ void Telnet::serve(std::shared_ptr<Session> s) {
             console_.execute(*line, cs);
         }
     }
-    if (s->log_listener >= 0) log::remove_listener(s->log_listener);
+    s->log_listener.reset();
     s->open = false;
     ::shutdown(s->fd, SHUT_RDWR);
     ::close(s->fd);

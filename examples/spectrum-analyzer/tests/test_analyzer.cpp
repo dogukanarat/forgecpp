@@ -5,7 +5,7 @@
 #include <forge/testing.hpp>
 #include <forge/zmq.hpp>
 
-#include "sa/v1/spectrum.pb.h"
+#include "sa/spectrum.forge.hpp"
 
 #include <atomic>
 #include <cmath>
@@ -155,16 +155,27 @@ TEST_CASE("sa app: controls over ZeroMQ, spectrum stream, persistence") {
     const auto state = (dir / "state.json").string();
     const auto empty = (dir / "empty.toml").string();
     { std::ofstream(empty) << "# no spectrum-analyzer.toml from the working directory\n"; }
-    std::vector<std::string> args{"spectrum-analyzer", "-c", empty,
-                                  "--backend", "sim",
-                                  "-D", "log.console=false",
-                                  "-D", "http.enabled=false",
-                                  "-D", "forge.data=tcp://127.0.0.1:*",
-                                  "-D", "forge.control=tcp://127.0.0.1:*",
-                                  "-D", "analyzer.center_hz=2425e6",
-                                  "-D", "analyzer.span_hz=40e6",
-                                  "-D", "analyzer.update_hz=30",
-                                  "-D", "analyzer.state_file=" + state};
+    std::vector<std::string> args{"spectrum-analyzer",
+                                  "-c",
+                                  empty,
+                                  "--backend",
+                                  "sim",
+                                  "-D",
+                                  "log.console=false",
+                                  "-D",
+                                  "http.enabled=false",
+                                  "-D",
+                                  "forge.data=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "forge.control=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "analyzer.center_hz=2425e6",
+                                  "-D",
+                                  "analyzer.span_hz=40e6",
+                                  "-D",
+                                  "analyzer.update_hz=30",
+                                  "-D",
+                                  "analyzer.state_file=" + state};
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
 
@@ -182,20 +193,23 @@ TEST_CASE("sa app: controls over ZeroMQ, spectrum stream, persistence") {
         std::lock_guard lock(m);
         frames.push_back(std::move(msg));
     }, opts);
-    REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return frames.size() >= 2; }, 10s));
+    REQUIRE(forge::testing::wait_until([&] {
+        std::lock_guard lock(m);
+        return frames.size() >= 2;
+    }, 10s));
     {
         std::lock_guard lock(m);
-        CHECK(frames.back().header.type() == "sa.v1.Spectrum");
-        CHECK(frames.back().header.source() == "spectrum-analyzer");
-        const auto sp = frames.back().as<sa::v1::Spectrum>();
-        CHECK(sp.points() == 1001);
-        CHECK(sp.levels_size() == 1001);
-        CHECK(sp.start_hz() == 2405e6);
-        CHECK(sp.unit() == "dBFS");
-        CHECK(sp.sweep_mode() == "realtime");
+        CHECK(forge::pb::view(frames.back().header.type) == "sa.spectrum");
+        CHECK(forge::pb::view(frames.back().header.source) == "spectrum-analyzer");
+        const auto sp = frames.back().as<sa_spectrum>();
+        CHECK(sp.points == 1001);
+        CHECK(frames.back().blob.size() == 1001 * sizeof(float));  // the levels
+        CHECK(sp.start_hz == 2405e6);
+        CHECK(forge::pb::view(sp.unit) == "dBFS");
+        CHECK(forge::pb::view(sp.sweep_mode) == "realtime");
     }
 
-    fz::Client ctl(app.control_endpoint(), 5s);
+    forge::Remote ctl(app.control_endpoint(), 5s);
     CHECK(forge::testing::wait_until([&] { return ctl.get("connected") == true; }));
     CHECK(ctl.get("start_mhz") == 2405.0);
 
@@ -217,9 +231,16 @@ TEST_CASE("sa app: controls over ZeroMQ, spectrum stream, persistence") {
     ctl.set("stop_mhz", 2450);
     CHECK(ctl.get("center_mhz") == 2425.0);
     CHECK(ctl.get("span_mhz") == 50.0);
-    auto status_of = [&](const json& req) { return ctl.request_json(req).value("status", 0); };
-    CHECK(status_of({{"cmd", "set"}, {"id", "stop_mhz"}, {"value", 2300}}) == 400);  // below start
-    CHECK(status_of({{"cmd", "set"}, {"id", "window"}, {"value", "triangle"}}) == 400);
+    auto status_of = [&](const std::string& id, const json& value) {
+        try {
+            ctl.set(id, value);
+            return 200;
+        } catch (const forge::Error& e) {
+            return e.status();
+        }
+    };
+    CHECK(status_of("stop_mhz", 2300) == 400);  // below start
+    CHECK(status_of("window", "triangle") == 400);
     ctl.set("preset", "ism_433");
     CHECK(ctl.get("center_mhz") == 433.92);
     CHECK(ctl.get("preset") == "ism_433");
@@ -232,22 +253,14 @@ TEST_CASE("sa app: controls over ZeroMQ, spectrum stream, persistence") {
 
     // Manual gain is required to set the gain.
     ctl.set("gain_mode", "slow_attack");
-    CHECK(status_of({{"cmd", "set"}, {"id", "rx_gain_db"}, {"value", 20}}) == 409);
+    CHECK(status_of("rx_gain_db", 20) == 409);
     ctl.set("gain_mode", "manual");
     CHECK(ctl.set("rx_gain_db", 20) == 20);
 
     // Limit line below the 433.92 MHz carrier raises an alarm.
     ctl.set("limit_level", -100);
     ctl.set("limit_on", true);
-    json alarms;
-    const bool limit_raised = forge::testing::wait_until([&] {
-        alarms = ctl.request_json({{"cmd", "alarms"}})["alarms"];
-        for (const auto& a : alarms) {
-            if (a["id"] == "analyzer.limit" && a["active"] == true) return true;
-        }
-        return false;
-    });
-    CAPTURE(alarms.dump());
+    const bool limit_raised = forge::testing::wait_until([&] { return app.alarms().active("analyzer.limit"); });
     CAPTURE(app.latest() ? app.latest()->seq : 0);
     CHECK(limit_raised);
     ctl.set("limit_on", false);

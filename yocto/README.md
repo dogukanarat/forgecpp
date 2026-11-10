@@ -1,63 +1,127 @@
 # forgecpp for Yocto / OpenEmbedded
 
-`recipes-support/forgecpp/forgecpp_git.bb` builds forgecpp and all bundled
-libraries with the Yocto toolchain via `install.sh`.
+This directory is a layer (`meta-forgecpp`, `conf/layer.conf`) for a BSP:
+forgecpp, forge-hub, the developer tools, the example applications, and
+**every library forgecpp uses**. It needs nothing but poky (oe-core): add this
+one layer, and an application layer on top of it.
 
-This directory is a layer (`meta-forgecpp`, `conf/layer.conf`; needs meta-oe
-and meta-python): add it to `bblayers.conf`, or copy the recipes into one of
-your layers as below.
+Where each library comes from:
+
+| Library | Recipe |
+|---|---|
+| SQLite, LZ4, OpenSSL, zlib, libxml2 | oe-core (`sqlite3`, `lz4`, ...): every build has it |
+| quill, cpp-httplib, concurrentqueue, tomlplusplus, doctest | this layer, always (no other layer has them) |
+| zeromq, cppzmq, nlohmann-json, cli11, libiio, protobuf, python3-protobuf | meta-oe / meta-python when the build has them; otherwise this layer's `backfill/` recipes |
+
+The backfill recipes are at the versions of forgecpp's submodules and are
+used only when meta-oe (or meta-python) is **not** in the build
+(`BBFILES_DYNAMIC` with `!`, bitbake 2.8 / scarthgap): a BSP that already has
+meta-oe keeps its versions, nothing is built twice and no other package of
+the image changes. forgecpp builds with either (meta-oe scarthgap has CLI11
+2.3.2 and nlohmann-json 3.11.3: both checked). Every library is a shared
+library in its own package, with its own license and CVE record, shared by
+every program on the device. `python3-pyzmq` (the ZeroMQ client of
+`python3-forge`, the example clients) is only in meta-python: it is
+recommended when that layer is in the build; the serial and CAN clients work
+without it.
+
+```
+bblayers.conf:  BBLAYERS += "/path/to/forgecpp/yocto"
+local.conf:     IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub"
+```
+
+## The recipes
+
+| Recipe | Packages | What |
+|---|---|---|
+| `recipes-support/forgecpp/forgecpp_git.bb` | `forgecpp`, `forgecpp-dev`, `forgecpp-forgectl`, `forgecpp-hub`, `forgecpp-sqlite`, `forgecpp-lz4`, `python3-forge`, `forgecpp-ptest` | libforgecpp (nanopb and linenoise compiled in), forgectl, forge-hub (PACKAGECONFIG `hub`, on by default), forgecpp::sqlite and forgecpp::lz4 (PACKAGECONFIG `sqlite`, `lz4`, on by default), the Python package, the test programs (PACKAGECONFIG `ptest`) |
+| `recipes-devtools/forgecpp-tools/forgecpp-tools_git.bb` | `forgecpp-tools`, `nativesdk-forgecpp-tools` | `forgecpp-new`, `forge-proto.py` and nanopb's generator: for the SDK (an application with its own `.proto` files) and, if wanted, the target |
+| `recipes-support/quill`, `cpp-httplib`, `concurrentqueue`, `tomlplusplus`; `recipes-test/doctest` | the libraries no other layer has | the versions forgecpp is built and tested with (its submodules) |
+| `backfill/meta-oe/*`, `backfill/meta-python/*` | `zeromq`, `cppzmq`, `nlohmann-json`, `cli11`, `libiio`, `protobuf`, `python3-protobuf` | only when meta-oe / meta-python are not in the build |
+| `recipes-connectivity/*` | `radio-controller`, `spectrum-analyzer`, `qam-modem` (each + `-clients`), `channel-emulator` | the example applications, from `recipes-connectivity/forgecpp-app.inc` |
+
+The source and the commit are in one place, `recipes-support/forgecpp/forgecpp-src.inc`:
+`tools/release.sh` writes the release's commit into `FORGECPP_SRCREV`, so a
+released layer builds exactly that commit. Between releases it is
+`${AUTOREV}` (the head of `FORGECPP_BRANCH`); pin it in local.conf for a
+reproducible build of a development commit, or build a checkout with
+`externalsrc`, as `kas/qemuarm64.yml` does.
+
+`LAYERSERIES_COMPAT` is scarthgap, the release the kas file builds. The
+recipes take the unpack directory from `FORGECPP_UNPACKDIR` (`conf/layer.conf`:
+`${WORKDIR}` on scarthgap, `${UNPACKDIR}` from styhead on), so they are
+written for styhead and walnascar too; add a series to `LAYERSERIES_COMPAT`
+once a build of it has passed. The recipes parse and their dependency graph
+resolves on scarthgap (with and without meta-oe / meta-python); they have
+not been through a full bitbake build or `yocto-check-layer` yet.
 
 ## Try it in QEMU (kas)
 
-`kas/qemuarm64.yml` builds a qemuarm64 image (systemd) with forgecpp, forge-hub,
-radio-controller on its simulator, spectrum-analyzer, qam-modem and channel-emulator, from this checkout:
+`kas/qemuarm64-poky.yml` builds a qemuarm64 image (systemd) with forgecpp,
+forge-hub, radio-controller on its simulator, spectrum-analyzer, qam-modem,
+channel-emulator and the ptest package, from this checkout, with poky and
+this layer only; `kas/qemuarm64.yml` is the same image with meta-oe and
+meta-python (as most BSPs have them). Both were checked with bitbake's
+parser and dependency graph (`bitbake -g core-image-minimal`), not yet
+built:
 
 ```sh
 pip install kas
-FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml                # the image
+FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64-poky.yml           # the image, poky + this layer
+FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml                # the image, with meta-oe
 FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml -c testimage   # boot in QEMU + runtime tests
 ```
 
 The runtime tests (`lib/oeqa/runtime/cases/forgecpp.py`) check that the units
-are active, forge-hub lists both applications, `forgectl` reaches
-radio-controller and the `forge.v1` Python package imports. The `yocto`
-workflow runs this nightly (and on demand).
+are active, forge-hub lists the applications, `forgectl` reaches
+radio-controller and the `forge` Python package imports; `ptest-runner
+forgecpp` runs the framework's own tests on the target. The `yocto` workflow
+runs this nightly (and on demand).
 
-1. Copy `recipes-support/forgecpp` (both recipes: `forgecpp` and
-   `forgecpp-protoc-native`) into one of your layers.
-2. Pin `SRCREV` to a commit or tag (the recipe defaults to `${AUTOREV}`).
-3. Add the runtime library to your image and the SDK:
+## The SDK
 
-   ```
-   IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl"
-   TOOLCHAIN_TARGET_TASK:append = " forgecpp-dev forgecpp-staticdev"
-   ```
+```
+TOOLCHAIN_TARGET_TASK:append = " forgecpp-dev"
+TOOLCHAIN_HOST_TASK:append = " nativesdk-forgecpp-tools nativesdk-protobuf nativesdk-python3-protobuf"
+```
 
-Packages: `forgecpp` (libraries), `forgecpp-forgectl` (forge.v1 command line
-client on the target), `python3-forge-v1` (the forge-v1 Python package in site-packages; needs
-python3-protobuf and python3-pyzmq from meta-python), `forgecpp-tools`
-(`forgecpp-new`), `forgecpp-iio-tools`, `forgecpp-protoc` (protoc for the
-target, rarely needed), `forgecpp-dev` (headers, CMake packages, `.proto` files).
+`forgecpp-dev` alone is enough for `find_package(forgecpp)` (the test helper
+`forgecpp::testing` is an INTERFACE target with its `main()` as a source file,
+not a static library). `nativesdk-forgecpp-tools` gives the SDK
+`forgecpp-new` and the message generator; `forge_add_proto` finds the SDK's
+`protoc` by itself (`OECORE_NATIVE_SYSROOT`). An application then builds as on
+a workstation:
 
-Extra `install.sh` options can be passed with `FORGECPP_INSTALL_ARGS`,
-e.g. `FORGECPP_INSTALL_ARGS = "--without-ssl"` or `"--static"`.
+```sh
+. /opt/poky/5.0/environment-setup-cortexa53-crypto-poky-linux
+forgecpp-new my-daemon && cd my-daemon
+cmake -B build && cmake --build build -j
+```
 
-The recipe builds ZeroMQ, protobuf and libiio as well; it needs `libxml2`
-for libiio's network/XML backends. `protoc` has to run on the build machine
-and match the target's libprotobuf exactly, so `forgecpp-protoc-native`
-builds it from the same bundled sources (installed as
-`${STAGING_BINDIR_NATIVE}/forgecpp-protoc`); forgecpp and every application
-with its own `.proto` files use it (`-DFORGE_PROTOC=...`, see below). The libiio command line tools
-(`iio_info`, `iio_attr`, ...) are packaged separately in `forgecpp-iio-tools`
-because they are GPL-2.0-or-later.
+## An application recipe
+
+```
+SUMMARY = "my-daemon"
+LICENSE = "MIT"
+LIC_FILES_CHKSUM = "file://LICENSE;md5=..."
+SRC_URI = "git://...;protocol=https;branch=main"
+SRCREV = "..."
+S = "${WORKDIR}/git"          # styhead and later: ${UNPACKDIR}/git
+DEPENDS = "forgecpp protobuf-native python3-protobuf-native"   # the last two: own .proto files
+inherit cmake systemd python3-dir python3native
+EXTRA_OECMAKE = "-DBUILD_TESTING=OFF -DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/protoc \
+                 -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir} \
+                 -DFORGE_PYTHON_SITEDIR=${PYTHON_SITEPACKAGES_DIR}"
+SYSTEMD_SERVICE:${PN} = "my-daemon.service"
+CONFFILES:${PN} = "${sysconfdir}/my-daemon/my-daemon.toml"
+```
+
+`forge_add_app` generates the unit from the policy in CMakeLists.txt
+(`RESTART`, `MAX_RESTARTS`, `WATCHDOG`, `USER`/`DYNAMIC_USER`, `CAPABILITIES`,
+`NETWORK_ONLINE`); a recipe changes a policy with a drop-in
+(`<unit>.d/override.conf`) instead of patching the unit.
 
 ## forge-hub (optional)
-
-The `forgecpp` recipe also builds forge-hub (`PACKAGECONFIG` "hub", on by
-default) into its own package. Add it to an image to get the device dashboard
-on port 80; every forgecpp application on the device registers with it by
-itself (configured by its own `[hub]` section) and is restarted by its systemd
-unit, whose state the hub shows:
 
 ```
 IMAGE_INSTALL:append = " forgecpp-hub"
@@ -65,162 +129,39 @@ FORGECPP_HUB_PORT = "80"                          # optional, default 80
 PACKAGECONFIG:remove:pn-forgecpp = "hub"          # leave it out of the build entirely
 ```
 
-`forge-hub.service` runs as root (port 80, systemctl). Restarting stays with
-systemd: each application's unit (generated by `forge_add_app` from its
-`RESTART` / `MAX_RESTARTS` / `RESTART_WINDOW` / `WATCHDOG`) restarts it with or
-without the hub; the hub shows the units' state, restarts and policy and
-starts / stops / restarts them on request. A recipe can change a policy with a
-drop-in (`<unit>.d/override.conf`) instead of patching the unit.
+Every forgecpp application on the device registers with it by itself
+(configured by its own `[hub]` section) and is restarted by its systemd unit,
+whose state the hub shows. Port 80 needs root or `CAP_NET_BIND_SERVICE`
+(`forge_add_app(... CAPABILITIES CAP_NET_BIND_SERVICE DYNAMIC_USER)`).
 
-## radio-controller
+## SQLite, LZ4, CAN, GPIO
 
-`recipes-connectivity/radio-controller/radio-controller_git.bb` builds the
-AD9364 daemon from `examples/radio-controller` and configures it for the on-board
-radio (`backend = "iio"`, `uri = "local:"`) with its state kept in
-`/var/lib/radio-controller`. Override with `RADIO_URI = "ip:192.168.2.1"` etc.
+The optional components are packages of their own, pulled in by the
+applications that link them (shlibdeps): `forgecpp-sqlite` (with `sqlite3`)
+and `forgecpp-lz4` (with `lz4`). SQLite and LZ4 come from oe-core's recipes
+(`third_party/sqlite` and `third_party/lz4` are for `install.sh`, a build
+without Yocto): oe-core is in every build and keeps them patched. `PACKAGECONFIG:remove:pn-forgecpp =
+"sqlite"` leaves one out of the build.
 
-```
-IMAGE_INSTALL:append = " radio-controller forgecpp-iio-tools"
-```
-
-The device tree must describe the AD9364 (`adi,ad9364` with the AXI AD9361
-HDL cores), so that the kernel exposes `ad9361-phy`, `cf-ad9361-lpc` and
-`cf-ad9361-dds-core-lpc`; `iio_info -u local:` on the target should list them.
-
-## spectrum-analyzer
-
-`recipes-connectivity/spectrum-analyzer/spectrum-analyzer_git.bb` builds the
-spectrum analyzer from `examples/spectrum-analyzer` (web UI on port 8081, state
-in `/var/lib/spectrum-analyzer`). By default (`SA_BACKEND = "radio"`) it
-analyzes RX2 of an AD9361/AD9363 through radio-controller, so both daemons
-run together; the unit starts after radio-controller.
-
-Channel roles come from the configuration and must fit the hardware; the
-recipes set them from variables:
-
-| Variable | Default | Configuration |
-|---|---|---|
-| `RADIO_RX_CHANNELS` | `[1]` | radio-controller listens to |
-| `RADIO_TX_CHANNEL` | `1` | radio-controller drives |
-| `RADIO_TAP_RX` | `[2]` | radio-controller shares (use `[]` on an AD9364) |
-| `SA_CHANNEL` | `2` | the analyzer listens to (must be in `RADIO_TAP_RX`) |
-| `SA_CONTROL_GAIN` | `true` | the analyzer sets that channel's gain |
+GPIO and CAN need nothing but the kernel ([docs/hardware-io.md](../docs/hardware-io.md)):
+the GPIO character device (`CONFIG_GPIO_CDEV`, on by default), and for
+commands on a CAN bus the ISO-TP module and a way to bring the interface up:
 
 ```
-IMAGE_INSTALL:append = " radio-controller spectrum-analyzer"
+IMAGE_INSTALL:append = " kernel-module-can-isotp iproute2 can-utils"
 ```
 
-For a 2R2T transceiver the device tree must not force 1R1T mode
-(`adi,1rx-1tx-mode-enable`), so that `cf-ad9361-lpc` has `voltage0` – `voltage3`.
-On an AD9364 board set `RADIO_TAP_RX = "[]"`, `SA_BACKEND = "iio"` and
-`SA_CHANNEL = "1"`: the analyzer then owns the RX path (and can sweep) and
-radio-controller must not run.
+## The example applications
 
-## qam-modem
-
-`recipes-connectivity/qam-modem/qam-modem_git.bb` builds the 16QAM packet
-modem from `examples/qam-modem` (UDP port 6000, web page on port 8082). It
-retunes radio-controller (2.1 GHz, 3 MSPS) and transmits, so its unit is
-installed but not enabled (`SYSTEMD_AUTO_ENABLE:pn-qam-modem = "enable"` to
-start it at boot). `QAM_LO_HZ` and `QAM_UDP_LISTEN` set the carrier and the
-UDP address; `qam-modem-clients` has `echo.py`. On an FMCOMMS5 it uses chip A:
-TX1 and RX1 (radio-controller's `RADIO_RX_CHANNELS = "[1]"`), RX2 stays with
-the spectrum analyzer.
-
-```
-IMAGE_INSTALL:append = " radio-controller spectrum-analyzer qam-modem"
-```
-
-## channel-emulator
-
-`recipes-connectivity/channel-emulator/channel-emulator_git.bb` builds the
-channel emulator from `examples/channel-emulator` (TX input on port 5586,
-web page on port 8083). Like qam-modem its unit is installed, not enabled.
-To use it, point qam-modem's `radio_tx` at `tcp://127.0.0.1:5586`.
-
-```
-IMAGE_INSTALL:append = " channel-emulator"
-```
-
-## Application recipes
-
-A project created with `forgecpp-new` builds in Yocto without changes:
-
-```bitbake
-SUMMARY = "Pump control daemon"
-LICENSE = "CLOSED"
-
-SRC_URI = "git://git.example.com/pump-ctl.git;protocol=https;branch=main"
-SRCREV = "<commit>"
-S = "${WORKDIR}/git"
-
-DEPENDS = "forgecpp forgecpp-protoc-native"
-inherit cmake systemd
-
-# the application's .proto files (forge_add_proto) are compiled with this protoc
-EXTRA_OECMAKE += "-DFORGE_PROTOC=${STAGING_BINDIR_NATIVE}/forgecpp-protoc \
-                  -DFORGE_SYSTEMD_UNIT_DIR=${systemd_system_unitdir}"
-
-SYSTEMD_SERVICE:${PN} = "pump-ctl.service"
-```
-
-```cmake
-find_package(forgecpp REQUIRED)
-forge_add_app(pump-ctl
-    SOURCES src/main.cpp
-    CONFIG  config/pump-ctl.toml        # -> /etc/pump-ctl/pump-ctl.toml
-    WEB     web                         # pages compiled into the binary
-    # generated pump-ctl.service (-> ${systemd_system_unitdir} with
-    # -DFORGE_SYSTEMD_UNIT_DIR, as the recipes here pass it) with its restart policy:
-    RESTART on-failure MAX_RESTARTS 3 RESTART_WINDOW 600 WATCHDOG 30)
-```
-
-The web pages are embedded in the binary, so nothing else has to be
-installed and read-only root filesystems work as is. The generated systemd
-unit uses `Type=notify` and `WatchdogSec=`; forgecpp reports readiness and
-feeds the watchdog without linking libsystemd.
-
-## Without bitbake
-
-Build a tarball with an SDK toolchain and unpack it on the target:
-
-```sh
-source /opt/poky/environment-setup-cortexa53-poky-linux
-./install.sh --package --prefix /usr --toolchain $OECORE_NATIVE_SYSROOT/usr/share/cmake/OEToolchainConfig.cmake --arch aarch64
-scp build/forgecpp-0.3.0-aarch64.tar.gz target:/tmp && ssh target tar -xzf /tmp/forgecpp-0.3.0-aarch64.tar.gz -C /
-```
-
-## What has been verified
-
-The cross build was verified with an aarch64 GCC toolchain and a toolchain
-file that restricts package lookup to the target sysroot, the way OE's does:
-all libraries build, the full test suite passes on aarch64 (under qemu), the
-example daemons serve their web UI, and an application scaffolded with
-`forgecpp-new` cross-compiles against the staged package. The recipe itself
-has not yet been run in a full bitbake build.
-
-## Known caveats
-
-- **Source directory on newer releases:** the recipe sets
-  `S = "${WORKDIR}/git"`, which is correct up to scarthgap (5.0 LTS). Newer
-  releases unpack sources elsewhere; adjust `S` there.
-- **Overlap with meta-oe:** forgecpp installs its own copies of the bundled
-  libraries (spdlog, nlohmann-json, CLI11, libzmq, cppzmq, libiio, ...) into
-  `/usr`. If an image also pulls in the meta-oe recipes for the same libraries,
-  bitbake reports files installed by multiple recipes. Use one source for those
-  libraries per image (e.g. `FORGECPP_INSTALL_ARGS = "--without-iio"` and
-  `DEPENDS += "libiio"` when the image already uses meta-oe's libiio).
-- **Reproducibility:** pin `SRCREV`; `${AUTOREV}` follows the branch.
-- **Init system:** systemd is supported out of the box. With sysvinit the
-  daemons run fine (systemd notifications are no-ops), but you have to provide
-  the init script.
-- **HTTPS:** the HTTP server is plain HTTP. Configure `[auth]` users on
-  network-facing devices and terminate TLS in a reverse proxy if needed.
-- **Telnet and forge.v1 endpoints are not encrypted.** The example
-  configurations open telnet (`[console].telnet`) and the `[forge]` endpoints
-  on all interfaces for the lab. On a fielded device configure `[auth]`
-  (telnet then asks for a login and every change needs a role), or bind them
-  to `127.0.0.1` / a management interface.
-- **protobuf from meta-oe:** do not mix it with forgecpp's bundled protobuf in
-  one image (same files); applications must use `forgecpp-protoc`, not
-  `protobuf-native` (generated code is tied to the libprotobuf version).
+`radio-controller` (`RADIO_BACKEND`, `RADIO_URI`, `RADIO_RX_CHANNELS`,
+`RADIO_TX_CHANNEL`, `RADIO_TAP_RX`), `spectrum-analyzer` (`SA_BACKEND`,
+`SA_URI`, `SA_CHANNEL`, `SA_CONTROL_GAIN`), `qam-modem` (`QAM_LO_HZ`,
+`QAM_UDP_LISTEN`; unit installed, not enabled) and `channel-emulator` (unit
+installed, not enabled) set their configuration from these variables in
+`do_install:append`; `IMAGE_INSTALL:append = " radio-controller
+spectrum-analyzer"` puts both on the image. The device tree must describe the
+transceiver (`adi,ad9364` with the AXI AD9361 HDL cores, not forced to 1R1T
+for a 2R2T part), so that the kernel exposes `ad9361-phy`, `cf-ad9361-lpc`
+and `cf-ad9361-dds-core-lpc`; `iio_info -u local:` on the target should list
+them. The libiio command line tools come from meta-oe's `libiio-iiod` /
+`libiio` packages, or the backfill's `libiio-tests`.

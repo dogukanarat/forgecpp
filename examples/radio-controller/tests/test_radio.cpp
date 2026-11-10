@@ -1,8 +1,9 @@
 #include "backend.hpp"
 #include "dsp.hpp"
+#include "radio/radio.forge.hpp"
 #include "radio_controller.hpp"
-#include "radio/v1/radio.pb.h"
 
+#include <forge/remote.hpp>
 #include <forge/testing.hpp>
 #include <forge/zmq.hpp>
 
@@ -18,6 +19,7 @@
 using namespace std::chrono_literals;
 using forge::json;
 namespace fz = forge::zmq;
+using forge::pb::view;
 
 namespace {
 
@@ -31,7 +33,7 @@ std::vector<std::int16_t> tone(std::size_t n, double offset_hz, double rate, dou
     return iq;
 }
 
-radio::v1::IqBlock block_of(const fz::Message& m) { return m.as<radio::v1::IqBlock>(); }
+radio_iq_block block_of(const fz::Message& m) { return m.as<radio_iq_block>(); }
 
 std::vector<std::int16_t> samples_of(const fz::Message& m) {
     std::vector<std::int16_t> iq(m.blob.size() / 2);
@@ -39,12 +41,23 @@ std::vector<std::int16_t> samples_of(const fz::Message& m) {
     return iq;
 }
 
-/// Send a TX block the way clients do: [tx][Header][radio.v1.TxBlock][cs16].
+/// Send a TX block the way clients do: [tx][stream_header][radio.tx_block][cs16].
 bool send_tx(fz::Sender& push, const std::vector<std::int16_t>& iq, bool cyclic) {
-    radio::v1::TxBlock b;
-    b.set_format("cs16");
-    b.set_cyclic(cyclic);
+    radio_tx_block b{};
+    std::strcpy(b.format, "cs16");
+    b.cyclic = cyclic;
     return push.publish("tx", b, iq.data(), iq.size() * 2);
+}
+
+/// The HTTP-like status of a refused command; 200 when it went through.
+template <class F>
+int status_of(F&& f) {
+    try {
+        f();
+        return 200;
+    } catch (const forge::Error& e) {
+        return e.status();
+    }
 }
 
 double peak_offset(const std::vector<std::int16_t>& iq, std::size_t n, double rate) {
@@ -179,7 +192,8 @@ TEST_CASE("radio: simulated AD9361 streams RX1 and RX2 with per-channel gain") {
     const auto s2 = radio::dsp::spectrum_dbfs(rx2.data(), n);
     auto level_at = [&](const std::vector<float>& sp, double offset) {
         const auto i = static_cast<std::size_t>(std::lround(offset / 10e6 * n + n / 2.0));
-        return *std::max_element(sp.begin() + static_cast<std::ptrdiff_t>(i) - 3, sp.begin() + static_cast<std::ptrdiff_t>(i) + 4);
+        return *std::max_element(sp.begin() + static_cast<std::ptrdiff_t>(i) - 3,
+                                 sp.begin() + static_cast<std::ptrdiff_t>(i) + 4);
     };
     // same air on both channels, 20 dB apart (gain)
     CHECK(level_at(s1, 2e6) - level_at(s2, 2e6) == doctest::Approx(20).epsilon(0.05));
@@ -231,19 +245,32 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
     forge::testing::TempDir dir;
     const auto state = (dir / "state.json").string();
     std::vector<std::string> args{"radio-controller",
-                                  "-c", std::string(RADIO_TEST_DATA_DIR) + "/empty.toml",
-                                  "--backend", "sim",
-                                  "-D", "log.console=false",
-                                  "-D", "http.enabled=false",
-                                  "-D", "forge.data=tcp://127.0.0.1:*",
-                                  "-D", "zmq.tx=tcp://127.0.0.1:*",
-                                  "-D", "forge.control=tcp://127.0.0.1:*",
-                                  "-D", "radio.rx_lo_hz=2410e6",
-                                  "-D", "radio.tx_lo_hz=2410e6",
-                                  "-D", "radio.sample_rate_hz=5e6",
-                                  "-D", "radio.rx_bandwidth_hz=5e6",
-                                  "-D", "radio.buffer_size=16384",
-                                  "-D", "radio.state_file=" + state};
+                                  "-c",
+                                  std::string(RADIO_TEST_DATA_DIR) + "/empty.toml",
+                                  "--backend",
+                                  "sim",
+                                  "-D",
+                                  "log.console=false",
+                                  "-D",
+                                  "http.enabled=false",
+                                  "-D",
+                                  "forge.data=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "zmq.tx=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "forge.control=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "radio.rx_lo_hz=2410e6",
+                                  "-D",
+                                  "radio.tx_lo_hz=2410e6",
+                                  "-D",
+                                  "radio.sample_rate_hz=5e6",
+                                  "-D",
+                                  "radio.rx_bandwidth_hz=5e6",
+                                  "-D",
+                                  "radio.buffer_size=16384",
+                                  "-D",
+                                  "radio.state_file=" + state};
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
 
@@ -262,27 +289,29 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
         std::lock_guard lock(m);
         if (frames.size() < 64) frames.push_back(std::move(msg));
     }, opts);
-    REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return frames.size() >= 3; }, 10s));
+    REQUIRE(forge::testing::wait_until([&] {
+        std::lock_guard lock(m);
+        return frames.size() >= 3;
+    }, 10s));
     {
         std::lock_guard lock(m);
         const auto h = block_of(frames.back());
-        CHECK(frames.back().header.type() == "radio.v1.IqBlock");
-        CHECK(frames.back().header.source() == "radio-controller");
-        CHECK(h.format() == "cs16");
-        CHECK(h.samples() == 16384);
-        CHECK(h.sample_rate() == 5e6);
-        CHECK(h.center_freq() == 2410e6);
+        CHECK(view(frames.back().header.type) == "radio.iq_block");
+        CHECK(view(frames.back().header.source) == "radio-controller");
+        CHECK(view(h.format) == "cs16");
+        CHECK(h.samples == 16384);
+        CHECK(h.sample_rate == 5e6);
+        CHECK(h.center_freq == 2410e6);
         CHECK(frames.back().blob.size() == 16384 * 4);
-        CHECK(frames[1].header.seq() > frames[0].header.seq());
+        CHECK(frames[1].header.seq > frames[0].header.seq);
     }
 
     // --- control over ZeroMQ ---------------------------------------------------
-    fz::Client ctl(app.control_endpoint(), 5s);
+    forge::Remote ctl(app.control_endpoint(), 5s);
     CHECK(ctl.get("connected") == true);
     CHECK(ctl.set("rx_lo_mhz", 2411.5) == 2411.5);
-    auto status_of = [&](const json& req) { return ctl.request_json(req).value("status", 0); };
-    CHECK(status_of({{"cmd", "set"}, {"id", "rx_gain_db"}, {"value", 20}}) == 409);  // AGC owns the gain
-    CHECK(status_of({{"cmd", "set"}, {"id", "rx_lo_mhz"}, {"value", 9000}}) == 400);  // above 6 GHz
+    CHECK(status_of([&] { ctl.set("rx_gain_db", 20); }) == 409);  // AGC owns the gain
+    CHECK(status_of([&] { ctl.set("rx_lo_mhz", 9000); }) == 400);  // above 6 GHz
     ctl.set("gain_mode", "manual");
     CHECK(ctl.set("rx_gain_db", 20) == 20);
 
@@ -294,7 +323,7 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
     latest();
     REQUIRE(forge::testing::wait_until([&] {
         std::lock_guard lock(m);
-        return !frames.empty() && block_of(frames.back()).center_freq() == 2411.5e6;
+        return !frames.empty() && block_of(frames.back()).center_freq == 2411.5e6;
     }, 10s));
 
     // --- TX: disabled drops, enabled loops back into RX --------------------------
@@ -332,10 +361,21 @@ TEST_CASE("radio-controller: IQ over ZeroMQ, control commands and TX loopback") 
 namespace {
 struct RunningRadio {
     explicit RunningRadio(std::vector<std::string> extra) {
-        args = {"radio-controller", "-c", std::string(RADIO_TEST_DATA_DIR) + "/empty.toml", "--backend", "sim",
-                "-D", "log.console=false", "-D", "http.enabled=false",
-                "-D", "forge.data=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-                "-D", "forge.control=tcp://127.0.0.1:*"};
+        args = {"radio-controller",
+                "-c",
+                std::string(RADIO_TEST_DATA_DIR) + "/empty.toml",
+                "--backend",
+                "sim",
+                "-D",
+                "log.console=false",
+                "-D",
+                "http.enabled=false",
+                "-D",
+                "forge.data=tcp://127.0.0.1:*",
+                "-D",
+                "zmq.tx=tcp://127.0.0.1:*",
+                "-D",
+                "forge.control=tcp://127.0.0.1:*"};
         args.insert(args.end(), extra.begin(), extra.end());
         for (auto& a : args) argv.push_back(a.data());
         std::promise<void> started;
@@ -355,12 +395,12 @@ struct RunningRadio {
 }  // namespace
 
 TEST_CASE("radio-controller: channel roles from the configuration (AD9361: RX1 own, RX2 shared, TX1 -> RX2 cable)") {
-    RunningRadio r({"-D", "radio.sim.channels=2", "-D", "radio.sim.loopback_tx=1", "-D", "radio.sim.loopback_rx=2",
-                    "-D", "radio.rx_channels=[1]", "-D", "radio.tx_channel=1", "-D", "radio.tap_rx=[2]",
-                    "-D", "radio.tap_samples=16384", "-D", "radio.tap_hz=50",
-                    "-D", "radio.rx_lo_hz=2410e6", "-D", "radio.tx_lo_hz=2410e6",
-                    "-D", "radio.sample_rate_hz=5e6", "-D", "radio.rx_bandwidth_hz=5e6",
-                    "-D", "radio.buffer_size=32768"});
+    RunningRadio r(
+        {"-D", "radio.sim.channels=2",    "-D", "radio.sim.loopback_tx=1",  "-D", "radio.sim.loopback_rx=2",
+         "-D", "radio.rx_channels=[1]",   "-D", "radio.tx_channel=1",       "-D", "radio.tap_rx=[2]",
+         "-D", "radio.tap_samples=16384", "-D", "radio.tap_hz=50",          "-D", "radio.rx_lo_hz=2410e6",
+         "-D", "radio.tx_lo_hz=2410e6",   "-D", "radio.sample_rate_hz=5e6", "-D", "radio.rx_bandwidth_hz=5e6",
+         "-D", "radio.buffer_size=32768"});
     std::mutex m;
     std::vector<fz::Message> tap, rx1;
     fz::Receiver::Options tap_opts;
@@ -375,22 +415,25 @@ TEST_CASE("radio-controller: channel roles from the configuration (AD9361: RX1 o
         std::lock_guard lock(m);
         if (rx1.size() < 400) rx1.push_back(std::move(msg));
     }, opts);
-    REQUIRE(forge::testing::wait_until([&] { std::lock_guard lock(m); return tap.size() >= 2 && !rx1.empty(); }, 10s));
+    REQUIRE(forge::testing::wait_until([&] {
+        std::lock_guard lock(m);
+        return tap.size() >= 2 && !rx1.empty();
+    }, 10s));
     {
         std::lock_guard lock(m);
         const auto h = block_of(tap.back());
         CHECK(tap.back().topic == "rx2");
-        CHECK(h.channel() == 2);
-        CHECK(h.samples() == 16384);  // the start of a 32768-sample DMA buffer
-        CHECK(h.format() == "cs16");
-        CHECK(h.center_freq() == 2410e6);
-        CHECK(h.sample_rate() == 5e6);
+        CHECK(h.channel == 2);
+        CHECK(h.samples == 16384);  // the start of a 32768-sample DMA buffer
+        CHECK(view(h.format) == "cs16");
+        CHECK(h.center_freq == 2410e6);
+        CHECK(h.sample_rate == 5e6);
         CHECK(tap.back().blob.size() == 16384 * 4);
-        CHECK(tap[1].header.seq() > tap[0].header.seq());
-        for (const auto& f : rx1) CHECK(block_of(f).channel() == 1);  // it listens to RX1 only
+        CHECK(tap[1].header.seq > tap[0].header.seq);
+        for (const auto& f : rx1) CHECK(block_of(f).channel == 1);  // it listens to RX1 only
     }
 
-    fz::Client ctl(r.app.control_endpoint(), 5s);
+    forge::Remote ctl(r.app.control_endpoint(), 5s);
     CHECK(ctl.get("hw_channels") == "2R2T");
     CHECK(ctl.get("rx_channels") == json::array({1}));
     CHECK(ctl.get("tap_channels") == json::array({2}));
@@ -401,8 +444,8 @@ TEST_CASE("radio-controller: channel roles from the configuration (AD9361: RX1 o
         std::lock_guard lock(m);
         return v.empty() ? fz::Message{} : v.back();
     };
-    auto gain_of = [](const fz::Message& msg) { return msg.body.empty() ? 0.0 : block_of(msg).rx_gain_db(); };
-    auto center_of = [](const fz::Message& msg) { return msg.body.empty() ? 0.0 : block_of(msg).center_freq(); };
+    auto gain_of = [](const fz::Message& msg) { return msg.body.empty() ? 0.0 : block_of(msg).rx_gain_db; };
+    auto center_of = [](const fz::Message& msg) { return msg.body.empty() ? 0.0 : block_of(msg).center_freq; };
     auto clear = [&] {
         std::lock_guard lock(m);
         rx1.clear();
@@ -417,9 +460,7 @@ TEST_CASE("radio-controller: channel roles from the configuration (AD9361: RX1 o
     fz::Sender push(fz::Sender::Kind::push, r.app.tx_endpoint(), false);
     const auto tx = tone(4000, 1.25e6, 5e6, 0.5);
     REQUIRE(forge::testing::wait_until([&] { return send_tx(push, tx, true); }));
-    auto peak_of = [&](const fz::Message& msg, std::size_t n) {
-        return peak_offset(samples_of(msg), n, 5e6);
-    };
+    auto peak_of = [&](const fz::Message& msg, std::size_t n) { return peak_offset(samples_of(msg), n, 5e6); };
     clear();
     CHECK(forge::testing::wait_until([&] {
         const auto b = newest(tap);
@@ -435,19 +476,18 @@ TEST_CASE("radio-controller: channel roles from the configuration (AD9361: RX1 o
 }
 
 TEST_CASE("radio-controller: listens to both RX channels and drives TX2") {
-    RunningRadio r({"-D", "radio.sim.channels=2", "-D", "radio.sim.loopback_tx=2", "-D", "radio.sim.loopback_rx=1",
-                    "-D", "radio.rx_channels=[1, 2]", "-D", "radio.tx_channel=2",
-                    "-D", "radio.rx_lo_hz=2410e6", "-D", "radio.tx_lo_hz=2410e6",
-                    "-D", "radio.sample_rate_hz=5e6", "-D", "radio.rx_bandwidth_hz=5e6",
-                    "-D", "radio.buffer_size=8192", "-D", "radio.tx_enabled=true",
-                    "-D", "radio.tx_attenuation_db=0"});
+    RunningRadio r(
+        {"-D", "radio.sim.channels=2",     "-D", "radio.sim.loopback_tx=2",  "-D", "radio.sim.loopback_rx=1",
+         "-D", "radio.rx_channels=[1, 2]", "-D", "radio.tx_channel=2",       "-D", "radio.rx_lo_hz=2410e6",
+         "-D", "radio.tx_lo_hz=2410e6",    "-D", "radio.sample_rate_hz=5e6", "-D", "radio.rx_bandwidth_hz=5e6",
+         "-D", "radio.buffer_size=8192",   "-D", "radio.tx_enabled=true",    "-D", "radio.tx_attenuation_db=0"});
     std::mutex m;
     std::map<int, fz::Message> last;
     fz::Receiver::Options opts;
     opts.topics = {"iq"};
     fz::Receiver sub(fz::Receiver::Kind::sub, r.app.data_endpoint(), [&](fz::Message&& msg) {
         std::lock_guard lock(m);
-        last[static_cast<int>(block_of(msg).channel())] = std::move(msg);
+        last[static_cast<int>(block_of(msg).channel)] = std::move(msg);
     }, opts);
     fz::Sender push(fz::Sender::Kind::push, r.app.tx_endpoint(), false);
     const auto tx = tone(4000, 1.25e6, 5e6, 0.5);
@@ -461,27 +501,23 @@ TEST_CASE("radio-controller: listens to both RX channels and drives TX2") {
     CHECK(forge::testing::wait_until([&] { return std::abs(peak(1) - 1.25e6) < 5e3; }, 10s));
     // RX2's block of the same buffer may still be on its way
     CHECK(forge::testing::wait_until([&] { return std::abs(peak(2) - 2e6) < 5e3; }, 10s));
-    fz::Client ctl(r.app.control_endpoint(), 5s);
+    forge::Remote ctl(r.app.control_endpoint(), 5s);
     CHECK(ctl.get("rx_channels") == json::array({1, 2}));
     CHECK(ctl.get("tx_channel") == "TX2");
 }
 
 TEST_CASE("radio-controller: streaming TX blocks older than tx_max_age_ms are dropped, not played late") {
     RunningRadio r({"-D", "radio.tx_enabled=true", "-D", "radio.sample_rate_hz=5e6", "-D", "radio.buffer_size=8192"});
-    fz::Client ctl(r.app.control_endpoint(), 5s);
+    forge::Remote ctl(r.app.control_endpoint(), 5s);
     CHECK(ctl.get("tx_max_age_ms") == 0.0);  // off by default
     ctl.set("tx_max_age_ms", 100);
     fz::Sender push(fz::Sender::Kind::push, r.app.tx_endpoint(), false);
     const auto iq = tone(4096, 1e5, 5e6, 0.3);
     auto block = [&](std::int64_t age_ms) {  // a sender whose block waited age_ms somewhere
-        radio::v1::TxBlock b;
-        b.set_format("cs16");
-        fz::Message m;
-        m.topic = "tx";
-        m.header = forge::proto::make_header("tx", b.GetTypeName());
-        m.header.set_time_unix_ns(m.header.time_unix_ns() - age_ms * 1000000);
-        m.body = b.SerializeAsString();
-        m.blob.assign(reinterpret_cast<const char*>(iq.data()), iq.size() * 2);
+        radio_tx_block b{};
+        std::strcpy(b.format, "cs16");
+        auto m = fz::make_message("tx", b, std::string(reinterpret_cast<const char*>(iq.data()), iq.size() * 2));
+        m.header.time_unix_ns -= age_ms * 1000000;
         return m;
     };
     REQUIRE(forge::testing::wait_until([&] { return push.send(block(0)); }));
@@ -500,12 +536,12 @@ TEST_CASE("radio-controller: streaming TX blocks older than tx_max_age_ms are dr
 
 TEST_CASE("radio-controller: a configuration the transceiver cannot do is reported") {
     RunningRadio r({"-D", "radio.tap_rx=[2]"});  // simulated AD9364: one RX, one TX
-    fz::Client ctl(r.app.control_endpoint(), 5s);
+    forge::Remote ctl(r.app.control_endpoint(), 5s);
     CHECK(ctl.get("connected") == false);
-    const auto alarms = ctl.request_json({{"cmd", "alarms"}})["alarms"];
+    const auto alarms = r.app.alarms().list();
     REQUIRE(alarms.size() == 1);
-    CHECK(alarms[0]["id"] == "radio.device");
-    const auto msg = alarms[0]["message"].get<std::string>();
+    CHECK(alarms[0].id == "radio.device");
+    const auto msg = alarms[0].message;
     CHECK(msg.find("RX1, RX2") != std::string::npos);
     CHECK(msg.find("1 RX / 1 TX") != std::string::npos);
     CHECK(msg.find("tap_rx") != std::string::npos);
@@ -573,12 +609,23 @@ TEST_CASE("radio: libiio backend explains what it found when the AD936x is missi
 }
 
 TEST_CASE("radio-controller: keeps running and raises an alarm when the radio is unusable") {
-    std::vector<std::string> args{"radio-controller", "-c", std::string(RADIO_TEST_DATA_DIR) + "/empty.toml",
-                                  "--backend", "iio",
-                                  "--uri", std::string("xml:") + RADIO_TEST_DATA_DIR + "/ad9364.xml",
-                                  "-D", "log.console=false", "-D", "http.enabled=false",
-                                  "-D", "forge.data=tcp://127.0.0.1:*", "-D", "zmq.tx=tcp://127.0.0.1:*",
-                                  "-D", "forge.control=tcp://127.0.0.1:*"};
+    std::vector<std::string> args{"radio-controller",
+                                  "-c",
+                                  std::string(RADIO_TEST_DATA_DIR) + "/empty.toml",
+                                  "--backend",
+                                  "iio",
+                                  "--uri",
+                                  std::string("xml:") + RADIO_TEST_DATA_DIR + "/ad9364.xml",
+                                  "-D",
+                                  "log.console=false",
+                                  "-D",
+                                  "http.enabled=false",
+                                  "-D",
+                                  "forge.data=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "zmq.tx=tcp://127.0.0.1:*",
+                                  "-D",
+                                  "forge.control=tcp://127.0.0.1:*"};
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
 
@@ -588,16 +635,44 @@ TEST_CASE("radio-controller: keeps running and raises an alarm when the radio is
     std::thread runner([&] { CHECK(app.run(static_cast<int>(argv.size()), argv.data()) == 0); });
     started.get_future().get();
 
-    fz::Client ctl(app.control_endpoint(), 5s);
+    forge::Remote ctl(app.control_endpoint(), 5s);
     CHECK(ctl.get("connected") == false);
-    const auto alarms = ctl.request_json({{"cmd", "alarms"}})["alarms"];
+    const auto alarms = app.alarms().list();
     REQUIRE(alarms.size() == 1);
-    CHECK(alarms[0]["id"] == "radio.device");
-    CHECK(alarms[0]["severity"] == "error");
-    CHECK(alarms[0]["message"].get<std::string>().find("Radio not available") == 0);
-    CHECK(ctl.request_json({{"cmd", "set"}, {"id", "rx_lo_mhz"}, {"value", 2400}})["status"] == 503);
+    CHECK(alarms[0].id == "radio.device");
+    CHECK(alarms[0].severity == forge::Severity::error);
+    CHECK(alarms[0].message.find("Radio not available") == 0);
+    CHECK(status_of([&] { ctl.set("rx_lo_mhz", 2400); }) == 503);
 
     app.stop();
     runner.join();
 }
 #endif
+
+TEST_CASE("radio-controller: typed tune and status commands on the link") {
+    RunningRadio r({});
+    fz::Client link(r.app.control_endpoint(), 5s);
+    radio_status_reply st{};
+    REQUIRE(link.call(radio_msg_id_status, radio_status_request{}, st).ok());
+    CHECK(st.connected);
+    const double before = st.rx_lo_hz;
+
+    radio_tune_request tune{};
+    tune.rx_lo_hz = 915.5e6;  // only the LO; the rate and bandwidth stay
+    REQUIRE(link.call(radio_msg_id_tune, tune, st).ok());
+    CHECK(st.rx_lo_hz == 915.5e6);
+    CHECK(st.rx_lo_hz != before);
+    forge::Remote ctl(r.app.control_endpoint(), 5s);
+    CHECK(ctl.get("rx_lo_mhz") == 915.5);
+
+    tune.rx_lo_hz = 10e9;  // above the AD9364
+    const auto refused = link.call(radio_msg_id_tune, tune, st);
+    CHECK(refused.errno_code() == EINVAL);
+    REQUIRE(link.call(radio_msg_id_status, radio_status_request{}, st).ok());
+    CHECK(st.rx_lo_hz == 915.5e6);
+
+    // Tuning changes the radio: it is audited, a status query is not.
+    const auto audit = r.app.audit().list();
+    CHECK(std::count_if(audit.begin(), audit.end(), [](const auto& a) { return a.target == "tune"; }) == 2);
+    CHECK(std::none_of(audit.begin(), audit.end(), [](const auto& a) { return a.target == "status"; }));
+}

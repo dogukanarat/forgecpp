@@ -2,7 +2,7 @@
 
 #include "forge/config.hpp"
 
-#include <spdlog/fmt/fmt.h>
+#include <format>
 
 #include <algorithm>
 #include <cmath>
@@ -136,40 +136,59 @@ bool Schema::covered_by_open_section(const std::string& path) const {
     return false;
 }
 
+Schema& Schema::alias(const std::string& old_path, const std::string& path) {
+    aliases_[old_path] = path;
+    return *this;
+}
+
+std::string Schema::aliased(const std::string& path) const {
+    const auto it = aliases_.find(path);
+    return it == aliases_.end() ? std::string() : it->second;
+}
+
 Schema::Result Schema::validate(const Config& cfg) const {
     Result r;
     const json all = cfg.to_json();
+    for (const auto& [old_path, path] : aliases_) {
+        if (!cfg.contains(old_path)) continue;
+        if (cfg.contains(path) && cfg.get<json>(path) != cfg.get<json>(old_path)) {
+            r.errors.push_back(std::format("{}: set together with {} (its new name) to another value", old_path, path));
+        } else {
+            r.warnings.push_back(std::format("{}: deprecated, use {}", old_path, path));
+        }
+    }
     for (const auto& [path, k] : keys_) {
         const auto v = cfg.get<json>(path);
         if (!v) {
-            if (k.is_required) r.errors.push_back(fmt::format("{}: required ({})", path, to_string(k.type)));
+            if (k.is_required) r.errors.push_back(std::format("{}: required ({})", path, to_string(k.type)));
             continue;
         }
         if (!type_matches(k.type, *v)) {
-            r.errors.push_back(fmt::format("{}: expected {}, got {}", path, to_string(k.type), v->dump()));
+            r.errors.push_back(std::format("{}: expected {}, got {}", path, to_string(k.type), v->dump()));
             continue;
         }
         if (v->is_number() && (k.min || k.max)) {
             const double d = v->get<double>();
             if ((k.min && d < *k.min) || (k.max && d > *k.max) || std::isnan(d)) {
-                r.errors.push_back(fmt::format("{}: {} is outside {} .. {}{}", path, v->dump(),
-                                               k.min ? fmt::format("{}", *k.min) : "-inf",
-                                               k.max ? fmt::format("{}", *k.max) : "+inf",
-                                               k.unit_text.empty() ? "" : " " + k.unit_text));
+                r.errors.push_back(std::format(
+                    "{}: {} is outside {} .. {}{}", path, v->dump(), k.min ? std::format("{}", *k.min) : "-inf",
+                    k.max ? std::format("{}", *k.max) : "+inf", k.unit_text.empty() ? "" : " " + k.unit_text));
             }
         }
         if (v->is_string() && !k.choice_values.empty() &&
             std::find(k.choice_values.begin(), k.choice_values.end(), v->get<std::string>()) == k.choice_values.end()) {
             std::string list;
             for (const auto& c : k.choice_values) list += (list.empty() ? "" : " | ") + c;
-            r.errors.push_back(fmt::format("{}: \"{}\" is not one of {}", path, v->get<std::string>(), list));
+            r.errors.push_back(std::format("{}: \"{}\" is not one of {}", path, v->get<std::string>(), list));
         }
     }
     // Unknown keys inside declared sections: probably typos.
     std::vector<std::string> present;
     leaves(all, "", present);
     for (const auto& path : present) {
-        if (keys_.count(path) || sections_.count(path) || covered_by_open_section(path)) continue;
+        if (keys_.count(path) || sections_.count(path) || aliases_.count(path) || covered_by_open_section(path)) {
+            continue;
+        }
         const auto parent = parent_of(path);
         if (parent.empty() || !sections_.count(parent)) continue;  // section nobody declared
         // Suggest the closest declared key of that section.
@@ -195,13 +214,20 @@ Schema::Result Schema::validate(const Config& cfg) const {
                 best = kp;
             }
         }
-        r.warnings.push_back(best.empty() ? fmt::format("{}: unknown key", path)
-                                          : fmt::format("{}: unknown key (did you mean {}?)", path, best));
+        r.warnings.push_back(best.empty() ? std::format("{}: unknown key", path)
+                                          : std::format("{}: unknown key (did you mean {}?)", path, best));
     }
     return r;
 }
 
 void Schema::apply_defaults(Config& cfg) const {
+    // Old names first: their value becomes the new key's, which then needs no default.
+    for (const auto& [old_path, path] : aliases_) {
+        if (!cfg.contains(old_path) || cfg.contains(path)) continue;
+        if (auto v = cfg.get<json>(old_path); v && v->is_primitive() && !v->is_null()) {
+            cfg.apply_override(path + "=" + v->dump());
+        }
+    }
     for (const auto& [path, k] : keys_) {
         if (k.type == Type::table || k.type == Type::any || k.default_value.is_null() || k.is_computed) continue;
         if (cfg.contains(path)) continue;
@@ -227,6 +253,10 @@ void Schema::apply_defaults(Config& cfg) const {
 }
 
 std::string Schema::help() const {
+    std::string deprecated;
+    for (const auto& [old_path, path] : aliases_) {
+        deprecated += std::format("# {} = ...   # deprecated: use {}\n", old_path, path);
+    }
     std::map<std::string, std::vector<const Key*>> by_section;
     for (const auto& [p, k] : keys_) by_section[parent_of(p)].push_back(&k);
     std::set<std::string> names;
@@ -240,8 +270,8 @@ std::string Schema::help() const {
         const bool has_keys = kit != by_section.end();
         const bool has_doc = sit != sections_.end() && !sit->second.doc.empty();
         if (!has_keys && !has_doc) continue;
-        out += sec.empty() ? "\n# (top level)\n" : fmt::format("\n[{}]\n", sec);
-        if (has_doc) out += fmt::format("# {}\n", sit->second.doc);
+        out += sec.empty() ? "\n# (top level)\n" : std::format("\n[{}]\n", sec);
+        if (has_doc) out += std::format("# {}\n", sit->second.doc);
         if (sit != sections_.end() && sit->second.open) out += "# (free-form keys)\n";
         if (!has_keys) continue;
         for (const Key* k : kit->second) {
@@ -250,8 +280,8 @@ std::string Schema::help() const {
             if (k->type == Type::table) def = "{}";
             std::string note = to_string(k->type);
             if (k->min || k->max) {
-                note += fmt::format(", {} .. {}", k->min ? fmt::format("{}", *k->min) : "",
-                                    k->max ? fmt::format("{}", *k->max) : "");
+                note += std::format(", {} .. {}", k->min ? std::format("{}", *k->min) : "",
+                                    k->max ? std::format("{}", *k->max) : "");
             }
             if (!k->unit_text.empty()) note += " " + k->unit_text;
             if (!k->choice_values.empty()) {
@@ -260,10 +290,11 @@ std::string Schema::help() const {
                 note += ": " + list;
             }
             if (k->is_required) note += ", required";
-            out += fmt::format("{:<36} # {}{}\n", name + " = " + def, k->doc_text.empty() ? "" : k->doc_text + " ",
+            out += std::format("{:<36} # {}{}\n", name + " = " + def, k->doc_text.empty() ? "" : k->doc_text + " ",
                                "(" + note + ")");
         }
     }
+    if (!deprecated.empty()) out += "\n# Deprecated keys (still accepted)\n" + deprecated;
     return out;
 }
 

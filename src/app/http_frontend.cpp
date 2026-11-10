@@ -1,73 +1,81 @@
 // HttpFrontend: the HTTP server with the framework's routes, the built-in
 // pages, live events and logs for the browser, and the card layouts.
-#include "services.hpp"
+#include "impl.hpp"
 
 #include "forge/component.hpp"
 #include "forge/control.hpp"
-#include "forge/proto.hpp"
 #include "forge/trace.hpp"
 #include "forge/version.hpp"
 #include "forge/web.hpp"
 
-#include <spdlog/sinks/base_sink.h>
-
+#include <unistd.h>
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <ctime>
 #include <deque>
 #include <filesystem>
-#include <unistd.h>
 
 namespace forge::detail {
 
-namespace {
-
-// Keeps the latest log lines for the dashboard and streams new ones to it.
-class WebLogSink final : public spdlog::sinks::base_sink<std::mutex> {
+// Keeps the latest log lines for the dashboard and streams new ones to it
+// (a log listener: called on the logging background thread).
+class WebLog {
 public:
-    WebLogSink(std::shared_ptr<http::EventStream> stream, std::size_t history)
-        : stream_(std::move(stream)), max_(std::max<std::size_t>(history, 1)) {}
+    WebLog(std::shared_ptr<http::EventStream> stream, std::size_t history, log::Level min)
+        : stream_(std::move(stream)), max_(std::max<std::size_t>(history, 1)), min_(min) {}
+    void start() {
+        subscription_ = log::add_listener([this](const log::Record& r) { on_record(r); });
+    }
 
     json history() {
         std::lock_guard lock(mutex_);
         return json(std::vector<json>(history_.begin(), history_.end()));
     }
 
-protected:
-    void sink_it_(const spdlog::details::log_msg& msg) override {
-        const auto t = std::chrono::system_clock::to_time_t(msg.time);
-        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(msg.time.time_since_epoch()).count() % 1000;
+private:
+    void on_record(const log::Record& r) {
+        if (r.level < min_) return;
+        const auto t = static_cast<std::time_t>(r.time_unix_ns / 1000000000);
+        const auto ms = (r.time_unix_ns / 1000000) % 1000;
         std::tm tm{};
         ::localtime_r(&t, &tm);
-        char stamp[32];
-        std::snprintf(stamp, sizeof(stamp), "%02d:%02d:%02d.%03d", tm.tm_hour, tm.tm_min, tm.tm_sec,
-                      static_cast<int>(ms));
-        json entry{{"time", stamp},
-                   {"level", std::string(spdlog::level::to_string_view(msg.level).data(),
-                                         spdlog::level::to_string_view(msg.level).size())},
-                   {"logger", std::string(msg.logger_name.data(), msg.logger_name.size())},
-                   {"message", std::string(msg.payload.data(), msg.payload.size())}};
-        history_.push_back(entry);
-        while (history_.size() > max_) history_.pop_front();
+        json entry{{"time", std::format("{:02}:{:02}:{:02}.{:03}", tm.tm_hour, tm.tm_min, tm.tm_sec, ms)},
+                   {"level", log::to_string(r.level)},
+                   {"logger", r.logger},
+                   {"message", r.message}};
+        {
+            std::lock_guard lock(mutex_);
+            history_.push_back(entry);
+            while (history_.size() > max_) history_.pop_front();
+        }
         stream_->publish("log", entry);
     }
-    void flush_() override {}
 
-private:
     std::shared_ptr<http::EventStream> stream_;
     std::size_t max_;
+    log::Level min_;
+    std::mutex mutex_;
     std::deque<json> history_;
+    Subscription subscription_;  // last: it goes first, before what on_record uses
 };
-
-}  // namespace
 
 void HttpFrontend::create(const Config& cfg) {
     if (!cfg.value<bool>("http.enabled")) return;
     auto& auth = app_.auth();
     auto logger = app_.logger();
     http_ = std::make_unique<http::Server>();
-    http_->threads(static_cast<std::size_t>(std::max(cfg.value<int>("http.threads"), 2)));
+    // Every open page holds a thread for its live updates (and a watched
+    // stream four more): the JSON API and /health need threads left over.
+    const int pages = cfg.value<int>("web.max_clients");
+    int threads = cfg.value<int>("http.threads");
+    if (threads < pages + 4) {
+        logger->warn("[http].threads = {} is not enough for [web].max_clients = {} open pages: using {}", threads,
+                     pages, pages + 4);
+        threads = pages + 4;
+    }
+    http_->threads(static_cast<std::size_t>(std::max(threads, 2)));
+    stall_ms_ = cfg.value<int>("health.stall_ms");
 
     // Credentials: [auth] users (roles are checked per request by ControlService).
     // Anonymous callers get [auth].default_role, unless [auth].anonymous = false.
@@ -85,16 +93,14 @@ void HttpFrontend::create(const Config& cfg) {
         auto& health = app_.health();
         const auto h = health.snapshot();
         json components = json::array();
-        for (const auto& c : h.components()) {
-            components.push_back({{"name", c.name()},
-                                  {"state", to_string(static_cast<HealthState>(c.state()))},
-                                  {"message", c.message()},
-                                  {"critical", c.critical()}});
+        for (const auto& c : h.components) {
+            components.push_back(
+                {{"name", c.name}, {"state", to_string(c.state)}, {"message", c.message}, {"critical", c.critical}});
         }
         const auto overall = health.overall();
-        const auto loop_age = app_.loop_age_ms();
+        const auto loop_age = d_.loop.age_ms();
         // The 1 s heartbeat runs on the main loop: an old one means the loop is stuck.
-        const char* status = app_.stopping() ? "stopping" : (loop_age > 5000 ? "stalled" : "ok");
+        const char* status = app_.stopping() ? "stopping" : (loop_age > stall_ms_ ? "stalled" : "ok");
         json j{{"status", status},
                {"pid", ::getpid()},
                {"loop_age_ms", loop_age},
@@ -112,9 +118,7 @@ void HttpFrontend::create(const Config& cfg) {
     http_->get("/metrics", [](const http::Request&, http::Response& res) {
         res.set_content(metrics::registry().prometheus(), "text/plain; version=0.0.4");
     });
-    app_.setup_http(*http_);
-    for (auto& c : app_.components_) c->setup_http(*http_);
-    for (auto& h : app_.hooks_.http) h(app_, *http_);
+    d_.setup_http(*http_);  // the application's routes, its components', the hooks'
     create_web(cfg);
 }
 
@@ -130,9 +134,11 @@ void HttpFrontend::create_web(const Config& cfg) {
         std::vector<http::EventStream::Message> greeting;
         if (!app_.stopping()) {
             try {
-                greeting.push_back({"state", app_.invoke_for(app_.request_timeout(), [dashboard] { return dashboard->state(); })});
-            } catch (const std::exception&) {
+                greeting.push_back(
+                    {"state", app_.invoke_for(app_.request_timeout(), [dashboard] { return dashboard->state(); })});
+            } catch (const std::exception& e) {
                 // main loop busy: the next state event brings the values
+                log::debug("web: greeting without the state: {}", e.what());
             }
         }
         greeting.push_back({"alarms", alarms.to_json()});
@@ -146,15 +152,15 @@ void HttpFrontend::create_web(const Config& cfg) {
     if (!root.empty()) {
         if (!http_->mount("/", root)) throw ConfigError("web.root '" + root + "' is not a directory");
         logger->info("web: serving pages from {}", root);
+        if (cfg.value<bool>("web.live_reload")) pages_root_ = root;
     } else {
         http_->assets(web::registered_assets());
     }
 
     if (cfg.value<bool>("web.logs")) {
-        auto sink = std::make_shared<WebLogSink>(events_, cfg.value<std::size_t>("web.log_history"));
-        sink->set_level(log::parse_level(cfg.value<std::string>("web.log_level")));
-        log_sink_ = sink;
-        log::add_sink(log_sink_);
+        weblog_ = std::make_shared<WebLog>(events_, cfg.value<std::size_t>("web.log_history"),
+                                           log::parse_level(cfg.value<std::string>("web.log_level")));
+        weblog_->start();
     }
 
     const std::string api = "/forge/api";
@@ -168,11 +174,11 @@ void HttpFrontend::create_web(const Config& cfg) {
                     {"hostname", host_name()},
                     {"pid", ::getpid()},
                     {"uptime_s", std::chrono::duration_cast<std::chrono::seconds>(app_.uptime()).count()},
-                    {"logs", log_sink_ != nullptr},
-                    {"protocol", "forge.v1"},
+                    {"logs", weblog_ != nullptr},
+                    {"protocol", "c2"},
                     {"endpoints", app_.endpoints()}};
     });
-    // What needs the main loop waits at most [forge].request_timeout_ms for it.
+    // What needs the main loop waits at most [loop].request_timeout_ms for it.
     http_->get_json(api + "/ui", [this, dashboard](const http::Request&) {
         return app_.invoke_for(app_.request_timeout(), [dashboard] { return dashboard->schema(); });
     });
@@ -181,12 +187,15 @@ void HttpFrontend::create_web(const Config& cfg) {
     });
     http_->get_json(api + "/controls/:id", [this, dashboard](const http::Request& req) {
         const auto id = req.path_params.at("id");
-        return json{{"id", id}, {"value", app_.invoke_for(app_.request_timeout(), [dashboard, &id] { return dashboard->get(id); })}};
+        return json{
+            {"id", id},
+            {"value", app_.invoke_for(app_.request_timeout(), [dashboard, &id] { return dashboard->get(id); })}};
     });
     auto web_caller = [&control](const http::Request& req) {
         return control.identify("web", req.remote_addr, {}, req.get_header_value("Authorization"));
     };
-    http_->post_json(api + "/controls/:id", [this, dashboard, &control, web_caller](const http::Request& req, const json& body) {
+    http_->post_json(api + "/controls/:id",
+                     [this, dashboard, &control, web_caller](const http::Request& req, const json& body) {
         const auto id = req.path_params.at("id");
         const auto caller = web_caller(req);
         const bool button =
@@ -201,12 +210,16 @@ void HttpFrontend::create_web(const Config& cfg) {
         }
         return json{{"id", id}, {"value", control.get(id, caller)}};
     });
-    http_->post_json(api + "/commands/:id", [&control, web_caller](const http::Request& req, const json& body) {
+    // An action of the control registry (Group::action): POST /forge/api/actions/<id>.
+    // /forge/api/commands/<id> is the old path; it also answers the program's
+    // typed commands (below), by name.
+    const auto run_action = [&control, web_caller](const http::Request& req, const json& body) {
         const auto id = req.path_params.at("id");
         json args = body.is_object() && body.contains("args") ? body["args"] : body;
         if (args.is_null()) args = json::object();
         return json{{"id", id}, {"result", control.call(id, args, web_caller(req))}};
-    });
+    };
+    http_->post_json(api + "/actions/:id", run_action);
     http_->post_json(api + "/leases/:id", [&control, web_caller](const http::Request& req, const json& body) {
         const auto id = req.path_params.at("id");
         const auto s = control.lease(id, body.is_object() ? body.value("seconds", 60u) : 60u, web_caller(req));
@@ -264,82 +277,186 @@ void HttpFrontend::create_web(const Config& cfg) {
 
     // Read-only views that do not need the main loop.
     http_->get_json(api + "/metrics", [](const http::Request& req) {
-        return proto::to_json(metrics::registry().snapshot(req.get_param_value("prefix")));
+        return metrics::to_json(metrics::registry().snapshot(req.get_param_value("prefix")));
     });
     http_->get_json(api + "/audit", [this](const http::Request& req) {
         json a = json::array();
         const auto n = req.has_param("limit") ? std::stoul(req.get_param_value("limit")) : 200;
-        for (const auto& r : app_.audit().list(n)) a.push_back(proto::to_json(r));
+        for (const auto& r : app_.audit().list(n)) a.push_back(to_json(r));
         return a;
     });
-    http_->get_json(api + "/health", [this](const http::Request&) { return proto::to_json(app_.health().snapshot()); });
-    http_->get_json(api + "/streams", [this](const http::Request&) { return proto::to_json(app_.stream_list()); });
+    http_->get_json(api + "/health", [this](const http::Request&) { return to_json(app_.health().snapshot()); });
+    http_->get_json(api + "/streams", [this](const http::Request&) {
+        json a = json::array();
+        for (const auto& i : d_.messaging.stream_list()) a.push_back(zmq::to_json(i));
+        return json{{"streams", std::move(a)}};
+    });
     http_->get(api + "/trace", [](const http::Request& req, http::Response& res) {
         const unsigned seconds = req.has_param("seconds") ? std::stoul(req.get_param_value("seconds")) : 0;
         auto d = trace::dump(seconds);
         res.set_header("Content-Disposition", "attachment; filename=\"trace.json\"");
         res.set_content(std::move(d.chrome_json), "application/json");
     });
-    // forge.v1 over HTTP: protobuf (application/x-protobuf) or its JSON mapping.
-    http_->post(api + "/rpc", [&control](const http::Request& req, http::Response& res) {
-        Caller transport = control.identify("http-rpc", req.remote_addr, {}, req.get_header_value("Authorization"));
-        const auto type = req.get_header_value("Content-Type");
-        if (type.find("json") != std::string::npos) {
-            v1::Request r;
-            try {
-                proto::from_json_string(req.body, &r);
-            } catch (const std::exception& e) {
-                throw Error(400, e.what());
-            }
-            Caller c = control.identify("http-rpc", r.client().empty() ? req.remote_addr : r.client(), r.token(),
-                                        req.get_header_value("Authorization"));
-            res.set_content(proto::to_json_string(control.handle(r, c)), "application/json");
-        } else {
-            // A user from the Authorization header wins; otherwise Request.token decides.
-            res.set_content(control.handle_bytes(req.body, transport, req.remote_addr), "application/x-protobuf");
+    // The commands of the program, the same handlers as over a link, in JSON:
+    // /forge/api/commands (and /forge/api/tmtc, the old path).
+    const auto list_commands = [this](const http::Request&) {
+        json list = json::array();
+        for (const auto* c : app_.commands().list()) {
+            list.push_back({{"id", c->id},
+                            {"name", c->name},
+                            {"request", c->req ? json(c->req->name) : json(nullptr)},
+                            {"reply", c->rsp->name},
+                            {"push", c->is_push()}});
         }
+        return list;
+    };
+    http_->get_json(api + "/commands", list_commands);
+    http_->get_json(api + "/tmtc", list_commands);
+    // A command's messages, for the panel's forms.
+    const auto describe_command = [this](const http::Request& req) {
+        const auto& name = req.path_params.at("name");
+        const auto* cmd = app_.commands().find(std::string_view(name));
+        if (!cmd) throw Error(404, "no command '" + name + "'");
+        return json{{"id", cmd->id},
+                    {"name", cmd->name},
+                    {"push", cmd->is_push()},
+                    {"request", cmd->req ? pb::schema(*cmd->req) : json(nullptr)},
+                    {"reply", pb::schema(*cmd->rsp)}};
+    };
+    http_->get_json(api + "/commands/:name", describe_command);
+    http_->get_json(api + "/tmtc/:name", describe_command);
+    // The messages of a stream as they go out, a few per second, in JSON.
+    http_->get(api + "/streams/:name/watch", [this](const http::Request& req, http::Response& res) {
+        watch_stream(req.path_params.at("name"))->handler()(req, res);
     });
-    http_->get_json(api + "/logs", [this](const http::Request&) {
-        auto* sink = static_cast<WebLogSink*>(log_sink_.get());
-        return sink ? sink->history() : json::array();
+    const auto run_command = [this, &control](const http::Request& req, const json& body) {
+        const auto& name = req.path_params.at("name");
+        const bool number = !name.empty() && name.find_first_not_of("0123456789") == std::string::npos;
+        const auto* cmd = number && name.size() <= 5
+                              ? app_.commands().find(static_cast<std::uint16_t>(std::stoul(name)))
+                              : app_.commands().find(std::string_view(name));
+        if (!cmd) throw Error(404, "no command '" + name + "'");
+        if (cmd->is_push()) throw Error(501, "'" + name + "' is a report, not a command");
+        CallerScope caller(control.identify("web", req.remote_addr, {}, req.get_header_value("Authorization")));
+        return cmd->run_json(body);
+    };
+    http_->post_json(api + "/tmtc/:name", run_command);
+    // /forge/api/commands/<name>: a typed command by name or number; else the
+    // old path of an action (the panel of 0.3 and scripts written for it).
+    http_->post_json(api + "/commands/:name",
+                     [this, run_command, run_action](const http::Request& req, const json& body) {
+        const auto& name = req.path_params.at("name");
+        const bool number = !name.empty() && name.find_first_not_of("0123456789") == std::string::npos;
+        const bool typed = number ? app_.commands().find(static_cast<std::uint16_t>(std::stoul(name))) != nullptr
+                                  : app_.commands().find(std::string_view(name)) != nullptr;
+        if (typed) return run_command(req, body);
+        http::Request r = req;
+        r.path_params["id"] = name;
+        return run_action(r, body);
     });
+    http_->get_json(api + "/logs",
+                    [this](const http::Request&) { return weblog_ ? weblog_->history() : json::array(); });
     http_->get_json(api + "/alarms", [&alarms](const http::Request&) { return alarms.to_json(); });
-    http_->post_json(api + "/alarms/ack", [&alarms](const http::Request& req, const json&) {
-        return json{{"acknowledged", alarms.acknowledge_all("web " + req.remote_addr)}};
+    // Through the control service, like the `ack` command and the console: the
+    // role check and the audit record are the same on every channel.
+    http_->post_json(api + "/alarms/ack", [&control, web_caller](const http::Request& req, const json&) {
+        return json{{"acknowledged", control.ack("all", web_caller(req))}};
     });
-    http_->post_json(api + "/alarms/:id/ack", [&alarms](const http::Request& req, const json&) {
+    http_->post_json(api + "/alarms/:id/ack", [&alarms, &control, web_caller](const http::Request& req, const json&) {
         const auto id = req.path_params.at("id");
-        if (!alarms.acknowledge(id, "web " + req.remote_addr)) throw Error(404, "unknown alarm '" + id + "'");
+        control.ack(id, web_caller(req));
         return to_json(*alarms.get(id));
     });
-    alarms.on_change([this] { alarms_dirty_ = true; });
-    app_.audit().on_record([this](const v1::AuditRecord& r) {
-        if (events_) events_->publish("audit", proto::to_json(r));
-    });
+    subscriptions_.push_back(alarms.on_change([this] { alarms_dirty_ = true; }));
+    subscriptions_.push_back(app_.audit().on_record([this](const Audit::Record& r) {
+        if (events_) events_->publish("audit", to_json(r));
+    }));
     http_->events(api + "/events", events_);
 
     // "/" shows the application's own index.html when there is one, else the dashboard.
-    http_->get("/", [](const http::Request&, http::Response& res) { res.set_redirect("forge/"); });  // relative: also behind a proxy
+    http_->get("/", [](const http::Request&, http::Response& res) {
+        res.set_redirect("forge/");
+    });  // relative: also behind a proxy
 }
 
 void HttpFrontend::start(const Config& cfg) {
     if (!http_) return;
     const auto host = cfg.value<std::string>("http.host");
     http_->start(host, cfg.value<int>("http.port"));
+    if (http_->port() > 0) d_.endpoints.set("http", std::format("http://{}:{}/", host_name(), http_->port()));
     if (events_) {
         const auto refresh = std::max(cfg.value<int>("web.refresh_ms"), 50);
         app_.every(std::chrono::milliseconds(refresh), [this] { push_state(); });
         app_.logger()->info("web dashboard: http://{}:{}/forge/", is_loopback(host) ? "127.0.0.1" : host_name(),
                             http_->port());
     }
+    app_.every(std::chrono::seconds(5), [this] { drop_unwatched_streams(); });
+    if (events_ && !pages_root_.empty()) {
+        // Developing pages: a saved file reloads the open pages (not /forge/).
+        pages_signature_ = pages_signature(pages_root_);
+        app_.every(std::chrono::milliseconds(500), [this] {
+            const auto now = pages_signature(pages_root_);
+            if (now == pages_signature_) return;
+            pages_signature_ = now;
+            events_->publish("reload", json::object());
+        });
+        app_.logger()->info("web: pages reload when a file under {} changes", pages_root_);
+    }
+}
+
+std::size_t HttpFrontend::pages_signature(const std::string& root) {
+    // Names, sizes and times of the files: cheap enough for a page directory.
+    std::size_t h = 0;
+    std::error_code ec;
+    std::size_t n = 0;
+    for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator() && n < 5000; it.increment(ec), ++n) {
+        if (!it->is_regular_file(ec)) continue;
+        const auto t = it->last_write_time(ec).time_since_epoch().count();
+        const auto size = it->file_size(ec);
+        h = h * 1000003U ^ std::hash<std::string>{}(it->path().string()) ^ static_cast<std::size_t>(t) ^ size;
+    }
+    return h;
 }
 
 void HttpFrontend::stop() {
     if (http_) http_->stop();
-    if (log_sink_) {
-        log::remove_sink(log_sink_);
-        log_sink_.reset();
-    }
+    subscriptions_.clear();
+    weblog_.reset();
+    std::lock_guard lock(watch_mutex_);
+    watches_.clear();
+}
+
+std::shared_ptr<http::EventStream> HttpFrontend::watch_stream(const std::string& name) {
+    std::lock_guard lock(watch_mutex_);
+    if (auto it = watches_.find(name); it != watches_.end()) return it->second.events;
+    auto* stream = d_.messaging.find_stream(name);
+    if (!stream) throw Error(404, "no stream '" + name + "'");
+    auto events = std::make_shared<http::EventStream>(4);
+    const pb::Type& type = stream->type();
+    auto subscription = stream->watch([weak = std::weak_ptr(events), &type](const zmq::Message& m) {
+        auto events = weak.lock();
+        if (!events || events->clients() == 0) return;
+        std::vector<char> body(type.size);
+        const auto bytes = std::span(reinterpret_cast<const std::uint8_t*>(m.body.data()), m.body.size());
+        if (!pb::decode(type, bytes, body.data()).ok()) return;
+        events->publish("message", json{{"seq", m.header.seq},
+                                        {"time_unix_ns", m.header.time_unix_ns},
+                                        {"source", pb::view(m.header.source)},
+                                        {"type", type.name},
+                                        {"body", pb::to_json(type, body.data())}});
+    });
+    watches_[name] = {events, std::move(subscription), std::chrono::steady_clock::now()};
+    return events;
+}
+
+// A stream nobody has watched for a while costs nothing again.
+void HttpFrontend::drop_unwatched_streams() {
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard lock(watch_mutex_);
+    std::erase_if(watches_, [&](const auto& w) {
+        return w.second.events->clients() == 0 && now - w.second.since > std::chrono::seconds(10);
+    });
 }
 
 void HttpFrontend::reset() {
@@ -359,10 +476,6 @@ void HttpFrontend::push_state() {
     if (!changed.empty()) events_->publish("state", changed);
 }
 
-void HttpFrontend::add_endpoints(std::map<std::string, std::string>& e) const {
-    if (http_ && http_->port() > 0) e["http"] = fmt::format("http://{}:{}/", host_name(), http_->port());
-}
-
 // ---------------------------------------------------------------------------
 // LayoutStore
 
@@ -372,7 +485,8 @@ std::string LayoutStore::default_file(const std::string& name) {
         std::string dir(sd);
         return dir.substr(0, dir.find(':')) + "/web-layout.json";
     }
-    if (const char* xdg = std::getenv("XDG_STATE_HOME"); xdg && *xdg) return std::string(xdg) + "/" + name + "/web-layout.json";
+    if (const char* xdg = std::getenv("XDG_STATE_HOME"); xdg && *xdg)
+        return std::string(xdg) + "/" + name + "/web-layout.json";
     if (const char* home = std::getenv("HOME"); home && *home) {
         return std::string(home) + "/.local/state/" + name + "/web-layout.json";
     }
@@ -404,7 +518,7 @@ void LayoutStore::load(std::string file, const std::string& app_name, const Logg
 // ("@" cannot start a page name).
 namespace {
 constexpr const char* kUsers = "@users";
-}
+}  // namespace
 
 json LayoutStore::get(const std::string& page, const std::string& user) const {
     std::lock_guard lock(mutex_);

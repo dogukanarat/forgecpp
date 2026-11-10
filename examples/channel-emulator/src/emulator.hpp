@@ -20,10 +20,10 @@
 
 #include <atomic>
 #include <chrono>
-#include <vector>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace emulator {
 
@@ -36,7 +36,7 @@ public:
 
 protected:
     void setup_config(forge::config::Schema& s) override;
-    void setup_web(forge::web::Dashboard& ui) override;
+    void setup_controls(forge::Controls& ui) override;
     void on_start() override;
     void on_stop() override;
 

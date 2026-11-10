@@ -9,11 +9,11 @@
 //   app.metrics().gauge_fn("rx.queue", [this] { return double(queue_.size()); });
 //
 // Exposed on GET /metrics (Prometheus text format, names with '.' -> '_'),
-// /forge/api/metrics (JSON), forge.v1 GetMetrics (forgectl metrics) and the
+// /forge/api/metrics (JSON), the "metrics" command (forgectl metrics) and the
 // "metrics" event topic. Instruments are created once and never removed, so
 // keep the returned references; updates are lock-free.
 
-#include "forge/v1/observability.pb.h"
+#include "forge/json.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -79,39 +79,79 @@ private:
     std::chrono::steady_clock::time_point start_;
 };
 
+enum class Type { counter, gauge, histogram };
+const char* to_string(Type t);
+
+/// One metric as read at a moment.
+struct Sample {
+    std::string name, help, unit;
+    Type type = Type::counter;
+    double value = 0;                    ///< counter, gauge (NaN when a computed gauge failed)
+    std::vector<double> bounds;          ///< histogram upper bounds
+    std::vector<std::uint64_t> buckets;  ///< histogram counts, cumulative, per bound
+    std::uint64_t count = 0;             ///< histogram observations
+    double sum = 0;
+    std::map<std::string, std::string> labels;
+};
+
+struct Snapshot {
+    std::int64_t time_unix_ns = 0;
+    std::vector<Sample> metrics;
+};
+
+json to_json(const Snapshot& s);
+
 class Registry {
 public:
     Registry() = default;
     Registry(const Registry&) = delete;
     Registry& operator=(const Registry&) = delete;
 
+    /// Labels of one metric: the same name with other labels is another series
+    /// (forge_stream_sent{topic="iq"} and {topic="samples"}).
+    using Labels = std::map<std::string, std::string>;
+
     /// Get or create. Asking for an existing name with another type throws.
     Counter& counter(const std::string& name, const std::string& help = {}, const std::string& unit = {});
+    Counter& counter(const std::string& name, const Labels& labels, const std::string& help = {},
+                     const std::string& unit = {});
     Gauge& gauge(const std::string& name, const std::string& help = {}, const std::string& unit = {});
+    Gauge& gauge(const std::string& name, const Labels& labels, const std::string& help = {},
+                 const std::string& unit = {});
     Histogram& histogram(const std::string& name, std::vector<double> bounds, const std::string& help = {},
                          const std::string& unit = {});
+    Histogram& histogram(const std::string& name, const Labels& labels, std::vector<double> bounds,
+                         const std::string& help = {}, const std::string& unit = {});
     /// Gauge computed when read (e.g. queue sizes). Replaces an earlier one of that name.
     void gauge_fn(const std::string& name, std::function<double()> fn, const std::string& help = {},
                   const std::string& unit = {});
+    void gauge_fn(const std::string& name, const Labels& labels, std::function<double()> fn,
+                  const std::string& help = {}, const std::string& unit = {});
+    /// Forget a metric (a stream or a link that is gone); nothing happens when it is unknown.
+    void remove(const std::string& name, const Labels& labels = {});
 
     /// Labels added to every exported metric (e.g. app="radio-controller").
     void set_labels(std::map<std::string, std::string> labels);
 
-    v1::MetricsSnapshot snapshot(const std::string& prefix = {}) const;
+    Snapshot snapshot(const std::string& prefix = {}) const;
     /// Prometheus text exposition format 0.0.4.
     std::string prometheus() const;
     std::vector<std::string> names() const;
 
 private:
     struct Entry {
-        v1::Metric::Type type = v1::Metric::TYPE_UNSPECIFIED;
-        std::string help, unit;
+        Type type = Type::counter;
+        std::string name, help, unit;
+        Labels labels;
         std::unique_ptr<Counter> counter;
         std::unique_ptr<Gauge> gauge;
         std::unique_ptr<Histogram> histogram;
         std::function<double()> fn;
+        mutable bool fn_failed = false;  // its first failure is logged
     };
-    Entry& entry(const std::string& name, v1::Metric::Type type, const std::string& help, const std::string& unit);
+    Entry& entry(const std::string& name, const Labels& labels, Type type, const std::string& help,
+                 const std::string& unit);
+    static std::string key_of(const std::string& name, const Labels& labels);
 
     mutable std::mutex mutex_;
     std::map<std::string, Entry> entries_;

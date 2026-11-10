@@ -1,5 +1,5 @@
-#include <forge/thread_pool.hpp>
 #include <forge/testing.hpp>
+#include <forge/thread_pool.hpp>
 
 #include <atomic>
 #include <numeric>

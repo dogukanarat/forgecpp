@@ -15,7 +15,7 @@ workers = 2               # 0 = number of CPUs
 enabled = true
 host = "127.0.0.1"
 port = 8080
-# threads = 8             # each open browser tab keeps one thread for live updates
+# threads = 12            # each open browser tab keeps one thread for live updates
 
 # [http.auth]             # protect the web UI and API (recommended on a network)
 # user = "admin"
@@ -35,6 +35,8 @@ log_level = "info"
 # history = "~/.sensor-service_history"
 
 [sensor]
-rate_hz = 10
+rate_hz = 10              # samples per second (the SimSensor component)
+
+[stats]
 window = 50               # samples per statistics window
 alarm_threshold = 80.0

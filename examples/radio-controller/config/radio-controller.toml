@@ -49,14 +49,14 @@ splitter = false              # true: the cable goes through a splitter into eve
 loopback_db = -20             # TX output -> RX input (cable, splitter, attenuators), at TX attenuation 0
 loopback_cfo_hz = 0           # frequency error of the received copy (e.g. 1200 for two oscillators)
 
-# forge.v1 standard endpoints (same keys in every forgecpp application)
+# Standard endpoints (same keys in every forgecpp application)
 [forge]
-control = "tcp://*:5557"      # forgectl, remote panels: forge.v1 requests (older JSON commands too)
+control = "tcp://*:5557"      # commands (c2 frames): forgectl, other programs
 events = "tcp://*:5559"       # state, alarms, log, audit, health, metrics
 data = "tcp://*:5555"         # streams: "iq" (every buffer of rx_channels), "rx1"/"rx2" (tap_rx)
 
 [zmq]
-tx = "tcp://*:5556"           # PULL: radio.v1.TxBlock + cs16 samples (cyclic = repeat the frame)
+tx = "tcp://*:5556"           # PULL: radio.tx_block + cs16 samples (cyclic = repeat the frame)
 
 [console]
 telnet = "0.0.0.0:2323"       # remote console: telnet <board> 2323 (empty = off)

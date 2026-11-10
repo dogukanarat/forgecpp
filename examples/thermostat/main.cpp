@@ -56,13 +56,14 @@ Settings settings_from_json(const json& j, Settings base) {
         }
         const double v = j[key].get<double>();
         if (v < lo || v > hi) {
-            errors[key] = fmt::format("must be between {} and {}", lo, hi);
+            errors[key] = std::format("must be between {} and {}", lo, hi);
             return;
         }
         out = v;
     };
     if (j.contains("room")) {
-        if (!j["room"].is_string() || j["room"].get<std::string>().empty() || j["room"].get<std::string>().size() > 40) {
+        if (!j["room"].is_string() || j["room"].get<std::string>().empty() ||
+            j["room"].get<std::string>().size() > 40) {
             errors["room"] = "1 to 40 characters";
         } else {
             base.room = j["room"].get<std::string>();
@@ -76,7 +77,8 @@ Settings settings_from_json(const json& j, Settings base) {
         base.min_setpoint >= base.max_setpoint) {
         errors["max_setpoint"] = "must be above the minimum setpoint";
     }
-    if (!errors.empty()) throw HttpError(422, "invalid settings", json{{"error", "invalid settings"}, {"fields", errors}});
+    if (!errors.empty())
+        throw HttpError(422, "invalid settings", json{{"error", "invalid settings"}, {"fields", errors}});
     return base;
 }
 
@@ -94,7 +96,7 @@ protected:
     }
 
     // Controls shared by the custom pages (data-forge-*), /forge/ and the console.
-    void setup_web(forge::web::Dashboard& ui) override {
+    void setup_controls(forge::Controls& ui) override {
         ui.title("Thermostat");
         ui.link("Overview", "/");
         ui.link("Settings", "/settings.html");
@@ -106,8 +108,9 @@ protected:
             .precision(1);
         climate.value("outside", "Outside", outside_).unit("°C").precision(1);
         climate.value("status", "Status", [this] { return status(); });
-        climate.slider("setpoint", "Setpoint", [this] { return setpoint_; },
-                       [this](double v) { set_setpoint(v); }, 5, 35, 0.5)
+        climate
+            .slider("setpoint", "Setpoint", [this] { return setpoint_; }, [this](double v) { set_setpoint(v); }, 5, 35,
+                    0.5)
             .unit("°C")
             .precision(1);
         climate.select("mode", "Mode", {"off", "heat", "cool", "auto"}, mode_);
@@ -126,9 +129,8 @@ protected:
                 return out;
             });
         });
-        server.get_json("/api/settings", [this](const forge::http::Request&) {
-            return invoke([this] { return to_json(settings_); });
-        });
+        server.get_json("/api/settings",
+                        [this](const forge::http::Request&) { return invoke([this] { return to_json(settings_); }); });
         server.put_json("/api/settings", [this](const forge::http::Request& req, const json& body) {
             return invoke([&] {
                 settings_ = settings_from_json(body, settings_);  // throws 422 with field errors
@@ -145,8 +147,8 @@ protected:
         const auto cfg = config();
         settings_file_ = cfg.value<std::string>("thermostat.settings_file");
         load_settings();
-        setpoint_ = std::clamp(cfg.value<double>("thermostat.setpoint"), settings_.min_setpoint,
-                               settings_.max_setpoint);
+        setpoint_ =
+            std::clamp(cfg.value<double>("thermostat.setpoint"), settings_.min_setpoint, settings_.max_setpoint);
         every(1s, [this] { step(); });
     }
 
@@ -172,17 +174,22 @@ private:
         const double h = settings_.hysteresis;
         const bool can_heat = !fault_ && (mode_ == "heat" || mode_ == "auto");
         const bool can_cool = !fault_ && (mode_ == "cool" || mode_ == "auto");
-        if (!can_heat || room_ > setpoint_ + h) heating_ = false;
-        else if (room_ < setpoint_ - h) heating_ = true;
-        if (!can_cool || room_ < setpoint_ - h) cooling_ = false;
-        else if (room_ > setpoint_ + h) cooling_ = true;
+        if (!can_heat || room_ > setpoint_ + h)
+            heating_ = false;
+        else if (room_ < setpoint_ - h)
+            heating_ = true;
+        if (!can_cool || room_ < setpoint_ - h)
+            cooling_ = false;
+        else if (room_ > setpoint_ + h)
+            cooling_ = true;
 
         alarms().set("sensor.fault", fault_, forge::Severity::error,
                      "Temperature sensor not responding - heating and cooling stopped");
         if (!fault_) {
             if (room_ > settings_.high_alarm) {
-                alarms().raise("temperature.high", forge::Severity::warning,
-                               fmt::format("{}: {:.1f} °C is above {:.1f} °C", settings_.room, room_, settings_.high_alarm));
+                alarms().raise(
+                    "temperature.high", forge::Severity::warning,
+                    std::format("{}: {:.1f} °C is above {:.1f} °C", settings_.room, room_, settings_.high_alarm));
             } else if (room_ < settings_.high_alarm - 0.5) {
                 alarms().clear("temperature.high");
             }

@@ -1,0 +1,25 @@
+# forgecpp's layout (docs/CODING_STANDARDS.md). tools/check.sh --format checks it,
+# tools/check.sh --fix applies it.
+BasedOnStyle: Google
+Language: Cpp
+Standard: c++20
+ColumnLimit: 120
+IndentWidth: 4
+AccessModifierOffset: -4
+DerivePointerAlignment: false
+PointerAlignment: Left
+AllowShortFunctionsOnASingleLine: All
+AllowShortCaseLabelsOnASingleLine: true
+AlignTrailingComments:
+  Kind: Leave
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortLambdasOnASingleLine: All
+LambdaBodyIndentation: OuterScope
+BreakBeforeBraces: Attach
+SpaceBeforeCpp11BracedList: false
+Cpp11BracedListStyle: true
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive
+FixNamespaceComments: true
+ShortNamespaceLines: 0

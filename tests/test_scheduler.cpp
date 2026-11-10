@@ -2,6 +2,7 @@
 #include <forge/testing.hpp>
 
 #include <atomic>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -38,6 +39,51 @@ TEST_CASE("scheduler: cancel before due and custom executor") {
     CHECK(forge::testing::wait_until([&] { return executed == 1; }));
     std::this_thread::sleep_for(80ms);
     CHECK_FALSE(ran);
+}
+
+TEST_CASE("scheduler: cancel() also stops a task the executor has not run yet") {
+    // An executor that queues (forge::Application posts timer tasks to its main
+    // loop): the task is handed over, then cancelled, then the queue runs.
+    std::mutex mutex;
+    std::vector<forge::Scheduler::Task> queue;
+    forge::Scheduler s([&](forge::Scheduler::Task t) {
+        std::lock_guard lock(mutex);
+        queue.push_back(std::move(t));
+    });
+    const auto run_queue = [&] {
+        std::vector<forge::Scheduler::Task> tasks;
+        {
+            std::lock_guard lock(mutex);
+            tasks.swap(queue);
+        }
+        for (auto& t : tasks) t();
+        return tasks.size();
+    };
+    const auto queued = [&] {
+        std::lock_guard lock(mutex);
+        return queue.size();
+    };
+
+    int once = 0, periodic = 0;
+    const auto one = s.after(1ms, [&] { ++once; });
+    const auto many = s.every(1ms, [&] { ++periodic; });
+    CHECK(forge::testing::wait_until([&] { return queued() >= 2; }));
+    CHECK(s.cancel(one));   // handed over, not run: still known, and it never runs
+    CHECK(s.cancel(many));  // the ticks in the queue do nothing
+    CHECK_FALSE(s.cancel(one));
+    CHECK(run_queue() >= 2);
+    CHECK(once == 0);
+    CHECK(periodic == 0);
+    CHECK(s.pending() == 0);
+
+    // The one that runs is forgotten afterwards.
+    const auto other = s.after(1ms, [&] { ++once; });
+    CHECK(forge::testing::wait_until([&] { return queued() >= 1; }));
+    CHECK(s.pending() == 1);
+    run_queue();
+    CHECK(once == 1);
+    CHECK(s.pending() == 0);
+    CHECK_FALSE(s.cancel(other));
 }
 
 TEST_CASE("scheduler: run_immediately and exceptions") {

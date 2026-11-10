@@ -11,7 +11,7 @@ using forge::Severity;
 TEST_CASE("alarms: raise, repeat, acknowledge, clear") {
     forge::Alarms alarms;
     int changes = 0;
-    alarms.on_change([&] { ++changes; });
+    auto sub = alarms.on_change([&] { ++changes; });
 
     CHECK(alarms.raise("tank", Severity::warning, "level 91 %"));
     CHECK_FALSE(alarms.raise("tank", Severity::warning, "level 93 %"));  // repeat: same entry
@@ -39,6 +39,12 @@ TEST_CASE("alarms: raise, repeat, acknowledge, clear") {
     CHECK(alarms.active_count() == 0);
     CHECK_FALSE(alarms.acknowledge("nope"));
     CHECK(changes >= 5);
+
+    // Without its subscription the listener is not called any more.
+    sub.reset();
+    const int before = changes;
+    alarms.raise("tank", Severity::warning, "again");
+    CHECK(changes == before);
 }
 
 TEST_CASE("alarms: flapping condition stays one entry until acknowledged") {
@@ -133,6 +139,14 @@ TEST_CASE("application: alarm API and health summary") {
     app.alarms().raise("b", Severity::info, "y");
     CHECK(client.post_json("/forge/api/alarms/ack", forge::json::object())["acknowledged"] == 2);
     CHECK(client.get_json("/health")["alarms"]["pending"] == 0);
+
+    // Through the control service: the same audit records as the `ack` command.
+    std::vector<std::string> acked_targets;
+    for (const auto& r : app.audit().list()) {
+        if (r.action == "ack") acked_targets.push_back(r.target + (r.ok ? "" : "!"));
+    }
+    CHECK(acked_targets == std::vector<std::string>{"pump.dry", "nope!", "all"});
+    CHECK(app.audit().list().back().channel == "web");
 
     app.stop();
     runner.join();

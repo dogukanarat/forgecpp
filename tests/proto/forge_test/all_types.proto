@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+import "nanopb.proto";
+
+package forge_test;
+
+// Every kind of field forge::pb handles, for the encode / JSON tests.
+
+enum color {
+    color_none = 0;
+    red = 1;
+    green = 2;
+    blue = 7;
+}
+
+message inner {
+    int32 a = 1;
+    string s = 2 [(nanopb).max_size = 9];
+}
+
+message all_types {
+    bool b = 1;
+    int32 i32 = 2;
+    int64 i64 = 3;
+    uint32 u32 = 4;
+    uint64 u64 = 5;
+    sint32 s32 = 6;
+    sint64 s64 = 7;
+    fixed32 f32 = 8;
+    fixed64 f64 = 9;
+    sfixed32 sf32 = 10;
+    sfixed64 sf64 = 11;
+    float fl = 12;
+    double db = 13;
+    string text = 14 [(nanopb).max_size = 17];
+    bytes data = 15 [(nanopb).max_size = 8];
+    bytes key = 16 [(nanopb).max_size = 4, (nanopb).fixed_length = true];
+    color colour = 17;
+    inner one = 18;
+    repeated int32 list = 19 [(nanopb).max_count = 4];
+    repeated inner many = 20 [(nanopb).max_count = 3];
+    repeated string words = 21 [(nanopb).max_count = 3, (nanopb).max_size = 6];
+    oneof choice {
+        uint32 number = 22;
+        string name = 23 [(nanopb).max_size = 8];
+        inner nested = 24;
+    }
+    optional int32 maybe = 25;
+}

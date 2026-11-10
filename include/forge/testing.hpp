@@ -12,6 +12,7 @@
 
 #include <doctest/doctest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -66,6 +67,20 @@ inline double timeout_scale() {
     return scale;
 }
 
+/// True when the build can keep up with real time: no sanitizer and no
+/// FORGE_TEST_TIMEOUT_SCALE above 1 (emulation). Tests of throughput and
+/// timing check their numbers only then; the rest of the test still runs.
+inline bool realtime() {
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    return false;
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+    return false;
+#endif
+#endif
+    return timeout_scale() == 1.0;
+}
+
 /// Poll `predicate` until it is true or `timeout` (times timeout_scale()) expires.
 inline bool wait_until(const std::function<bool()>& predicate,
                        std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
@@ -105,16 +120,48 @@ public:
         std::ofstream(config) << "# test configuration: everything comes from -D\n";
         // No registration with a hub that may run on the machine (pass -D hub.register=true to test it).
         // Card layouts stay in the test's directory, not in ~/.local/state.
-        args_ = {"app", "-c", config.string(), "-D", "log.console=false", "-D", "hub.register=false",
-                 "-D", "web.layout_file=" + (dir_ / "web-layout.json").string()};
+        args_ = {"app",
+                 "-c",
+                 config.string(),
+                 "-D",
+                 "log.console=false",
+                 "-D",
+                 "hub.register=false",
+                 "-D",
+                 "web.layout_file=" + (dir_ / "web-layout.json").string()};
         args_.insert(args_.end(), args.begin(), args.end());
         for (auto& a : args_) argv_.push_back(a.data());
-        auto started = std::make_shared<std::promise<void>>();
-        auto future = started->get_future();
-        app_->hook_start([started](auto& a) { a.post([started] { started->set_value(); }); });
-        thread_ = std::thread([this] { exit_code_ = app_->run(static_cast<int>(argv_.size()), argv_.data()); });
-        if (future.wait_for(std::chrono::seconds(20)) != std::future_status::ready) {
-            throw std::runtime_error("application did not start within 20 s");
+        // Settled once: by the start, or by run() returning first (a bad configuration).
+        struct Start {
+            std::promise<void> promise;
+            std::atomic<bool> settled{false};
+        };
+        auto start = std::make_shared<Start>();
+        auto future = start->promise.get_future();
+        app_->hook_start([start](auto& a) {
+            a.post([start] {
+                if (!start->settled.exchange(true)) start->promise.set_value();
+            });
+        });
+        thread_ = std::thread([this, start] {
+            exit_code_ = app_->run(static_cast<int>(argv_.size()), argv_.data());
+            if (!start->settled.exchange(true)) {
+                start->promise.set_exception(std::make_exception_ptr(
+                    std::runtime_error("the application ended with code " + std::to_string(exit_code_) +
+                                       " before it started (-D log.console=true shows why)")));
+            }
+        });
+        const auto limit =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::seconds(20) * timeout_scale());
+        if (future.wait_for(limit) != std::future_status::ready) {
+            stop();
+            throw std::runtime_error("the application did not start within " + std::to_string(limit.count()) + " ms");
+        }
+        try {
+            future.get();
+        } catch (...) {
+            thread_.join();
+            throw;
         }
     }
     ~AppRunner() { stop(); }

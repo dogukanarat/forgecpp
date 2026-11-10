@@ -1,0 +1,15 @@
+# telemetry-store example configuration
+
+[telemetry]
+backlog = "backlog.db"   # on a device: /var/lib/telemetry-store/backlog.db
+max_records = 100000
+period_ms = 100
+outbox = "outbox"
+batch_bytes = 16384
+downlink_bps = 64000     # a pass at 64 kbit/s
+contact = false          # the "Contact" control starts a pass
+
+[http]
+enabled = true
+host = "127.0.0.1"
+port = 8080

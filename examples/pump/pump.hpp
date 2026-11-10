@@ -4,17 +4,28 @@
 // readings and heavy work done off the main loop.
 #pragma once
 
+#include "pump.forge.hpp"
+
 #include <forge/forge.hpp>
 
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
 class Pump : public forge::Application {
 public:
-    Pump() : Application({"pump", "1.0.0", "Tutorial pump controller"}) {}
+    Pump() : Application({"pump", "1.0.0", "Tutorial pump controller"}) {
+        // A command of its own (pump.proto): binary on the link, JSON on
+        // POST /forge/api/commands/history. The handler runs on the main loop.
+        command<pump_history_request, pump_history_reply>(pump_msg_id_history, "history",
+                                                          [this](const auto& req, auto& rsp) {
+            const auto n = std::min<std::size_t>(req.count, history.size());
+            return forge::pb::assign(rsp.pressure_bar, rsp.pressure_bar_count, std::span(history).last(n));
+        }, forge::Role::viewer);  // a query: no role needed, nothing to audit
+    }
 
     // State: on the main loop only (docs/threading.md).
     double speed_rpm = 1200;    ///< setpoint
@@ -32,8 +43,8 @@ protected:
         s.integer("pump.alarm_after_s", 3, "Overpressure this long raises the alarm").range(0, 600).unit("s");
     }
 
-    // One declaration: web panel, forgectl, forge.v1, console and telnet.
-    void setup_web(forge::web::Dashboard& ui) override {
+    // One declaration: web panel, forgectl, the command link, console and telnet.
+    void setup_controls(forge::Controls& ui) override {
         auto& drive = ui.group("Drive");
         drive.number("speed_rpm", "Speed", speed_rpm).range(0, 3000, 10).unit("rpm").persist();
         drive.value("running", "Running", running);
@@ -47,14 +58,13 @@ protected:
         readings.number("limit_bar", "Alarm limit", limit_bar).range(1, 20, 0.1).unit("bar");
 
         // A command with typed parameters: forgectl call flush seconds=5
-        ui.group("Service").command("flush", "Flush", {forge::web::number_param("seconds", 10).range(1, 60)},
-                                    [this](const forge::json& a) {
-                                        running = true;
-                                        const auto s = a["seconds"].get<double>();
-                                        after(std::chrono::milliseconds(static_cast<int>(s * 1000)),
-                                              [this] { running = false; });
-                                        return forge::json{{"flushing_s", s}};
-                                    });
+        ui.group("Service").action("flush", "Flush", {forge::web::number_param("seconds", 10).range(1, 60)},
+                                   [this](const forge::json& a) {
+            running = true;
+            const auto s = a["seconds"].get<double>();
+            after(std::chrono::milliseconds(static_cast<int>(s * 1000)), [this] { running = false; });
+            return forge::json{{"flushing_s", s}};
+        });
         ui.group("Service").button("export", "Export history", [this] { export_history(); });
     }
 
@@ -62,7 +72,7 @@ protected:
         const auto cfg = config();
         limit_bar = cfg.value<double>("pump.limit_bar");
         alarm_after_ = std::chrono::seconds(cfg.value<int>("pump.alarm_after_s"));
-        readings_ = &stream("pressure", "forge.v1.Values");
+        readings_ = &stream<pump_reading>("pressure");
         every(std::chrono::milliseconds(cfg.value<int>("pump.sample_ms")), [this] { sample(); });
     }
 
@@ -81,7 +91,7 @@ private:
             if (!over_since_) over_since_ = now();
             if (now() - *over_since_ >= alarm_after_) {
                 alarms().raise("pump.overpressure", forge::Severity::error,
-                               fmt::format("Pressure {:.1f} bar above {:.1f} bar", pressure_bar, limit_bar));
+                               std::format("Pressure {:.1f} bar above {:.1f} bar", pressure_bar, limit_bar));
             }
         } else if (pressure_bar < limit_bar * 0.95) {
             over_since_.reset();
@@ -90,9 +100,7 @@ private:
 
         // The stream: only built when someone listens.
         if (readings_->wanted()) {
-            forge::v1::Values v;
-            (*v.mutable_values())["pressure_bar"] = forge::proto::to_value(pressure_bar);
-            readings_->publish(v);
+            readings_->publish(pump_reading{pressure_bar, speed_rpm, running});
         }
     }
 

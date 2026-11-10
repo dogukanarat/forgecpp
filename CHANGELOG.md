@@ -2,9 +2,629 @@
 
 forgecpp follows [semantic versioning](https://semver.org). Until 1.0 a minor
 version may break the C++ API: the library's SOVERSION is `<major>.<minor>`
-and `find_package(forgecpp 0.3)` only accepts 0.3.x. The forge.v1 protocol
-(`proto/forge/v1`) only changes compatibly; CI compares it with the API of
-the last release (`proto/forge/v1/API.json`, `tools/proto-compat.py`).
+and `find_package(forgecpp 0.4)` only accepts 0.4.x. The messages
+(`proto/forge`) only change compatibly; CI compares them with the API of
+the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
+
+## Unreleased (0.4.0)
+
+### Added
+
+- **c2** (`forge/c2.hpp`): the command-and-control message of zephyrus, byte for
+  byte: the 8-byte header (version, flags, command number, sequence number,
+  length), the flags, and the NACK status. forgecpp and zephyrus devices can
+  now exchange messages directly. The codec does not allocate and does not
+  throw.
+- **forge::Status** (`forge/status.hpp`): the int32 status of zephyrus (bit 31,
+  module id, error code). Error codes on the wire use the errno numbers of
+  Zephyr; Status converts them to the numbers of the host (ENOSYS is 38 on
+  Linux and 88 on Zephyr). `http_status()` gives the HTTP answer for the web.
+- Wire compatibility tests: `-DFORGE_ZEPHYRUS_DIR=<zephyrus>` builds the C code
+  of zephyrus on the host and compares it with forgecpp on the same input.
+- **Serial link** (`forge/serial.hpp`): c2 frames on a UART or USB CDC line,
+  framed as zephyrus's `modules/lib/cobs` (COBS, CRC16-CCITT, fragments of at
+  most 255 per message). `serial::Link` works both ways: `call()` to the other
+  end, `on_request` for its requests, `push()` and `on_push` for reports.
+  `[forge].serial`, `serial_baud`, `serial_frame_size` answer the
+  application's commands on a tty, as `[forge].control` does on ZeroMQ. The
+  compatibility tests compare the bytes and the decisions on damaged streams
+  with zephyrus's C code. Python: `forge.serial.Client` (standard library only).
+- radio-controller: typed commands `tune` and `status` (`radio.proto`).
+- `docs/CODING_STANDARDS.md`: the rules of forgecpp, from the principles of
+  zephyrus, with the naming of forgecpp.
+- `tools/check-layers.py` (test `forgecpp_layers`): each module uses only
+  modules of its own level or lower (core, services, link, front ends,
+  application).
+- **Commands (tmtc)** (`forge/tmtc.hpp`): every command is a request and a
+  reply with a number, in a `tmtc::Registry`. `tmtc::Dispatcher` answers c2
+  frames (reply, ACK, NACK with the status, replies in parts with the "more"
+  flag); the same handler answers JSON (`POST /forge/api/tmtc/<name or
+  number>`, list: `GET /forge/api/tmtc`). `Application::command<Req, Rsp>()`
+  adds one that runs on the main loop. forgecpp's own commands use numbers
+  0x0001..0x00FF (`proto/forge/messages.proto`); applications start at 0x0100.
+- **nanopb messages** (`forge/pb.hpp`, `third_party/nanopb`): protobuf
+  messages as C structs with a bound on every string, bytes and repeated
+  field, so no message allocates. `forge_add_proto()` generates them (and
+  `<stem>.forge.hpp` with the names for JSON); a field without a bound, a
+  map or a `google.protobuf` type is refused at build time. JSON: every field
+  written, 64-bit numbers as strings, enums by name, bytes as base64.
+- `forge::Subscription`, `forge::Listeners<Args...>` (`forge/subscription.hpp`):
+  a listener is removed when its Subscription goes (also while it runs on
+  another thread: the destructor waits). `log::add_listener()`,
+  `Alarms::on_change()`, `Audit::on_record()` and `Health::on_change()`
+  return one.
+- `forge::Remote` (`forge/remote.hpp`): get / set / press / call on another
+  program's command link (what spectrum-analyzer, qam-modem and
+  channel-emulator use to drive radio-controller).
+- `zmq::answer(registry, request)` serves a registry on a `zmq::Server`;
+  `zmq::make_message()` builds a stream message with the standard header.
+- Python: `forge.c2` (commands over the link, with parts and NACKs) and
+  `forge.framing` (streams), with `forge.messages_pb2` and `forge.hub_pb2`.
+- `forge::base64` (`forge/base64.hpp`), shared by auth, HTTP and the JSON of
+  bytes fields.
+- `tools/check.sh`: on this machine, what CI checks (format, layers, build,
+  tests, fuzz, API and message records); `--asan`, `--tsan PREFIX`,
+  `--tidy`, `--fix`. `tools/check.sh --install-hook` adds a quick pre-commit
+  check (`tools/git-hooks/pre-commit`).
+- `.clang-format`, `.clang-tidy`, `.editorconfig`; `CMakePresets.json`
+  (dev, release, asan, tsan, fuzz, armhf; libraries from `FORGECPP_DEPS`).
+- Panel: a **Commands** page (every command with a form built from its
+  request message, and a JSON editor with colours, live validation that says
+  the line and column of a mistake, Format, Tab and Ctrl+Enter; the reply
+  coloured the same way, with its time and a Copy button) and a **Watch** button per stream on
+  the Streams page (its messages as they go out, at most 5 a second, without
+  the blob). HTTP: `GET /forge/api/tmtc/<name>` (the request and reply
+  schemas), `GET /forge/api/streams/<name>/watch` (server-sent events).
+- Docs: `docs/protocol.md` (the c2 frame, flags, answers, the status and
+  its errno numbers: enough to write a client or a device) and
+  `docs/commands.md` (adding a command, step by step).
+- `forgectl tmtc [name ['{json}']]` lists or runs any command;
+  `forgectl stream <name> [-n N]` prints a stream's messages.
+- `pb::schema(type)`: a message's fields as JSON (kind, bits, bounds, enum
+  names, nested messages). `zmq::Stream::watch()`: see a stream's messages
+  from inside the program; costs one atomic read while nobody watches.
+- Browser tests of the panel (`tests/web`, Playwright): controls, buttons,
+  alarms, the Commands page and the stream inspector, against a small test
+  application. ctest runs them when node and Playwright are installed.
+- Fuzz targets for c2 frames, the dispatcher, protobuf bytes and JSON
+  (`tests/fuzz`): a short ctest by default, libFuzzer with
+  `-DFORGECPP_FUZZ=ON`.
+
+- `forge::Worker` (`forge/worker.hpp`): a named thread on `std::jthread` that
+  stops when asked; `forge::sleep_for(stop, d)` returns at once on stop.
+  `Application::worker(name, body)` applies `[threads.<name>]`, raises the
+  alarm `worker.<name>` when the body throws, and stops the thread before
+  `on_stop()`. sensor-service uses it.
+- `background(work, then, on_error)`: the error of `work` on the main loop.
+- `zmq::Sender::send_wait(message, timeout)`: waits for room instead of
+  dropping (backpressure); channel-emulator uses it.
+- `Group::value(id, label, ...)` takes a `std::atomic<T>`, a
+  `metrics::Counter` or a `metrics::Gauge` directly.
+- Generated systemd units are hardened: `NoNewPrivileges`, `PrivateTmp`,
+  `ProtectSystem=full`, `ProtectHome=read-only`, `ProtectControlGroups`,
+  `RestrictSUIDSGID`, `LockPersonality` (devices, `/sys` and real-time
+  priorities stay allowed); `forge_add_app(... NO_HARDENING)` leaves them out.
+- `.github/dependabot.yml`: monthly updates of the actions and the bundled
+  libraries (not protobuf, libzmq, libiio).
+- `forge::Error::module()`: the module a refusal goes out with on a link.
+- Panel: the log card filters by level and by text ("12 of 300").
+- `[web].live_reload` (on): with `web.root`, a saved file reloads the open
+  pages of the application (not `/forge/`).
+- `forgecpp-new --minimal [--with-command] [--with-stream]`.
+- `tools/release.sh <version>`: checks, records the APIs, dates the
+  CHANGELOG, commits and tags (no push).
+- `forgecpp_bench`: protobuf, c2 dispatch, serial framing, ZeroMQ command and
+  stream rates.
+- `get` and `set` carry the value in a typed member too (`number`, `flag`,
+  `text`; `oneof typed`), so a microcontroller needs no JSON parser.
+
+### Changed
+
+- A refusal by an application command's handler (a `forge::Error` it throws)
+  goes out on a link with module **app** (64) instead of tmtc; forgecpp's own
+  commands and forgecpp's checks (role, busy main loop) stay tmtc.
+- Python `c2.Client.call_parts()` no longer drops the parts before an ACK
+  that ends a list; `import forge.c2` no longer needs pyzmq until a
+  `c2.Client` is made.
+- `zmq::serve_control()` and `zmq::serve_application()` are declared in
+  `forge/control.hpp` (was `forge/zmq.hpp`): the transport no longer depends
+  on the application. Code that includes `forge/forge.hpp` needs no change.
+- **C++20** is required (was C++17): the library, its exported CMake target
+  (`cxx_std_20`), `forge_add_app()`, pkg-config (`-std=c++20`) and the
+  examples. Supported toolchains: GCC ≥ 13 or Clang ≥ 17 with libstdc++ 13
+  (Yocto scarthgap, Ubuntu 24.04, the armhf cross compiler). Applications
+  built against forgecpp must compile as C++20.
+- `std::format` instead of `fmt::format` everywhere (forgecpp no longer
+  re-exports fmt). Applications that used `fmt::format` through forgecpp's
+  headers include `<format>` and use `std::format`.
+- **Console: linenoise instead of replxx** (unmaintained since 2021).
+  linenoise is compiled into libforgecpp (no separate library). History, tab
+  completion and hints stay (the hint now also shows a command's arguments
+  from its help text); colouring of the typed command is gone. Output from
+  other threads and log lines are printed above the line being typed. Piped
+  input is read line by line and `stop()` interrupts it (it used to detach the
+  thread). A terminal without a window size no longer makes the console wait
+  for a cursor-position answer. `Console::Options` gained `input_fd` /
+  `output_fd`.
+- **Logging: Quill instead of spdlog**, behind forgecpp's own facade
+  (`forge/log.hpp`; Quill is header-only, `libspdlog.so` is gone). A log call
+  formats with `std::format` on the calling thread (the format string is
+  checked at compile time) and queues the text; a background thread
+  (`forge-log`) writes the terminal, the file, syslog, the history and the
+  listeners, so a log call never waits for a terminal or a disk.
+  - `forge::Logger` (`forge::log::Logger`) replaces
+    `std::shared_ptr<spdlog::logger>`: `logger()->info(...)` keeps working,
+    `logger().info(...)` too. Levels are `forge::log::Level` (`warn` is shown
+    as `warning`).
+  - `log.pattern` uses named fields instead of spdlog's flags:
+    `"[{time}] [{level}] [{logger}] {message}"`, plus `{thread}`, `{file}`,
+    `{line}`. Configuration files with a spdlog pattern (`%v`, ...) must be
+    changed.
+  - Levels are shown with three letters so the lines line up: `TRC DBG INF
+    WRN ERR CRT` (terminal, file, telnet, forgectl, web panel;
+    `log::short_name()`). JSON lines and the `level` of log messages keep the
+    full names (`info`, `warning`, ...).
+  - Colours: level colours on the console, in telnet (`color on|off`), in
+    `forgectl logs` / `watch` and in the web panel's log view. New key
+    `log.color` = `auto` (a terminal, `NO_COLOR` unset, not journald) |
+    `always` | `never`. Under journald each line carries its syslog priority
+    (`<4>`) instead.
+  - `FORGE_RT_TRACE..CRITICAL(logger, fmt, ...)` (`forge/log_rt.hpp`) for
+    real-time threads: the arguments are copied and formatted on the
+    background thread, the queue drops instead of blocking when full.
+  - `FORGE_INFO(...)` etc. log with the caller's file and line; they are no
+    longer compiled out by a compile-time level.
+  - `log::set_terminal_writer(fn)` replaces `set_console_sink()`;
+    `add_sink()` / `remove_sink()` are gone, use `add_listener()` (records as
+    `log::Record`). Listeners run on the logging thread: call
+    `log::flush()` before relying on a record having arrived.
+  - The logging thread blocks asynchronous signals (SIGTERM, SIGINT, ...), so
+    they reach the application's signal handling even when logging starts
+    first.
+- Version 0.4.0: `libforgecpp.so.0.4`, `find_package(forgecpp 0.4)`; the C++ API
+  record is `api/forgecpp-0.4.json`.
+- **forge.v1 is gone.** The command endpoint (`[forge].control`), the events,
+  the streams' header, forge-hub's registry and forgectl use c2 frames and
+  the nanopb messages of `proto/forge` instead of Google protobuf.
+  libforgecpp no longer links libprotobuf; protoc only runs on the build
+  machine (install.sh builds it for the host and installs it as
+  `share/forgecpp/protoc`), with Python's protobuf module for the generator.
+  - Streams: `stream<T>(name[, options])` instead of `stream(name,
+    "pkg.v1.Type")`; `Message::header` is a `forge_stream_header`;
+    `Message::as<T>()` takes a nanopb struct. The examples' messages are now
+    `radio.iq_block`, `radio.tx_block`, `sa.spectrum` (its levels are the
+    blob, float32) and `pump.reading`.
+  - `zmq::Client` sends c2 commands (`call()`, `call_parts()`, `request()`)
+    and returns a `Status`; `get()` / `set()` / `press()` / `call_command()` /
+    `request_json()` moved to `forge::Remote`. `zmq::Server` handlers return
+    the frames of the answer (`std::vector<std::string>`); `ServerOptions::busy`
+    answers requests that waited too long.
+  - The older JSON commands on the control endpoint (`{"cmd": ...}`),
+    `[forge].legacy_json`, `/forge/api/rpc`, `forge/proto.hpp`,
+    `zmq::serve_control()` and `ControlService::handle()` / `schema()` are
+    removed (the "commands" and "controls" commands list the same).
+  - Logs, audit records, health, alarms and metrics are plain C++ structs
+    (`log::Record`, `Audit::Record`, `Health::Report`, `metrics::Snapshot`)
+    with `to_json()`. `log::remove_listener()` is gone (reset the
+    Subscription).
+  - A refusal on the link is a NACK with the status (module and errno, in
+    Zephyr's numbering); only HTTP carries the text of the reason. c2 frames
+    carry no token: commands on a link get `[auth].default_role`.
+  - Python: the `forge` package replaces `forge-v1` (`from forge import
+    framing`); Yocto: `python3-forge` replaces `python3-forge-v1` (it
+    RPROVIDES the old name) and there is no `forgecpp-protoc` package any
+    more.
+  - `Application(info, installed_config)` and `zmq::Receiver(..., options)`
+  take `const std::string&` / `const Options&` (were by value).
+- `Application::command()` takes a role (default operator): the caller
+  needs it, and every call is written to the audit trail with its request.
+  `forge::Role::viewer` marks a query (no check, no record). Before, the
+  program's own commands were neither checked nor recorded.
+- `forge::testing::AppRunner` reports at once when the application ends
+  before it starts (it waited 20 s, then terminated the test program).
+- `Application::command()` throws when it is called after the links
+    started: add commands in the constructor or `setup_web()`.
+- `install.sh --profile embedded` keeps the libraries shared (it built them
+  static): the applications of a device share one `libforgecpp.so`,
+  `libzmq.so`, `libcpp-httplib.so` and `libiio.so`. `--static` still builds
+  static libraries.
+- CI: a push builds and tests once (g++); the other compilers, sanitizers,
+  the armhf build, the systemd job and the API reference run on pull
+  requests, weekly and by hand.
+
+### Fixed (after the review of the release candidate)
+
+- The Yocto recipes used `${UNPACKDIR}`, which scarthgap does not define:
+  they now take the unpack directory from `FORGECPP_UNPACKDIR`
+  (`conf/layer.conf`: `${WORKDIR}` on scarthgap, `${UNPACKDIR}` later).
+  `LAYERSERIES_COMPAT` names scarthgap only, the release the kas file builds.
+  `S` is the repository root for every recipe (the applications set
+  `OECMAKE_SOURCEPATH`), so the license checksums are plain relative paths.
+  `FORGECPP_SRCREV` is `${AUTOREV}` until `tools/release.sh` writes the
+  release's commit (it was a placeholder that could not be fetched).
+- The persistent controls: the forced save at shutdown could meet a write of
+  the pool in the same temporary file, or be overwritten by an older snapshot
+  written late. Writes are one at a time and carry a generation; an older one
+  never replaces a newer one. `write_file_atomic()` uses a temporary name of
+  its own for every call.
+- `Audit::flush()` returned while the writer still held the last batch; it
+  waits for the lines to be in the file. The file writer has a test.
+- `Config`: a wrong value says where it is in the file again
+  (`... must be integer (got string "eighty") at app.toml:2:8`), and a value
+  is converted straight from the parsed node instead of through JSON text.
+
+### Changed (the inside of Application)
+
+- `forge::Application` holds one pointer: its members are in
+  `Application::Impl` (`src/app/impl.hpp`), and the class has no `friend`
+  declarations left. The public and protected API is the same; an
+  application built against an earlier 0.4 header must be built again (the
+  size of the class changed).
+- The main loop is a class of its own (`src/app/main_loop.hpp`: the task
+  queue, `post()`, `invoke()` with its deadline, the lag and slow-task
+  figures), and so is the signal thread (`src/app/signals.hpp`). The command
+  line options are one struct. `run()` reads as its phases: prepare (command
+  line, configuration, logging), start, the loop, shutdown.
+- `ControlService` takes the "a value changed" callback in its constructor
+  instead of calling a private method of `Application`. `Component` has one
+  friend (`detail::ComponentAccess`) instead of `Application`.
+- `hook_cli()` hooks were stored and never called: they run after
+  `setup_cli()` now, and a test uses every lambda hook without a subclass.
+- A link could answer `info` while the main loop was still opening the next
+  link, and read a pointer that was being written (found by the thread
+  sanitizer on the serial link). The endpoints are kept in one locked table,
+  filled as each link opens.
+- `run()` puts the signal mask back also when it returns early (`--help-config`,
+  `--check-config`, a wrong configuration).
+
+### Added (hardware, storage)
+
+- **GPIO** (`forge/gpio.hpp`): `gpio::Output` and `gpio::Input` (bias,
+  active low, edges with `wait()`, debounce) on the kernel's GPIO character
+  device (uAPI v2, Linux 5.10+), the interface libgpiod 2 wraps, used
+  directly: no library to add. Chips by path, name or label; lines by name
+  or offset. A simulated chip (`"sim"`, `gpio::sim::drive()`/`level()`) for
+  tests and PCs.
+- **CAN** (`forge/can.hpp`): `can::Socket` for raw frames (classic and FD,
+  kernel filters) and ISO-TP channels. `[can]` (interface, tx_id, rx_id,
+  extended, fd, frame_size) answers the application's commands on the bus
+  like `[serial]` on a tty: the same c2 frames and zephyrus framing, one
+  framed piece per ISO-TP message (`serial::LinkOptions::frame_per_write`).
+  Health component `can`; it is tried again every second while the interface
+  is missing. Python: `forge.serial.Client.isotp()`. The generated systemd
+  unit allows `AF_CAN`.
+- **forgecpp::sqlite** (optional, `libforgecpp-sqlite`): `sqlite::Database`,
+  `Statement`, `Transaction` (WAL by default), and `forge::Backlog`, a store
+  and forward queue in an SQLite file (in order, at least once, the oldest
+  dropped when full, kept across restarts).
+- **forgecpp::lz4** (optional, `libforgecpp-lz4`): `lz4::compress()` and
+  `decompress()` in the LZ4 frame format (the `lz4` tool reads it), with a
+  checksum and a size limit for untrusted input.
+- Examples: `payload-power` (GPIO power switch and power-good as a state
+  machine), `can-node` (heartbeat, sensor frames, commands over ISO-TP, a
+  Python sensor node), `telemetry-store` (SQLite backlog and LZ4 batches
+  between ground passes), each with a test.
+- docs/hardware-io.md and docs/storage.md; the protocol page has the CAN
+  transport. Yocto: `forgecpp-sqlite` and `forgecpp-lz4` packages
+  (PACKAGECONFIG `sqlite`, `lz4`).
+- The links of `[serial]` and `[can]` share one implementation in the
+  framework (a list of links, each with its health component and metrics).
+
+### Changed (libraries and the Yocto layer)
+
+- SQLite (3.54.1) and LZ4 (v1.10.0) are submodules (`third_party/sqlite`,
+  `third_party/lz4`, shallow), built and installed by `install.sh` as shared
+  libraries like every other library, with their tools (`sqlite3`, `lz4`);
+  `--without-sqlite`, `--without-lz4`. SQLite's amalgamation is made on the
+  build machine by its own configure (no Tcl needed) and compiled by
+  `cmake/third_party/sqlite`. forgecpp prefers LZ4's CMake package and falls
+  back to pkg-config.
+- The Yocto layer needs only oe-core (`LAYERDEPENDS = "core"`). The libraries
+  it took from meta-oe and meta-python have recipes in `yocto/backfill/`,
+  used only when those layers are not in the build (`BBFILES_DYNAMIC` with
+  `!`): zeromq, cppzmq, nlohmann-json, cli11, libiio, protobuf (21.12),
+  python3-protobuf. `kas/qemuarm64-poky.yml` builds the image with poky and
+  this layer alone; the nightly workflow builds both variants.
+
+### Fixed (documentation and defaults)
+
+- `[http].threads` is 12 by default (was 8): with the default
+  `[web].max_clients` (8) every program warned at start that it had too few
+  HTTP threads.
+- The README shows the control panel, the Commands and Metrics pages, the
+  console, forge-hub and the spectrum analyzer's page (`docs/images`).
+- The documentation was read against the code and brought up to date: the
+  start-up order (`setup_cli` first), the `[serial]` / `[can]` / `[loop]`
+  names, the log defaults, `application.md`'s configuration block (repeated
+  sections and a `[metrics]` key that does not exist removed), the HTTP routes
+  and the security text of `web.md`, actions vs. commands, tutorial 8 (the
+  pump's `reading` message), the Yocto recipe of tutorial 7, the radio
+  controller's README (no JSON commands on the link any more), the layer's
+  packages, the API page's components.
+
+### Fixed (Yocto)
+
+- tomlplusplus and doctest are not in meta-oe: the layer did not resolve
+  with meta-oe either. Their recipes are now always the layer's.
+- forgecpp-tools asked for `protobuf`; protoc is in `protobuf-compiler`.
+- `python3-pyzmq` (meta-python only) is a recommendation of python3-forge and
+  the example clients, and only when meta-python is in the build; a missing
+  recommendation stops bitbake.
+- The recipes were checked with bitbake (scarthgap): they parse and
+  `bitbake -g core-image-minimal` resolves, with poky alone and with
+  meta-oe / meta-python.
+
+### Removed
+
+- `Application::call(fn)`: it did what `invoke(fn)` does (every use waited
+  for the future at once). Use `invoke(fn)`, or `invoke_for(timeout, fn)`
+  where the caller must not hang on a stuck loop. `<forge/application.hpp>`
+  no longer includes `<future>`.
+
+### Added (docs)
+
+- docs/threading.md, "Sequences: a state machine": steps with waits between
+  them as an explicit state machine (every wait a state, one `enter()`,
+  stale answers ignored, the state as a control), with a tested example
+  (`tests/test_state_machine.cpp`). C++20 coroutines were considered and
+  left out for now; docs/ROADMAP.md says why. If they come back, the
+  design is: `forge::Task<T>` started with `spawn()`, resumed only on the
+  main loop (`co_await sleep(d)`, `co_await on_pool(fn)`,
+  `co_await next<Event>()`), cancelled before `on_stop()`, and
+  `background()` removed in their favour.
+
+### Changed (headers)
+
+- `forge/config.hpp` no longer includes toml++: the parser is behind
+  `Config`'s implementation (`Config` copies and moves as before;
+  `Config::set()` takes any JSON value, `table()` is gone, nothing used it).
+  `forge/application.hpp` no longer includes the thread pool or the channel
+  (`forge::ThreadPool` is a class deriving from BS::thread_pool, so it can be
+  named without its header; the main loop's queue is behind a pointer), and
+  the waiting code of `invoke()` moved into the library (`invoke_erased`).
+  A translation unit that includes `forge/application.hpp` parses about a
+  third less; `forge/forge.hpp` still brings everything, by design.
+- `Config::get/get_or/value/require`, `Channel::try_pop/pop/pop_for`,
+  `Scheduler::pending/next_due` are `[[nodiscard]]`.
+- One copy of the small helpers the library repeated (`pb::assign_truncated()`
+  for a text cut to its field; `crlf`, `constant_time_equal`, `host_name` in
+  `src/common.hpp`).
+- `docs/API.md` says what each header exposes and why hidden visibility waits
+  for the facade work.
+
+### Changed (build, packaging and the Yocto layer)
+
+- `forgecpp::testing` is an INTERFACE target that carries `testing_main.cpp`
+  as a source: no static library to install, so `find_package(forgecpp)`
+  works with the development package alone (before, a sysroot without
+  `libforgecpp_testing.a` failed every consumer's configure).
+- `forgecppConfig.cmake` finds the install's data and protoc directories
+  from its own location (`PATH_VARS`), whatever libdir and datadir are;
+  `FORGECPP_DATADIR` and `FORGECPP_LIBEXECDIR` are set for the helpers. The
+  protoc of a native install is in `libexec/forgecpp`; in a Yocto SDK
+  `forge_add_proto` finds the SDK's protoc (`OECORE_NATIVE_SYSROOT`); a cross
+  build takes the Python site directory from the sysroot.
+- Install components `Runtime` and `Development`; the development files no
+  longer include nanopb's Windows and Python 2 generator files or
+  `API.json`; an RPATH is only set for host installs (`FORGE_INSTALL_RPATH`).
+- pkg-config: OpenSSL and zlib are `Requires.private`; `-std=c++20` is no
+  longer in `Cflags` (the consumer chooses the standard; C++20 or later).
+- Generated units: `USER` or `DYNAMIC_USER` drop every capability unless
+  `CAPABILITIES CAP_...` names some (`CAP_NET_BIND_SERVICE` for port 80
+  without root); `NETWORK_ONLINE` waits for `network-online.target`, the
+  default is `network.target` (no boot delay for a daemon that only binds);
+  the hardening block adds `ProtectKernelModules`, `ProtectKernelLogs`,
+  `ProtectClock`, `ProtectHostname`, `ProtectProc=invisible`,
+  `RestrictNamespaces`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+  AF_NETLINK` and `SystemCallArchitectures=native`.
+- `install.sh --package` writes a reproducible tarball (sorted, no owner,
+  `SOURCE_DATE_EPOCH` or the commit's time).
+- **Yocto layer** (untested in a bitbake build in this change; read against
+  the scarthgap classes): the `forgecpp` recipe links the distribution's
+  libraries (meta-oe's `zeromq`, `cppzmq`, `nlohmann-json`, `cli11`,
+  `tomlplusplus`, `doctest`, `protobuf`, `libiio`) with plain `inherit cmake`
+  instead of running `install.sh` and packaging ten libraries into `/usr`;
+  new recipes `quill`, `cpp-httplib` and `concurrentqueue` (the versions of
+  the submodules, `native` and `nativesdk` too); `forgecpp-tools`
+  (`nativesdk-forgecpp-tools` gives the SDK `forgecpp-new` and the message
+  generator); `forgecpp-protoc-native` is gone (`protobuf-native`); ptest
+  (`forgecpp-ptest`: the framework's tests on the target); one
+  `forgecpp-src.inc` with the source and the release commit
+  (`FORGECPP_SRCREV`; `tools/release.sh` sets it; `${AUTOREV}` for a
+  development build) instead of `AUTOREV` and `SRCPV` in every recipe;
+  `S = ${UNPACKDIR}/git` for styhead and walnascar; licenses per package and
+  `LIC_FILES_CHKSUM` for what is compiled in; `CVE_PRODUCT`; the four
+  example recipes share `forgecpp-app.inc`. The kas image adds ptest.
+
+### Changed (API and configuration; the old names keep working)
+
+- **`setup_controls(forge::Controls&)`** is the hook that declares the control
+  registry (the panel, forgectl, the console, telnet and the links all use
+  it); `setup_web()` is its old name and is still called. `forge::Controls` is
+  `web::Dashboard`. The lambda forms `hook_controls`, `hook_config` and
+  `hook_cli` join `hook_start` and the others (hello uses them). The start-up
+  order is documented in application.md.
+- **`Group::action()`** declares a handler with typed parameters (the panel's
+  form, `forgectl call`, the console's `call`); `Group::command()` is
+  deprecated for it, because a *command* is a numbered request/reply pair
+  (`Application::command<Req, Rsp>()`). On the web: `POST /forge/api/actions/<id>`.
+- The program's commands are at **`/forge/api/commands`** (list, describe,
+  run) and **`forgectl command`**; `/forge/api/tmtc` and `forgectl tmtc` are
+  aliases. `POST /forge/api/commands/<name>` runs a typed command, or, for an
+  id that is not one, an action (the path the 0.3 panel used).
+- Configuration: **`[serial]`** (`device`, `baud`, `frame_size`) and
+  **`[loop]`** (`slow_task_ms`, `request_timeout_ms`, `max_pending_tasks`)
+  take the keys that were under `[forge]`, which keeps the links (`control`,
+  `events`, `data`, `metrics_interval_s`, `control_workers`). The old names
+  work with a warning (`config::Schema::alias()`; `--help-config` lists them).
+- Controls bind more types: `toggle`/`number` to a `std::atomic<T>`, `number`
+  to a `std::chrono::duration` (shown in a unit of your choice), `select` to
+  an enum with its names; `Control::slider()` shows a number as a slider.
+- `forgecpp-new --minimal` is the smallest shape (about 100 lines of C++, half of them comments);
+  the full scaffold shows the rest.
+- `examples/sensor-service` has a `forge::Component` (`SimSensor`: keys,
+  controls, worker, health) to show how an application is assembled from parts.
+- The Python clients are pip-installable: `pip install <build>/python`
+  (`pyproject.toml` is written there; package `forge-client`).
+- Docs: `docs/field-notes.md` (ports on a device, debugging under the
+  hardened unit, persisted controls and renames, time without an RTC, metric
+  names, a busy main loop, a serial line that comes and goes), tutorial 8
+  (consuming a stream in C++), `hub/README.md`, the full key table in
+  application.md (a test keeps it complete), F-008 scoped to modules shared
+  with zephyrus.
+
+### Added (observability and tests)
+
+- Metrics with labels: `counter(name, {{"topic", "iq"}}, ...)`, the same for
+  `gauge`, `histogram` and `gauge_fn`; `Registry::remove()`. The links and
+  streams export theirs: `forge.link.requests` / `forge.link.refused`
+  (`link="zmq"` or `link="serial",device=...`), `forge.serial.*`
+  (`messages_received`, `frames_dropped`, `messages_dropped`),
+  `forge.stream.sent` / `dropped` / `subscribers` (`topic=...`),
+  `forge.loop.queued`, `forge.loop.dropped`.
+- `docs/protocol.md` "What is guaranteed": commands at most once, streams at
+  most once and in order per publisher, the size cap of a serial line (about
+  60 kB), no heartbeat on the command link, static addresses.
+- `tests/fuzz/fuzz_serial.cpp`: the COBS framing against any byte stream
+  (`fuzz_serial` in ctest; `tools/check.sh --libfuzzer [seconds]` builds the
+  three fuzz targets with clang's libFuzzer and runs them against new inputs).
+- Tests for: a command handler that throws (EIO of the command's module), a
+  refusal in the middle of a list, a reply that does not fit the buffer
+  (EMSGSIZE of pb), `forge::Remote`, `forge::systemd::notify()` and
+  `watchdog_interval()`, `hub::Client` registering again when the hub comes
+  back, SIGHUP and SIGTERM through the signal thread, a `Status` message that
+  is not a literal, a subscription reset while its handler runs.
+- `forge::testing::realtime()`: true when the build keeps up with real time
+  (no sanitizer, no `FORGE_TEST_TIMEOUT_SCALE`); the throughput checks of the
+  qam-modem and channel-emulator tests use it, so a sanitizer build without
+  the variable no longer fails them. `AppRunner` scales its start-up timeout
+  with `timeout_scale()` too.
+- CMake warns (not a status line) when the panel's browser tests are skipped
+  for want of node and Playwright.
+
+### Fixed
+
+- The publish path of a stream allocates less and locks less: the source
+  name is read without a mutex or a copy, the stream header is encoded into
+  a fixed array, and a `BufferPool` handle's control block is recycled too
+  (`acquire()` allocates nothing once warm). The sequence number is given
+  where the message takes its place in the queue, so two threads publishing
+  one stream cannot swap the order of their numbers (the receiver counted
+  losses that were not there).
+- A publisher's queue is bounded per stream (`send_hwm` messages each, so a
+  busy stream does not starve the others) and in bytes for all its streams
+  (`SocketOptions::send_budget_bytes`, 64 MiB; `Publisher::queued_bytes()`).
+- The main loop's queue is bounded: `[forge].max_pending_tasks` (10000).
+  `post()` returns false and counts `forge.loop.dropped` beyond it; `invoke()`
+  and `call()` answer 503 instead of growing the queue until the OOM killer.
+  Metric `forge.loop.queued`. Tasks left when the application stops are
+  dropped, so a `call()` future gets a broken promise instead of never
+  resolving.
+- No periodic wake-ups when idle: the publisher, receiver and command server
+  threads sleep in poll on their sockets and an eventfd (they polled every
+  20 or 100 ms), the signal thread waits on a signalfd (every 200 ms), the
+  main loop on its queue (every 500 ms), telnet once a second (200 ms).
+- Log calls copy the trace tags only; the file and function names (static)
+  are passed by pointer (quill's hybrid metadata).
+- `forge::Status` is `[[nodiscard]]`, and its message can no longer dangle: a
+  string literal is kept by pointer as before, any other text (a `std::string`,
+  a `std::format()` result) is copied into a table the process keeps
+  (`forge::intern_message()`). `Status::error(module, code, text.c_str())` no
+  longer compiles; pass the `std::string`, or `Status::error_static()` for a
+  pointer that is known to be static. (`Status::error(uint16_t, int, const
+  char*)` is replaced before the 0.4.0 release; `api/forgecpp-0.4.json` was
+  recorded again.)
+- `EventBus::Subscription` is `forge::Subscription`: `reset()` and the
+  destructor return once a handler running on another thread is done. Before,
+  a handler could still be called after its owner was destroyed.
+- The callbacks of `metrics::gauge_fn()` run outside the registry's lock: one
+  that read another metric deadlocked, a slow one held every thread that
+  created a metric.
+- `tmtc::Registry::close()`: the application closes its command registry
+  when the links start; `add()` and `remove()` throw after that instead of
+  racing with the link threads.
+- A `worker()` whose body throws is a failed, critical component of health
+  (`worker.<name>`) in addition to the alarm, so the watchdog lets systemd
+  restart a program whose thread is gone. While it runs it is `ok`.
+- The command endpoint ([forge].control) and the serial line start after
+  `on_start()`, with HTTP: a request can no longer reach a half-started
+  component.
+- The crash handler runs on an alternate stack (`SA_ONSTACK`): a stack
+  overflow is reported too. `forge::Worker` and `configure_thread()` give
+  their threads one; `crash::use_alternate_stack()` for threads of your own
+  (a stack that is already installed, AddressSanitizer's for one, is kept).
+  The handler no longer calls `snprintf`.
+- The audit file is written by a thread of the audit trail; `record()` no
+  longer writes to disk on the caller's thread (the main loop for console
+  commands).
+- `serial::Port` is non-blocking and `write()` gives up after a timeout
+  (`ETIMEDOUT`, 1 s): a peer that stops taking bytes no longer blocks the
+  link's reader through its writer.
+- `zmq::SocketOptions::max_message_bytes`: the command endpoint refuses
+  parts larger than a c2 frame, senders and receivers larger than 64 MiB
+  (before: no limit). A receiver follows at most 1024 sources for gap
+  counting.
+- `pb::encode()` answers `EINVAL` for a wrong value in the struct (a count
+  above its bound, text without its terminator) and `EMSGSIZE` only when the
+  buffer is too small.
+- The Python clients check the protocol version and the length of every
+  frame; a frame of another version is refused instead of misread.
+- `[health].stall_ms` (5000): when `/health` says "stalled"; it was fixed.
+- `SIGHUP` opens the log file again (logrotate's `postrotate kill -HUP`
+  works) and applies `[health].watchdog_grace_s` again; `log::reopen()`.
+- `[http].threads` is raised to `[web].max_clients + 4` with a warning when
+  it is lower: every open page holds a thread, and the JSON API and `/health`
+  need some left.
+- Real-time threads: `configure_thread()` logs and preallocates the log
+  queue (`log::preallocate()`) before the priority goes up, not after.
+- `run()` puts the signal mask back as it found it when the application stops.
+- `Scheduler::cancel()` (`Application::cancel()`) also stops a timer task that
+  was already handed to the main loop but has not run yet; before, such a
+  task still ran after `cancel()` returned true, typically on an object that
+  was being destroyed. A one-shot task stays known until it ran, so cancelling
+  it from the main loop is exact.
+- `Group::value(id, label, ref)` refuses a temporary (`value("t", "T", read())`)
+  at compile time: it bound a reference to a dead object. Use the callable
+  overload for a computed value.
+- The persistent controls are written to their file on a pool thread; the
+  write (with `fsync`, slow on flash) blocked the main loop every second.
+- Acknowledging alarms over HTTP (`/forge/api/alarms/ack`,
+  `/forge/api/alarms/<id>/ack`) goes through the control service, like the
+  `ack` command and the console: the caller needs the operator role and the
+  acknowledgement is in the audit trail. Before, HTTP skipped both.
+- A `[forge].serial` line that is missing at start or goes away (an unplugged
+  USB adapter) no longer ends the command path for good: health reports it
+  as `serial` (not critical) and the line is opened again every second.
+  Before, a missing device stopped the program at start and a lost one was
+  never noticed.
+- A component whose `on_stop()` throws no longer skips the `on_stop()` of the
+  other components, of the application and of the stop hooks.
+- `tools/proto-compat.py` refuses a larger nanopb bound in a message a peer
+  receives (a reply, a report, a stream header): a device built against the
+  old bound refuses the whole message. Bounds may grow in requests only
+  ([protocol.md](docs/protocol.md#changing-the-messages)). `--self-test`
+  checks the rules (test `forge_proto_compat_rules`).
+- `tools/check.sh` builds and runs the zephyrus compatibility tests when
+  `ZEPHYRUS_DIR` (or `../zephyrus`) names a checkout; they were only run by hand.
+- `forge.c2.Client` (Python, ZeroMQ) sent every request with the `proto`
+  flag; it sends a plain request, as the serial client and protocol.md say.
+- `ENAMETOOLONG` (a text longer than its field) answers HTTP 400 instead of 500.
+- `pb::Message` no longer compares an object's address with null in a
+  concept: GCC with `-fsanitize=undefined` (or `-fno-delete-null-pointer-checks`)
+  refused it and no command compiled. forge-proto.py also writes
+  `pb::is_message<T>`; regenerate with the new forge-proto.py.
+- `tools/check.sh` reports a failed build instead of stopping with SIGPIPE.
+- A program whose `[forge].data` or `[forge].events` port is already taken
+  stops with "Address already in use" instead of aborting (`zmq::Publisher`
+  threw with its thread still running).
+
+- A log listener is removed only once it is no longer running: the web
+  panel's log view and the log events could be destroyed while the logging
+  thread was still calling them.
+- A telnet client that stops reading is disconnected after 5 s instead of
+  blocking whoever writes to it (the logging thread with `logs on`).
+- `zmq::set_source()` and the stream headers raced when two applications ran
+  in one process.
 
 ## 0.3.0
 

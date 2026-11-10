@@ -16,7 +16,7 @@ void export_history() {
 }
 ```
 
-A task over `[forge].slow_task_ms` (200 ms) is logged with this advice.
+A task over `[loop].slow_task_ms` (200 ms) is logged with this advice.
 
 **Other threads** (a sensor reader, a ZeroMQ receiver, your HTTP routes)
 reach the state through the loop:
@@ -35,5 +35,5 @@ server.get_json("/api/pressure", [this](const auto&) {
 ```
 
 Mistakes the framework catches: using the panel's controls from another
-thread throws, `call().get()` on the loop does not deadlock, a stuck loop
+thread throws, `invoke()` on the loop does not deadlock, a stuck loop
 makes requests answer 503 instead of hanging. Next: [testing](05-testing.md).

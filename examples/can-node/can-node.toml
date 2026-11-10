@@ -1,0 +1,18 @@
+# can-node example configuration
+
+[node]
+interface = "vcan0"      # the frames: heartbeat out, temperature in
+id = 5                   # heartbeat id 0x705
+sensor_id = 0x185        # the sensor's temperature frames
+max_temp_c = 60.0
+
+# The program's commands over ISO-TP on the same bus (python3 sensor.py calls "info").
+[can]
+interface = "vcan0"
+tx_id = 0x701            # the node answers with this id
+rx_id = 0x700            # and listens to this one
+
+[http]
+enabled = true
+host = "127.0.0.1"
+port = 8080

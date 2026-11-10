@@ -2,7 +2,7 @@
 #   - Backend interface with a libiio implementation (ADI ad9361 driver)
 #     and a simulator for development without hardware
 #   - DSP helpers (FFT, windows, power spectra)
-#   - radio.v1 messages (proto/radio/v1/radio.proto)
+#   - radio messages (proto/radio/radio.proto)
 #
 # Used with add_subdirectory() from radio-controller and spectrum-analyzer.
 cmake_minimum_required(VERSION 3.16)
@@ -28,7 +28,7 @@ message(STATUS "ad936x: libiio backend ${AD936X_HAS_IIO}")
 
 add_library(ad936x STATIC backend.cpp sim_backend.cpp dsp.cpp)
 target_include_directories(ad936x PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_features(ad936x PUBLIC cxx_std_17)
+target_compile_features(ad936x PUBLIC cxx_std_20)
 set_target_properties(ad936x PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # nlohmann/json comes with forgecpp
 if(TARGET forgecpp::forgecpp)
@@ -61,7 +61,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(ad936x PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-# radio.v1 messages (IqBlock, TxBlock): C++ for the applications, Python for the clients.
-set(AD936X_PYTHON_DIR "${CMAKE_CURRENT_BINARY_DIR}/python" CACHE INTERNAL "radio.v1 Python modules")
-forge_add_proto(ad936x ROOT ${CMAKE_CURRENT_SOURCE_DIR}/proto PROTOS radio/v1/radio.proto
+# radio messages (iq_block, tx_block): C++ for the applications, Python for the clients.
+set(AD936X_PYTHON_DIR "${CMAKE_CURRENT_BINARY_DIR}/python" CACHE INTERNAL "radio Python modules")
+forge_add_proto(ad936x ROOT ${CMAKE_CURRENT_SOURCE_DIR}/proto PROTOS radio/radio.proto
                 PYTHON ${AD936X_PYTHON_DIR})

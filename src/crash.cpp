@@ -1,14 +1,15 @@
 #include "forge/crash.hpp"
 
+#include <fcntl.h>
+#include <unistd.h>
 #include <atomic>
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
-#include <fcntl.h>
 #include <filesystem>
-#include <unistd.h>
+#include <memory>
 
 #include <algorithm>
 
@@ -28,6 +29,18 @@ std::atomic<std::size_t> g_log_pos{0};
 std::atomic<bool> g_installed{false};
 
 void write_str(int fd, const char* s) { (void)!::write(fd, s, std::strlen(s)); }
+
+void write_hex(int fd, unsigned long v) {
+    char buf[2 + sizeof(v) * 2];
+    int n = 0;
+    do {
+        buf[n++] = "0123456789abcdef"[v & 0xF];
+        v >>= 4;
+    } while (v);
+    char out[sizeof(buf)];
+    for (int i = 0; i < n; ++i) out[i] = buf[n - 1 - i];
+    (void)!::write(fd, out, static_cast<std::size_t>(n));
+}
 
 void write_num(int fd, long v) {
     char buf[24];
@@ -63,10 +76,7 @@ void handler(int sig, siginfo_t* info, void*) {
         write_str(fd, " (");
         write_str(fd, sig_name(sig));
         write_str(fd, ")\naddress 0x");
-        char hex[20];
-        const auto addr = reinterpret_cast<unsigned long>(info ? info->si_addr : nullptr);
-        std::snprintf(hex, sizeof(hex), "%lx", addr);  // snprintf of an integer does not allocate in glibc
-        write_str(fd, hex);
+        write_hex(fd, reinterpret_cast<unsigned long>(info ? info->si_addr : nullptr));
         write_str(fd, "\ntime ");
         write_num(fd, static_cast<long>(std::time(nullptr)));
         write_str(fd, "\npid ");
@@ -103,12 +113,34 @@ void install(const std::string& app, const std::string& dir) {
     void* warm[1];
     ::backtrace(warm, 1);  // loads libgcc now, not in the signal handler
 #endif
+    use_alternate_stack();  // the thread that installs; other threads call it themselves
     struct sigaction sa {};
     sa.sa_sigaction = handler;
-    sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
+    // SA_ONSTACK: a stack overflow (the usual SIGSEGV on a thread with a small
+    // stack) is reported too; without its own stack the handler would fault.
+    sa.sa_flags = SA_SIGINFO | SA_RESETHAND | SA_ONSTACK;
     sigemptyset(&sa.sa_mask);
     for (int sig : {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT}) ::sigaction(sig, &sa, nullptr);
     g_installed = true;
+}
+
+void use_alternate_stack() {
+    // One per thread (sigaltstack is a thread property), kept for the thread's
+    // life. A stack that is already there (AddressSanitizer installs its own
+    // on every thread, and frees it itself) is left alone.
+    thread_local std::unique_ptr<char[]> stack;
+    if (stack) return;
+    stack_t current{};
+    if (::sigaltstack(nullptr, &current) == 0 && current.ss_sp != nullptr && (current.ss_flags & SS_DISABLE) == 0) {
+        return;
+    }
+    constexpr std::size_t kSize = 128 * 1024;  // backtrace() and the writes need little
+    stack = std::make_unique<char[]>(kSize);
+    stack_t ss{};
+    ss.ss_sp = stack.get();
+    ss.ss_size = kSize;
+    ss.ss_flags = 0;
+    ::sigaltstack(&ss, nullptr);
 }
 
 std::optional<std::string> previous_report(const std::string& app, const std::string& dir) {

@@ -1,0 +1,15 @@
+#!/bin/sh
+# ptest of forgecpp: the framework's test programs (doctest), one line per program.
+cd "$(dirname "$0")/tests" || exit 1
+rc=0
+for t in ./forgecpp_* ./fuzz_*; do
+    [ -x "$t" ] || continue
+    if FORGE_TEST_TIMEOUT_SCALE=4 "$t" >"/tmp/${t#./}.log" 2>&1; then
+        echo "PASS: ${t#./}"
+    else
+        echo "FAIL: ${t#./}"
+        tail -20 "/tmp/${t#./}.log"
+        rc=1
+    fi
+done
+exit $rc

@@ -39,9 +39,9 @@ TEST_CASE("config: typed access with defaults") {
 
 TEST_CASE("config: errors") {
     const auto cfg = Config::parse("port = \"eighty\"\nsmall = 300");
-    CHECK_THROWS_AS(cfg.get<int>("port"), ConfigError);
-    CHECK_THROWS_AS(cfg.require<int>("missing"), ConfigError);
-    CHECK_THROWS_AS(cfg.get<std::int8_t>("small"), ConfigError);  // out of range
+    CHECK_THROWS_AS((void)cfg.get<int>("port"), ConfigError);
+    CHECK_THROWS_AS((void)cfg.require<int>("missing"), ConfigError);
+    CHECK_THROWS_AS((void)cfg.get<std::int8_t>("small"), ConfigError);  // out of range
     CHECK_THROWS_AS(Config::parse("this is = not toml ="), ConfigError);
     CHECK_THROWS_AS(Config::load_file("/definitely/not/here.toml"), ConfigError);
 }
@@ -107,7 +107,7 @@ TEST_CASE("config schema: defaults are filled in from the declaration") {
     CHECK(cfg.value<double>("radio.gain") == 3.0);
     CHECK_FALSE(cfg.contains("console.color"));            // computed at run time
     CHECK_FALSE(cfg.contains("auth.users"));
-    CHECK_THROWS_AS(cfg.value<int>("undeclared"), ConfigError);
+    CHECK_THROWS_AS((void)cfg.value<int>("undeclared"), ConfigError);
     CHECK(s.validate(cfg).ok());
 
     // A parent that is not a table is not replaced.
@@ -133,7 +133,8 @@ TEST_CASE("config schema: sources do not repeat the default of a declared key") 
             if (!e.is_regular_file() || (ext != ".cpp" && ext != ".hpp" && !scaffolder)) continue;
             std::ifstream in(e.path());
             const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            for (std::sregex_iterator it(text.begin(), text.end(), declared), end; it != end; ++it) keys.insert((*it)[1]);
+            for (std::sregex_iterator it(text.begin(), text.end(), declared), end; it != end; ++it)
+                keys.insert((*it)[1]);
             for (std::sregex_iterator it(text.begin(), text.end(), read), end; it != end; ++it) {
                 reads.emplace_back((*it)[1], fs::relative(e.path(), root).string());
             }
@@ -144,4 +145,28 @@ TEST_CASE("config schema: sources do not repeat the default of a declared key") 
         INFO(file << ": get_or(\"" << key << "\", ...) of a declared key: use value<T>(\"" << key << "\")");
         CHECK((!keys.count(key) || computed.count(key)));
     }
+}
+
+TEST_CASE("config: a wrong value names its place in the file; values convert without loss") {
+    forge::testing::TempDir dir;
+    const auto path = dir / "app.toml";
+    std::ofstream(path)
+        << "[http]\nport = \"eighty\"\nratio = 0.1\nbig = 9007199254740993\nwhen = 2026-01-02T03:04:05Z\n";
+    const auto cfg = Config::load_file(path);
+    try {
+        (void)cfg.get<int>("http.port");
+        FAIL("a string was read as an integer");
+    } catch (const ConfigError& e) {
+        const std::string what = e.what();
+        CHECK(what.find("'http.port' must be integer") != std::string::npos);
+        CHECK(what.find("app.toml:2:8") != std::string::npos);  // line 2, where the value starts
+    }
+    CHECK(cfg.value<double>("http.ratio") == 0.1);                       // exactly, not through text
+    CHECK(cfg.value<std::int64_t>("http.big") == 9007199254740993LL);    // beyond a double's integers
+    CHECK(cfg.value<std::string>("http.when").find("2026-01-02") == 0);  // a date and time is text
+    CHECK(cfg.to_json()["http"]["ratio"] == 0.1);
+
+    auto set = Config::parse("");
+    set.set("a.b", 5);
+    CHECK_THROWS_AS((void)set.get<std::string>("a.b"), ConfigError);  // no file: no place, still an error
 }

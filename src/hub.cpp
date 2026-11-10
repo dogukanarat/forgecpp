@@ -3,6 +3,8 @@
 #include "forge/log.hpp"
 #include "forge/zmq.hpp"
 
+#include <cerrno>
+#include <cstring>
 #include <fstream>
 
 namespace forge::hub {
@@ -33,25 +35,18 @@ std::string instance_of(const std::string& unit) {
     return unit.substr(at + 1, dot - at - 1);
 }
 
-std::optional<v1::HubReply> exchange(const std::string& endpoint, const v1::HubRequest& request,
-                                     std::chrono::milliseconds timeout) {
-    try {
-        ::zmq::socket_t s(zmq::context(), ::zmq::socket_type::req);
-        s.set(::zmq::sockopt::linger, 0);
-        s.set(::zmq::sockopt::sndtimeo, static_cast<int>(timeout.count()));
-        s.set(::zmq::sockopt::rcvtimeo, static_cast<int>(timeout.count()));
-        s.connect(endpoint);
-        const auto bytes = request.SerializeAsString();
-        if (!s.send(::zmq::buffer(bytes), ::zmq::send_flags::none)) return std::nullopt;
-        ::zmq::message_t reply;
-        if (!s.recv(reply, ::zmq::recv_flags::none)) return std::nullopt;
-        v1::HubReply r;
-        if (!r.ParseFromArray(reply.data(), static_cast<int>(reply.size()))) return std::nullopt;
-        return r;
-    } catch (const std::exception& e) {
-        log::debug("hub: {}: {}", endpoint, e.what());
-        return std::nullopt;
-    }
+Status register_app(const std::string& endpoint, const forge_hub_app_registration& app, forge_hub_register_reply& reply,
+                    std::chrono::milliseconds timeout) {
+    forge_hub_register_request req{};
+    req.has_app = true;
+    req.app = app;
+    return zmq::Client(endpoint, timeout).call(forge_hub_msg_id_register, req, reply);
+}
+
+Status unregister_app(const std::string& endpoint, const forge_hub_unregister_request& request,
+                      std::chrono::milliseconds timeout) {
+    forge_hub_unregister_reply reply{};
+    return zmq::Client(endpoint, timeout).call(forge_hub_msg_id_unregister, request, reply);
 }
 
 Client::Client(std::string endpoint, std::chrono::seconds retry, Builder build, std::chrono::milliseconds timeout)
@@ -75,28 +70,28 @@ void Client::run() {
     std::unique_lock lock(mutex_);
     while (!stopping_) {
         lock.unlock();
-        v1::HubRequest req;
-        *req.mutable_register_() = build_();
-        const auto reply = exchange(endpoint_, req, timeout_);
-        const bool ok = reply && reply->ok();
+        const auto app = build_();
+        forge_hub_register_reply reply{};
+        const auto status = register_app(endpoint_, app, reply, timeout_);
+        const bool ok = status.ok();
         if (ok && !registered_) {
-            log::info("hub: registered with {} at {}", reply->hub(), endpoint_);
+            log::info("hub: registered with {} at {}", pb::view(reply.hub), endpoint_);
         } else if (!ok && registered_) {
             log::info("hub: {} does not answer any more{}", endpoint_,
                       retry_.count() > 0 ? "; will register again when it is back" : "");
-        } else if (reply && !reply->ok()) {
-            log::warn("hub: registration refused: {}", reply->error());
+        } else if (!ok && status.errno_code() != ETIMEDOUT) {
+            log::warn("hub: registration refused: {}", status.to_string());
         }
         registered_ = ok;
         if (ok) ever_registered_ = true;
         lock.lock();
-        if (ok) last_ = req.register_();
+        if (ok) last_ = app;
         if (retry_.count() <= 0) break;
         cv_.wait_for(lock, retry_, [this] { return stopping_; });
     }
 }
 
-void Client::stop(v1::Unregister::Reason reason, int exit_code) {
+void Client::stop(forge_hub_unregister_reason reason, int exit_code) {
     {
         std::lock_guard lock(mutex_);
         if (stopping_ && !thread_.joinable()) return;
@@ -105,14 +100,14 @@ void Client::stop(v1::Unregister::Reason reason, int exit_code) {
     cv_.notify_all();
     if (thread_.joinable()) thread_.join();
     if (!ever_registered_) return;
-    v1::HubRequest req;
-    auto* u = req.mutable_unregister();
-    u->set_name(last_.name());
-    u->set_pid(last_.pid());
-    u->set_reason(reason);
-    u->set_exit_code(exit_code);
-    if (exchange(endpoint_, req, timeout_)) {
-        log::debug("hub: unregistered ({})", reason == v1::Unregister::REASON_SIGNAL ? "stop request" : "exit");
+    forge_hub_unregister_request req{};
+    std::memcpy(req.name, last_.name, sizeof(req.name));
+    req.pid = last_.pid;
+    req.reason = reason;
+    req.exit_code = exit_code;
+    if (unregister_app(endpoint_, req, timeout_).ok()) {
+        log::debug("hub: unregistered ({})",
+                   reason == forge_hub_unregister_reason_REASON_SIGNAL ? "stop request" : "exit");
     }
     registered_ = false;
 }

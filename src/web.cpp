@@ -114,6 +114,14 @@ Control& Control::precision(int digits) {
     def_->precision = std::max(0, digits);
     return *this;
 }
+Control& Control::slider() {
+    if (def_->kind != Kind::number && def_->kind != Kind::slider) {
+        throw std::invalid_argument("control '" + def_->id + "': only a number can be a slider");
+    }
+    def_->kind = Kind::slider;
+    return *this;
+}
+
 Control& Control::range(double min, double max, double step) {
     if (min > max) throw std::invalid_argument("control '" + def_->id + "': min > max");
     def_->min = min;
@@ -163,11 +171,17 @@ Param text_param(std::string name, std::optional<std::string> def, std::string h
 }
 Param select_param(std::string name, std::vector<std::string> options, std::optional<std::string> def,
                    std::string help) {
-    return Param{std::move(name), "select", std::move(help), def ? json(*def) : json(nullptr), std::move(options), {}, {}};
+    return Param{
+        std::move(name), "select", std::move(help), def ? json(*def) : json(nullptr), std::move(options), {}, {}};
 }
 
 CommandRef Group::command(const std::string& id, const std::string& label, std::vector<Param> params,
-                          std::function<json(const json&)> handler) {
+                          std::function<json(const json& args)> handler) {
+    return action(id, label, std::move(params), std::move(handler));
+}
+
+ActionRef Group::action(const std::string& id, const std::string& label, std::vector<Param> params,
+                        std::function<json(const json&)> handler) {
     if (owner_.commands_by_id_.count(id) || owner_.by_id_.count(id)) {
         throw std::invalid_argument("duplicate dashboard id '" + id + "'");
     }
@@ -215,6 +229,11 @@ Control Group::button(const std::string& id, const std::string& label, std::func
     return c;
 }
 
+Control Group::toggle(const std::string& id, const std::string& label, std::atomic<bool>& value) {
+    return add(Kind::toggle, id, label, [&value] { return json(value.load(std::memory_order_relaxed)); },
+               [&value](const json& v) { value.store(v.get<bool>(), std::memory_order_relaxed); });
+}
+
 Control Group::toggle(const std::string& id, const std::string& label, bool& value) {
     return add(Kind::toggle, id, label, [&value] { return json(value); },
                [&value](const json& v) { value = v.get<bool>(); });
@@ -229,8 +248,9 @@ Control Group::toggle(const std::string& id, const std::string& label, std::func
 Control Group::slider(const std::string& id, const std::string& label, std::function<double()> get,
                       std::function<void(double)> set, double min, double max, double step) {
     return add(Kind::slider, id, label, [get = std::move(get)] { return json(get()); },
-               [set = std::move(set)](const json& v) { set(v.get<double>()); })
-        .range(min, max, step);
+               [set = std::move(set)](const json& v) {
+        set(v.get<double>());
+    }).range(min, max, step);
 }
 
 Control Group::number(const std::string& id, const std::string& label, std::function<double()> get,
@@ -442,8 +462,7 @@ void Dashboard::set(const std::string& id, const json& value) {
                 throw bad("must be one of " + json(c.options).dump());
             }
             break;
-        default:
-            throw bad("cannot be set");
+        default: throw bad("cannot be set");
     }
     c.set(value);
 }
@@ -477,10 +496,8 @@ json Dashboard::call(const std::string& id, const json& args) {
         if (v.is_null()) throw bad(p.name, "required");
         if (p.type == "number" || p.type == "integer") {
             if (v.is_string()) {  // console / query strings
-                try {
-                    v = json::parse(v.get<std::string>());
-                } catch (...) {
-                }
+                auto parsed = json::parse(v.get<std::string>(), nullptr, false);
+                if (!parsed.is_discarded()) v = std::move(parsed);
             }
             if (!v.is_number()) throw bad(p.name, "expected a number");
             const double d = v.get<double>();

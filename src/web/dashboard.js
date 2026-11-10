@@ -68,7 +68,7 @@
     }
   }
 
-  // Commands (RPC with typed parameters): a small form per command.
+  // Actions (Group::action: a handler with typed parameters): a small form per action.
   function commandForm(cmd) {
     const out = el('output');
     const fields = (cmd.params || []).map(function (p) {
@@ -104,7 +104,7 @@
       });
       run.disabled = true;
       try {
-        const res = await forge.api('commands/' + encodeURIComponent(cmd.id), { body: { args: args } });
+        const res = await forge.api('actions/' + encodeURIComponent(cmd.id), { body: { args: args } });
         out.textContent = JSON.stringify(res && res.result, null, 2);
       } catch (e) {
         out.textContent = 'error: ' + e.message;
@@ -194,12 +194,45 @@
     }
   }
 
+  // Three letters, as on the terminal, so the columns line up.
+  const LEVEL_NAMES = { trace: 'TRC', debug: 'DBG', info: 'INF', warning: 'WRN', error: 'ERR', critical: 'CRT' };
+
+  // Filter: the lowest level and a text (any part of the line, any case).
+  const LEVEL_RANK = { trace: 0, debug: 1, info: 2, warning: 3, error: 4, critical: 5 };
+
+  function logShown(line) {
+    const min = LEVEL_RANK[$('forge-log-level').value] || 0;
+    const text = $('forge-log-filter').value.trim().toLowerCase();
+    return Number(line.dataset.rank) >= min && (!text || line.dataset.text.includes(text));
+  }
+
+  function countLogs() {
+    const lines = $('forge-log-lines').childNodes;
+    let shown = 0;
+    lines.forEach(function (l) { if (!l.hidden) shown++; });
+    const filtered = $('forge-log-filter').value.trim() !== '' || $('forge-log-level').value !== 'trace';
+    $('forge-log-count').textContent = filtered ? shown + ' of ' + lines.length : '';
+  }
+
+  function filterLogs() {
+    $('forge-log-lines').childNodes.forEach(function (l) { l.hidden = !logShown(l); });
+    countLogs();
+  }
+
   function appendLog(entry) {
     const pre = $('forge-log-lines');
-    const line = el('div', { class: 'forge-log-' + entry.level,
-      text: entry.time + ' [' + entry.level + '] [' + entry.logger + '] ' + entry.message });
+    const line = el('div', { class: 'forge-log forge-log-' + entry.level });
+    line.dataset.rank = LEVEL_RANK[entry.level] !== undefined ? LEVEL_RANK[entry.level] : 2;
+    line.dataset.text = (entry.time + ' ' + entry.level + ' ' + entry.logger + ' ' + entry.message).toLowerCase();
+    line.append(
+      el('span', { class: 'forge-log-time', text: entry.time }), ' ',
+      el('span', { class: 'forge-log-level', text: LEVEL_NAMES[entry.level] || entry.level }), ' ',
+      el('span', { class: 'forge-log-logger', text: entry.logger }), ' ',
+      el('span', { class: 'forge-log-message', text: entry.message }));
+    line.hidden = !logShown(line);
     pre.appendChild(line);
     while (pre.childNodes.length > MAX_LOG_LINES) pre.removeChild(pre.firstChild);
+    countLogs();
     if ($('forge-follow').checked) pre.scrollTop = pre.scrollHeight;
   }
 
@@ -218,7 +251,9 @@
   // Reload the description after a reconnect: the application may have restarted.
   let wasConnected = false;
   forge.on('connection', function (c) { if (c && wasConnected === false && loadInfo.timer) init(); wasConnected = c; });
-  $('forge-clear').addEventListener('click', function () { $('forge-log-lines').textContent = ''; });
+  $('forge-clear').addEventListener('click', function () { $('forge-log-lines').textContent = ''; countLogs(); });
+  $('forge-log-filter').addEventListener('input', filterLogs);
+  $('forge-log-level').addEventListener('change', filterLogs);
 
   init();
 })();

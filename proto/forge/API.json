@@ -1,0 +1,1452 @@
+{
+ "enums": {
+  "forge.health_state": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "health_state_unspecified",
+    "1": "ok",
+    "2": "degraded",
+    "3": "failed"
+   }
+  },
+  "forge.hub.app_state": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "STATE_UNSPECIFIED",
+    "1": "STATE_RUNNING",
+    "2": "STATE_STARTING",
+    "3": "STATE_STOPPED",
+    "4": "STATE_CRASHED",
+    "5": "STATE_FAILED",
+    "6": "STATE_UNRESPONSIVE",
+    "7": "STATE_UNKNOWN"
+   }
+  },
+  "forge.hub.msg_id": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "none",
+    "256": "register",
+    "257": "unregister"
+   }
+  },
+  "forge.hub.restart_mode": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "MODE_UNSPECIFIED",
+    "1": "MODE_NEVER",
+    "2": "MODE_ON_FAILURE",
+    "3": "MODE_ALWAYS"
+   }
+  },
+  "forge.hub.unregister_reason": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "REASON_UNSPECIFIED",
+    "1": "REASON_SIGNAL",
+    "2": "REASON_EXIT"
+   }
+  },
+  "forge.metric_type": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "metric_type_unspecified",
+    "1": "counter",
+    "2": "gauge",
+    "3": "histogram"
+   }
+  },
+  "forge.msg_id": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "none",
+    "1": "ping",
+    "10": "ack",
+    "11": "logs",
+    "12": "metrics",
+    "128": "state_changed",
+    "129": "alarm_changed",
+    "13": "audit",
+    "130": "log_written",
+    "131": "audit_written",
+    "132": "health_changed",
+    "14": "lease",
+    "15": "release",
+    "16": "health",
+    "17": "streams",
+    "18": "log_level",
+    "2": "info",
+    "3": "controls",
+    "4": "get",
+    "5": "set",
+    "6": "press",
+    "7": "call",
+    "8": "commands",
+    "9": "alarms"
+   }
+  },
+  "forge.severity": {
+   "reserved": [],
+   "reserved_names": [],
+   "values": {
+    "0": "severity_unspecified",
+    "1": "info_level",
+    "2": "warning",
+    "3": "error",
+    "4": "critical"
+   }
+  }
+ },
+ "messages": {
+  "forge.ack_reply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "count",
+     "type": "uint32"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.ack_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "id",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.alarm": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "id",
+     "type": "string"
+    },
+    "10": {
+     "label": "optional",
+     "name": "cleared_unix_ms",
+     "type": "int64"
+    },
+    "11": {
+     "label": "optional",
+     "name": "acknowledged_unix_ms",
+     "type": "int64"
+    },
+    "2": {
+     "label": "optional",
+     "name": "severity",
+     "type": "forge.severity"
+    },
+    "3": {
+     "label": "optional",
+     "max_size": 160,
+     "name": "message",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "active",
+     "type": "bool"
+    },
+    "5": {
+     "label": "optional",
+     "name": "acknowledged",
+     "type": "bool"
+    },
+    "6": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "acknowledged_by",
+     "type": "string"
+    },
+    "7": {
+     "label": "optional",
+     "name": "count",
+     "type": "uint64"
+    },
+    "8": {
+     "label": "optional",
+     "name": "raised_unix_ms",
+     "type": "int64"
+    },
+    "9": {
+     "label": "optional",
+     "name": "last_unix_ms",
+     "type": "int64"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.alarms_reply": {
+   "fields": {
+    "1": {
+     "label": "repeated",
+     "max_count": 16,
+     "name": "alarms",
+     "type": "forge.alarm"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.alarms_request": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.audit_record": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "time_unix_ns",
+     "type": "int64"
+    },
+    "10": {
+     "label": "optional",
+     "max_size": 160,
+     "name": "error",
+     "type": "string"
+    },
+    "11": {
+     "label": "optional",
+     "name": "trace",
+     "type": "forge.trace_context"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "channel",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "client",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "max_size": 32,
+     "name": "user",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "action",
+     "type": "string"
+    },
+    "6": {
+     "label": "optional",
+     "max_size": 72,
+     "name": "target",
+     "type": "string"
+    },
+    "7": {
+     "label": "optional",
+     "max_size": 128,
+     "name": "old_value",
+     "type": "string"
+    },
+    "8": {
+     "label": "optional",
+     "max_size": 128,
+     "name": "new_value",
+     "type": "string"
+    },
+    "9": {
+     "label": "optional",
+     "name": "ok",
+     "type": "bool"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.audit_reply": {
+   "fields": {
+    "1": {
+     "label": "repeated",
+     "max_count": 8,
+     "name": "records",
+     "type": "forge.audit_record"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.audit_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "limit",
+     "type": "uint32"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.call_reply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 1024,
+     "name": "result",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.call_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "id",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 512,
+     "name": "args",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.command": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "id",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "label",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "max_size": 160,
+     "name": "help",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "role",
+     "type": "string"
+    },
+    "5": {
+     "label": "repeated",
+     "max_count": 8,
+     "name": "params",
+     "type": "forge.parameter"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.commands_reply": {
+   "fields": {
+    "1": {
+     "label": "repeated",
+     "max_count": 2,
+     "name": "commands",
+     "type": "forge.command"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.commands_request": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.component_health": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "name",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "state",
+     "type": "forge.health_state"
+    },
+    "3": {
+     "label": "optional",
+     "max_size": 160,
+     "name": "message",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "critical",
+     "type": "bool"
+    },
+    "5": {
+     "label": "optional",
+     "name": "since_unix_ms",
+     "type": "int64"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.control": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "id",
+     "type": "string"
+    },
+    "10": {
+     "label": "optional",
+     "name": "max",
+     "type": "double"
+    },
+    "11": {
+     "label": "optional",
+     "name": "step",
+     "type": "double"
+    },
+    "12": {
+     "label": "optional",
+     "name": "precision",
+     "type": "int32"
+    },
+    "13": {
+     "label": "repeated",
+     "max_count": 16,
+     "max_size": 48,
+     "name": "options",
+     "type": "string"
+    },
+    "14": {
+     "label": "optional",
+     "name": "readonly",
+     "type": "bool"
+    },
+    "15": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "role",
+     "type": "string"
+    },
+    "16": {
+     "label": "optional",
+     "name": "persistent",
+     "type": "bool"
+    },
+    "17": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "lease_holder",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "group",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "label",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "kind",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "max_size": 256,
+     "name": "value",
+     "type": "string"
+    },
+    "6": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "unit",
+     "type": "string"
+    },
+    "7": {
+     "label": "optional",
+     "max_size": 160,
+     "name": "help",
+     "type": "string"
+    },
+    "8": {
+     "label": "optional",
+     "name": "has_range",
+     "type": "bool"
+    },
+    "9": {
+     "label": "optional",
+     "name": "min",
+     "type": "double"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.controls_reply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "title",
+     "type": "string"
+    },
+    "2": {
+     "label": "repeated",
+     "max_count": 8,
+     "name": "controls",
+     "type": "forge.control"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.controls_request": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.endpoint": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "name",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 96,
+     "name": "url",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.get_reply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 256,
+     "name": "value",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.get_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "id",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.health_reply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "state",
+     "type": "forge.health_state"
+    },
+    "2": {
+     "label": "repeated",
+     "max_count": 16,
+     "name": "components",
+     "type": "forge.component_health"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.health_request": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.hub.app_registration": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "name",
+     "type": "string"
+    },
+    "10": {
+     "label": "optional",
+     "max_size": 96,
+     "name": "unit",
+     "type": "string"
+    },
+    "11": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "forgecpp",
+     "type": "string"
+    },
+    "12": {
+     "label": "optional",
+     "name": "critical",
+     "type": "bool"
+    },
+    "13": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "instance",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 32,
+     "name": "version",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "max_size": 160,
+     "name": "description",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "name": "pid",
+     "type": "uint32"
+    },
+    "5": {
+     "label": "optional",
+     "name": "http_port",
+     "type": "uint32"
+    },
+    "6": {
+     "label": "repeated",
+     "max_count": 8,
+     "name": "endpoints",
+     "type": "forge.endpoint"
+    },
+    "8": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "group",
+     "type": "string"
+    },
+    "9": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "title",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.hub.app_status": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "app",
+     "type": "forge.hub.app_registration"
+    },
+    "10": {
+     "label": "optional",
+     "name": "restarts",
+     "type": "uint32"
+    },
+    "12": {
+     "label": "optional",
+     "max_size": 112,
+     "name": "supervision",
+     "type": "string"
+    },
+    "13": {
+     "label": "optional",
+     "name": "last_seen_unix_ms",
+     "type": "int64"
+    },
+    "14": {
+     "label": "optional",
+     "max_size": 160,
+     "name": "url",
+     "type": "string"
+    },
+    "15": {
+     "label": "optional",
+     "name": "static_entry",
+     "type": "bool"
+    },
+    "16": {
+     "label": "optional",
+     "name": "policy",
+     "type": "forge.hub.restart_policy"
+    },
+    "17": {
+     "label": "optional",
+     "max_size": 32,
+     "name": "unit_state",
+     "type": "string"
+    },
+    "18": {
+     "label": "optional",
+     "max_size": 32,
+     "name": "unit_result",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "state",
+     "type": "forge.hub.app_state"
+    },
+    "3": {
+     "label": "optional",
+     "max_size": 160,
+     "name": "message",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "max_size": 12,
+     "name": "health",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "name": "alarms_active",
+     "type": "uint32"
+    },
+    "6": {
+     "label": "optional",
+     "max_size": 12,
+     "name": "alarms_highest",
+     "type": "string"
+    },
+    "7": {
+     "label": "optional",
+     "name": "uptime_s",
+     "type": "uint64"
+    },
+    "8": {
+     "label": "optional",
+     "name": "cpu_percent",
+     "type": "double"
+    },
+    "9": {
+     "label": "optional",
+     "name": "rss_bytes",
+     "type": "uint64"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.hub.register_reply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "hub",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "instance",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.hub.register_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "app",
+     "type": "forge.hub.app_registration"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.hub.restart_policy": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "mode",
+     "type": "forge.hub.restart_mode"
+    },
+    "2": {
+     "label": "optional",
+     "name": "max_restarts",
+     "type": "uint32"
+    },
+    "3": {
+     "label": "optional",
+     "name": "window_s",
+     "type": "uint32"
+    },
+    "4": {
+     "label": "optional",
+     "name": "delay_s",
+     "type": "uint32"
+    },
+    "6": {
+     "label": "optional",
+     "name": "watchdog_s",
+     "type": "uint32"
+    },
+    "7": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "restart",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.hub.unregister_reply": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.hub.unregister_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "name",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "pid",
+     "type": "uint32"
+    },
+    "3": {
+     "label": "optional",
+     "name": "reason",
+     "type": "forge.hub.unregister_reason"
+    },
+    "4": {
+     "label": "optional",
+     "name": "exit_code",
+     "type": "int32"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.info_reply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "name",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 32,
+     "name": "version",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "max_size": 160,
+     "name": "description",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "forgecpp",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "host",
+     "type": "string"
+    },
+    "6": {
+     "label": "optional",
+     "name": "pid",
+     "type": "uint32"
+    },
+    "7": {
+     "label": "optional",
+     "name": "uptime_s",
+     "type": "int64"
+    },
+    "8": {
+     "label": "repeated",
+     "max_count": 8,
+     "name": "endpoints",
+     "type": "forge.endpoint"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.info_request": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.label": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 32,
+     "name": "key",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "value",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.lease_reply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "seconds",
+     "type": "uint32"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.lease_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 72,
+     "name": "id",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "name": "seconds",
+     "type": "uint32"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.log_level_reply": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.log_level_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "logger",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 12,
+     "name": "level",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.log_record": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "time_unix_ns",
+     "type": "int64"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 12,
+     "name": "level",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "logger",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "max_size": 256,
+     "name": "message",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "name": "thread",
+     "type": "uint64"
+    },
+    "6": {
+     "label": "optional",
+     "name": "trace",
+     "type": "forge.trace_context"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.logs_reply": {
+   "fields": {
+    "1": {
+     "label": "repeated",
+     "max_count": 16,
+     "name": "records",
+     "type": "forge.log_record"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.logs_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "limit",
+     "type": "uint32"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.metric": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "name",
+     "type": "string"
+    },
+    "10": {
+     "label": "repeated",
+     "max_count": 4,
+     "name": "labels",
+     "type": "forge.label"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 160,
+     "name": "help",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "type",
+     "type": "forge.metric_type"
+    },
+    "4": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "unit",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "name": "value",
+     "type": "double"
+    },
+    "6": {
+     "label": "repeated",
+     "max_count": 24,
+     "name": "bounds",
+     "type": "double"
+    },
+    "7": {
+     "label": "repeated",
+     "max_count": 25,
+     "name": "buckets",
+     "type": "uint64"
+    },
+    "8": {
+     "label": "optional",
+     "name": "count",
+     "type": "uint64"
+    },
+    "9": {
+     "label": "optional",
+     "name": "sum",
+     "type": "double"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.metrics_reply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "time_unix_ns",
+     "type": "int64"
+    },
+    "2": {
+     "label": "repeated",
+     "max_count": 8,
+     "name": "metrics",
+     "type": "forge.metric"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.metrics_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "prefix",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.parameter": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 32,
+     "name": "name",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "type",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "max_size": 160,
+     "name": "help",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "max_size": 128,
+     "name": "default_value",
+     "type": "string"
+    },
+    "5": {
+     "label": "repeated",
+     "max_count": 8,
+     "max_size": 48,
+     "name": "options",
+     "type": "string"
+    },
+    "6": {
+     "label": "optional",
+     "name": "required",
+     "type": "bool"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.ping_reply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "token",
+     "type": "uint32"
+    },
+    "2": {
+     "label": "optional",
+     "name": "uptime_ms",
+     "type": "uint64"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.ping_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "name": "token",
+     "type": "uint32"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.press_reply": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.press_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "id",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.release_reply": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.release_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 72,
+     "name": "id",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.set_reply": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 256,
+     "name": "value",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.set_request": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "id",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 256,
+     "name": "value",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.state_report": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "id",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 256,
+     "name": "value",
+     "type": "string"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.stream_header": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "source",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "host",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "name": "pid",
+     "type": "uint32"
+    },
+    "4": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "topic",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "name": "seq",
+     "type": "uint64"
+    },
+    "6": {
+     "label": "optional",
+     "name": "time_unix_ns",
+     "type": "int64"
+    },
+    "7": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "type",
+     "type": "string"
+    },
+    "8": {
+     "label": "optional",
+     "name": "trace",
+     "type": "forge.trace_context"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.stream_info": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "name",
+     "type": "string"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 96,
+     "name": "endpoint",
+     "type": "string"
+    },
+    "3": {
+     "label": "optional",
+     "max_size": 48,
+     "name": "topic",
+     "type": "string"
+    },
+    "4": {
+     "label": "optional",
+     "max_size": 64,
+     "name": "type",
+     "type": "string"
+    },
+    "5": {
+     "label": "optional",
+     "max_size": 8,
+     "name": "policy",
+     "type": "string"
+    },
+    "6": {
+     "label": "optional",
+     "name": "max_rate_hz",
+     "type": "double"
+    },
+    "7": {
+     "label": "optional",
+     "name": "subscribers",
+     "type": "uint64"
+    },
+    "8": {
+     "label": "optional",
+     "name": "sent",
+     "type": "uint64"
+    },
+    "9": {
+     "label": "optional",
+     "name": "dropped",
+     "type": "uint64"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.streams_reply": {
+   "fields": {
+    "1": {
+     "label": "repeated",
+     "max_count": 8,
+     "name": "streams",
+     "type": "forge.stream_info"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.streams_request": {
+   "fields": {},
+   "reserved": [],
+   "reserved_names": []
+  },
+  "forge.trace_context": {
+   "fields": {
+    "1": {
+     "label": "optional",
+     "max_size": 16,
+     "name": "trace_id",
+     "type": "bytes"
+    },
+    "2": {
+     "label": "optional",
+     "max_size": 8,
+     "name": "span_id",
+     "type": "bytes"
+    }
+   },
+   "reserved": [],
+   "reserved_names": []
+  }
+ }
+}

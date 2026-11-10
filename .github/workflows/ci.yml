@@ -1,21 +1,28 @@
 name: ci
 
+# A push builds and tests once (g++); pull requests, the weekly run and manual
+# runs also build the other compilers, the sanitizers, the armhf cross build,
+# the systemd units and the API reference.
 on:
   push:
   pull_request:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { cxx: g++,     flags: "" }
-          - { cxx: g++-14,  flags: "" }
-          - { cxx: clang++, flags: "--static" }
-          - { cxx: g++,     flags: "--without-ssl --build-type Debug" }
+        include: ${{ fromJSON(github.event_name == 'push' && '[{"cxx":"g++","flags":""}]' || '[{"cxx":"g++","flags":""},{"cxx":"g++-14","flags":""},{"cxx":"clang++","flags":"--static"},{"cxx":"g++","flags":"--without-ssl --build-type Debug"}]') }}
     name: build (${{ matrix.cxx }} ${{ matrix.flags }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
@@ -24,7 +31,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev python3-zmq python3-protobuf python3-numpy
-      # The bundled libraries (protobuf, libzmq, ...) take most of the build time: ccache keeps
+      # The bundled libraries (libzmq, protoc, ...) take most of the build time: ccache keeps
       # them between runs (install.sh still builds and installs everything, so nothing else changes).
       - uses: actions/cache@v4
         with:
@@ -40,8 +47,8 @@ jobs:
           ./install.sh --prefix "$HOME/forgecpp" --tests --examples ${{ matrix.flags }} \
             --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           ccache --show-stats
-      - name: forge.v1 stays compatible with the released API
-        run: python3 tools/proto-compat.py --protoc "$HOME/forgecpp/bin/protoc"
+      - name: The messages stay compatible with the released API
+        run: python3 tools/proto-compat.py --protoc "$HOME/forgecpp/share/forgecpp/protoc"
       - name: C++ API (exported symbols) and configuration keys stay compatible within the series
         if: ${{ !contains(matrix.flags, '--static') }}
         run: python3 tools/api-check.py --lib "$HOME/forgecpp/lib/libforgecpp.so" --app build/forgecpp/examples/hello
@@ -98,14 +105,14 @@ jobs:
           for _ in $(seq 150); do curl -fs http://127.0.0.1:18109/api/frame -o /tmp/sa.json && grep -q '"fixed":true' /tmp/sa.json && break; sleep 0.1; done
           grep -q '"fixed":true' /tmp/sa.json
           has '"value":\[2\]' curl -fs http://127.0.0.1:18108/forge/api/controls/tap_channels
-          # forge.v1: forgectl over ZeroMQ and HTTP, the audit trail, streams, telnet, Python clients
+          # forgectl over the command link and HTTP, the audit trail, streams, telnet, Python clients
           ctl="$HOME/forgecpp/bin/forgectl"
           has radio-controller "$ctl" -e tcp://127.0.0.1:5557 info
           has 2412 "$ctl" -e tcp://127.0.0.1:5557 set rx_lo_mhz 2412
           has rx_lo_mhz "$ctl" -e tcp://127.0.0.1:5557 audit
           has 2412 "$ctl" -e http://127.0.0.1:18108 get rx_lo_mhz
-          has STATE_OK "$ctl" -e tcp://127.0.0.1:5567 health
-          has sa.v1.Spectrum "$ctl" -e tcp://127.0.0.1:5567 streams
+          has '"ok"' "$ctl" -e tcp://127.0.0.1:5567 health
+          has sa.spectrum "$ctl" -e tcp://127.0.0.1:5567 streams
           has '^sa_sweeps' curl -fs http://127.0.0.1:18109/metrics
           python3 - <<'EOF'
           import socket, time
@@ -118,14 +125,24 @@ jobs:
               pass
           assert b"uptime" in out, out
           EOF
-          # forge-v1 from the install (site-packages), the examples' messages from the build
-          site=$(dirname "$(dirname "$(dirname "$(find "$HOME/forgecpp" -path '*/forge/v1/framing.py')")")")
+          # forge from the install (site-packages), the examples' messages from the build
+          site=$(dirname "$(dirname "$(find "$HOME/forgecpp" -path '*/forge/framing.py')")")
           export PYTHONPATH="$site:$PWD/radio-controller/ad936x/python:$PWD/spectrum-analyzer/python"
           export PYTHONDONTWRITEBYTECODE=1
           python3 ../../../examples/radio-controller/clients/rx_capture.py tcp://127.0.0.1:5555 --seconds 0.5 > /tmp/rx.txt
           grep -q "blocks" /tmp/rx.txt
           python3 ../../../examples/spectrum-analyzer/clients/spectrum_watch.py tcp://127.0.0.1:5566 --count 2 > /tmp/sw.txt
           grep -q fixed /tmp/sw.txt
+          python3 - <<'EOF'
+          from forge import c2, messages_pb2 as m
+          link = c2.Client("tcp://127.0.0.1:5557")
+          assert link.call(m.info, m.info_request(), m.info_reply).name == "radio-controller"
+          try:
+              link.call(m.set, m.set_request(id="rx_lo_mhz", value="9000"), m.set_reply)
+              raise SystemExit("9000 MHz was accepted")
+          except c2.Refused as e:
+              assert e.code == 22, e  # EINVAL
+          EOF
           # forge-hub: both registered with their ports; a crash is reported (no systemd unit
           # here, so nothing restarts it), a stop request is not a crash
           for _ in $(seq 100); do
@@ -177,7 +194,9 @@ jobs:
   # API reference (Doxygen) of include/forge, the tutorials and the threading guide.
   docs:
     name: API reference
+    if: github.event_name != 'push'
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y doxygen
@@ -192,7 +211,9 @@ jobs:
   # the ARM binaries run under QEMU user emulation.
   cross-armhf:
     name: cross (armhf, Zynq-7000)
+    if: github.event_name != 'push'
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
@@ -200,7 +221,7 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build ccache g++-arm-linux-gnueabihf qemu-user
+          sudo apt-get install -y ninja-build ccache g++-arm-linux-gnueabihf qemu-user python3-protobuf
       - uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.ccache
@@ -243,7 +264,9 @@ jobs:
   # The applications as real systemd units: restarts, start-limit-hit, forge-hub's view and buttons.
   systemd:
     name: systemd units and forge-hub
+    if: github.event_name != 'push'
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
         with:
@@ -251,7 +274,7 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev
+          sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev python3-protobuf
       - uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.ccache
@@ -280,7 +303,9 @@ jobs:
           - { id: asan, sanitize: "address,undefined" }   # id: cache keys may not contain commas
           - { id: tsan, sanitize: "thread" }
     name: sanitize (${{ matrix.sanitize }})
+    if: github.event_name != 'push'
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
         with:
@@ -288,7 +313,7 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev
+          sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev python3-protobuf
       # Newer runner kernels randomize mmap more than ThreadSanitizer/AddressSanitizer accept.
       - name: Sanitizer-compatible address space layout
         run: sudo sysctl vm.mmap_rnd_bits=28

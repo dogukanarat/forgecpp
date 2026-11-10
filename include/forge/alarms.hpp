@@ -15,6 +15,8 @@
 //
 // Thread-safe: raise/clear from any thread.
 
+#include "forge/subscription.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <chrono>
@@ -56,9 +58,6 @@ struct Alarm {
 
 class Alarms {
 public:
-    /// Called after every change (from the thread that made it).
-    using Listener = std::function<void()>;
-
     explicit Alarms(std::size_t history = 50);
 
     Alarms(const Alarms&) = delete;
@@ -92,7 +91,8 @@ public:
     /// {"active": n, "pending": n, "highest": "error"|null}
     nlohmann::json summary() const;
 
-    void on_change(Listener listener);
+    /// Called after every change, on the thread that made it.
+    [[nodiscard]] Subscription on_change(std::function<void()> listener);
 
 private:
     void notify();
@@ -101,7 +101,7 @@ private:
     mutable std::mutex mutex_;
     std::vector<Alarm> alarms_;
     std::size_t history_;
-    std::vector<Listener> listeners_;
+    Listeners<> listeners_;
 };
 
 nlohmann::json to_json(const Alarm& alarm);

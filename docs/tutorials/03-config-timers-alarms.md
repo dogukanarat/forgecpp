@@ -32,7 +32,7 @@ reads `now()`, the application's clock, so a test can control it
 ([testing](05-testing.md)).
 
 **Alarms** are what an operator must see: raised, acknowledged, cleared, with
-a bell and a banner on every page, the forge-hub dashboard and forge.v1
+a bell and a banner on every page, the forge-hub dashboard and the command link
 events. Raising an active alarm only updates it. With hysteresis:
 
 ```cpp
@@ -40,7 +40,7 @@ if (pressure_bar > limit_bar) {
     if (!over_since_) over_since_ = now();
     if (now() - *over_since_ >= alarm_after_) {
         alarms().raise("pump.overpressure", forge::Severity::error,
-                       fmt::format("Pressure {:.1f} bar above {:.1f} bar", pressure_bar, limit_bar));
+                       std::format("Pressure {:.1f} bar above {:.1f} bar", pressure_bar, limit_bar));
     }
 } else if (pressure_bar < limit_bar * 0.95) {
     over_since_.reset();

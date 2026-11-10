@@ -116,8 +116,9 @@
 
     const ports = [];
     if (app.http_port) ports.push('http ' + app.http_port);
-    const ep = app.endpoints || {};
-    if (ep.control) ports.push('forge.v1 ' + port(ep.control));
+    const ep = {};
+    (app.endpoints || []).forEach(function (e) { ep[e.name] = e.url; });
+    if (ep.control) ports.push('commands ' + port(ep.control));
     if (ep.telnet) ports.push('telnet ' + port(ep.telnet));
     if (running && app.pid) ports.push('pid ' + app.pid);
     if (a.supervision && a.supervision !== 'none') ports.push(a.supervision + (a.unit_state ? ' (' + a.unit_state + ')' : ''));

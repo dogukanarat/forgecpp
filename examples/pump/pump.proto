@@ -1,0 +1,28 @@
+// The pump's messages: its stream and its own command.
+syntax = "proto3";
+
+import "nanopb.proto";
+
+package pump;
+
+// Command numbers: 0x0001..0x00FF are forgecpp's own.
+enum msg_id {
+    none = 0;
+    history = 0x0100;
+}
+
+// The last `count` pressure readings, oldest first.
+message history_request {
+    uint32 count = 1;
+}
+
+message history_reply {
+    repeated double pressure_bar = 1 [(nanopb).max_count = 32];
+}
+
+// Stream "pressure": one reading per sample.
+message reading {
+    double pressure_bar = 1;
+    double speed_rpm = 2;
+    bool running = 3;
+}

@@ -1,0 +1,15 @@
+# payload-power example configuration
+
+[payload]
+chip = "sim"              # on a board: "gpiochip0" (or its label), see gpiodetect
+en = "PAYLOAD_EN"         # line names from the device tree (gpioinfo), or offsets ("17")
+pgood = "PAYLOAD_PGOOD"
+en_active_low = false
+boot_ms = 2000
+attempts = 3
+power_on_start = true
+
+[http]
+enabled = true
+host = "127.0.0.1"
+port = 8080

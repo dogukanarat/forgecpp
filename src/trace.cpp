@@ -1,20 +1,18 @@
 #include "forge/trace.hpp"
 
-#include "forge/v1/common.pb.h"
+#include <format>
 
-#include <spdlog/fmt/fmt.h>
-
+#include <pthread.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
 #include <memory>
 #include <mutex>
-#include <pthread.h>
 #include <random>
 #include <set>
-#include <sys/syscall.h>
-#include <unistd.h>
 #include <unordered_map>
 #include <vector>
 
@@ -63,8 +61,7 @@ struct Recorder {
         head = 0;
     }
 
-    void record(Type type, const char* name, const char* category, std::int64_t start, std::int64_t dur,
-                double value) {
+    void record(Type type, const char* name, const char* category, std::int64_t start, std::int64_t dur, double value) {
         if (!enabled.load(std::memory_order_relaxed)) return;
         const std::uint64_t idx = head.fetch_add(1, std::memory_order_relaxed);
         Event& e = events[idx % capacity];
@@ -122,7 +119,7 @@ std::string escape(std::string_view s) {
             out += '\\';
             out += c;
         } else if (static_cast<unsigned char>(c) < 0x20) {
-            out += fmt::format("\\u{:04x}", static_cast<int>(c));
+            out += std::format("\\u{:04x}", static_cast<int>(c));
         } else {
             out += c;
         }
@@ -152,21 +149,6 @@ Context child_of(const Context& parent) {
     if (!parent.valid()) return new_trace();
     Context c = parent;
     fill_random(c.span_id.data(), c.span_id.size());
-    return c;
-}
-
-v1::TraceContext to_proto(const Context& ctx) {
-    v1::TraceContext t;
-    if (!ctx.valid()) return t;
-    t.set_trace_id(std::string(reinterpret_cast<const char*>(ctx.trace_id.data()), ctx.trace_id.size()));
-    t.set_span_id(std::string(reinterpret_cast<const char*>(ctx.span_id.data()), ctx.span_id.size()));
-    return t;
-}
-
-Context from_proto(const v1::TraceContext& t) {
-    Context c;
-    if (t.trace_id().size() == c.trace_id.size()) std::memcpy(c.trace_id.data(), t.trace_id().data(), c.trace_id.size());
-    if (t.span_id().size() == c.span_id.size()) std::memcpy(c.span_id.data(), t.span_id().data(), c.span_id.size());
     return c;
 }
 
@@ -236,7 +218,7 @@ Dump dump(unsigned seconds) {
     {
         std::lock_guard lock(r.names_mutex);
         for (const auto& [t, n] : r.thread_names) {
-            add(fmt::format(R"({{"ph":"M","name":"thread_name","pid":{},"tid":{},"args":{{"name":"{}"}}}})", pid, t,
+            add(std::format(R"({{"ph":"M","name":"thread_name","pid":{},"tid":{},"args":{{"name":"{}"}}}})", pid, t,
                             escape(n)));
         }
     }
@@ -256,20 +238,20 @@ Dump dump(unsigned seconds) {
         if (e.seq.load(std::memory_order_acquire) != s1) continue;
         if (copy.start_ns < since || !copy.name) continue;
         const double ts = static_cast<double>(copy.start_ns - origin) / 1000.0;
-        const std::string trace = copy.trace_lo ? fmt::format(R"(,"args":{{"trace":"{:016x}"}})", copy.trace_lo) : "";
+        const std::string trace = copy.trace_lo ? std::format(R"(,"args":{{"trace":"{:016x}"}})", copy.trace_lo) : "";
         switch (copy.type) {
             case Type::complete:
-                add(fmt::format(R"({{"ph":"X","name":"{}","cat":"{}","pid":{},"tid":{},"ts":{:.3f},"dur":{:.3f}{}}})",
+                add(std::format(R"({{"ph":"X","name":"{}","cat":"{}","pid":{},"tid":{},"ts":{:.3f},"dur":{:.3f}{}}})",
                                 escape(copy.name), escape(copy.category ? copy.category : ""), pid, copy.tid, ts,
                                 static_cast<double>(copy.dur_ns) / 1000.0, trace));
                 break;
             case Type::instant:
-                add(fmt::format(R"({{"ph":"i","s":"t","name":"{}","cat":"{}","pid":{},"tid":{},"ts":{:.3f}{}}})",
+                add(std::format(R"({{"ph":"i","s":"t","name":"{}","cat":"{}","pid":{},"tid":{},"ts":{:.3f}{}}})",
                                 escape(copy.name), escape(copy.category ? copy.category : ""), pid, copy.tid, ts,
                                 trace));
                 break;
             case Type::counter:
-                add(fmt::format(R"({{"ph":"C","name":"{}","pid":{},"tid":{},"ts":{:.3f},"args":{{"value":{}}}}})",
+                add(std::format(R"({{"ph":"C","name":"{}","pid":{},"tid":{},"ts":{:.3f},"args":{{"value":{}}}}})",
                                 escape(copy.name), pid, copy.tid, ts, copy.value));
                 break;
         }

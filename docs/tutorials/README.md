@@ -12,7 +12,12 @@ is compiled and tested with forgecpp, so what you read here works.
 5. [Testing](05-testing.md): a client's view, and time you control
 6. [Streams and Python clients](06-streams.md)
 7. [Deploying: systemd, forge-hub, Yocto](07-deploy.md)
+8. [Consuming another program's stream in C++](08-consuming-streams.md)
 
-Reference: [the README's framework tour](../../README.md#framework-tour),
+Then: [field notes](../field-notes.md), the first weeks on a device (ports,
+debugging, persisted controls, time without an RTC, metric names).
+
+Reference: [the application and its services](../application.md), [the web panel](../web.md),
+[commands and streams](../messaging.md),
 [threads](../threading.md), and the API reference (`cmake --build build
 --target forgecpp_docs`, then `build/docs/html/index.html`).

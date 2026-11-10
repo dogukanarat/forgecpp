@@ -1,0 +1,6 @@
+syntax = "proto3";
+
+// forge-proto.py must refuse this: the string has no max_size.
+message unbounded {
+    string text = 1;
+}

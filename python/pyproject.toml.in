@@ -1,0 +1,33 @@
+# The Python package of forgecpp: the stream framing (forge.framing), the c2
+# command clients (forge.c2 over ZeroMQ, forge.serial over a tty) and the
+# generated messages (forge.messages_pb2, forge.hub_pb2).
+#
+# CMake writes this file into <build>/python next to the package, so a ground
+# segment without a C++ toolchain installs it from a build (or from the
+# tarball of install.sh --package) with:
+#
+#     pip install <build>/python          # or: pip install -e <build>/python
+#
+# On a device the same files go into site-packages at install time
+# (forge_install_python); Yocto packages them as python3-forge.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forge-client"
+version = "@PROJECT_VERSION@"
+description = "forgecpp clients: c2 commands over ZeroMQ or a serial line, stream framing, the framework's messages"
+readme = {text = "Clients for forgecpp programs. See https://github.com/dogukanarat/forgecpp/blob/master/docs/messaging.md", content-type = "text/markdown"}
+requires-python = ">=3.9"
+license = {text = "MIT"}
+dependencies = ["protobuf>=3.20"]
+
+[project.optional-dependencies]
+zmq = ["pyzmq>=22"]
+
+[project.urls]
+Homepage = "https://github.com/dogukanarat/forgecpp"
+
+[tool.setuptools]
+packages = ["forge"]

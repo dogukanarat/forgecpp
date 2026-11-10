@@ -1,0 +1,17 @@
+# three-threads example configuration
+
+[demo]
+rate_hz = 100           # samples per second (also the "Rate" control)
+block = 10              # samples per block
+
+[http]
+enabled = true
+host = "127.0.0.1"
+port = 8080
+
+# A thread's scheduling, by its name (acquire, process, downlink). Real-time
+# policies need CAP_SYS_NICE (the generated unit can grant it).
+# [threads.acquire]
+# policy = "fifo"
+# priority = 50
+# cpus = [1]

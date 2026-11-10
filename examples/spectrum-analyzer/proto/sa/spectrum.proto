@@ -1,0 +1,22 @@
+// spectrum-analyzer messages (stream "spectrum" on [forge].data).
+syntax = "proto3";
+
+import "nanopb.proto";
+
+package sa;
+
+// One sweep of the live trace. The levels are the blob: `points` float32
+// values, little endian, in `unit`; level i is at
+// start_hz + i * (stop_hz - start_hz) / (points - 1).
+message spectrum {
+    uint64 seq = 1;                                  // analyzer sweep counter
+    double start_hz = 2;
+    double stop_hz = 3;
+    uint32 points = 4;
+    string unit = 5 [(nanopb).max_size = 8];         // dBFS | dBm
+    double rbw_hz = 6;                               // resolution bandwidth actually used
+    string sweep_mode = 7 [(nanopb).max_size = 12];  // realtime | swept | fixed (radio-controller's band)
+    bool overload = 8;                               // ADC clipping during this sweep
+    double sweep_time_s = 9;
+    uint32 channel = 10;                             // RX channel (1, 2)
+}

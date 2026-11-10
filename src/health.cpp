@@ -14,7 +14,6 @@ const char* to_string(HealthState s) {
 }
 
 void Health::set(const std::string& component, HealthState state, const std::string& message, bool critical) {
-    std::vector<Listener> listeners;
     {
         std::lock_guard lock(mutex_);
         auto& e = components_[component];
@@ -28,10 +27,8 @@ void Health::set(const std::string& component, HealthState state, const std::str
         e.message = message;
         e.critical = critical;
         if (!changed) return;
-        listeners = listeners_;
     }
-    const auto snap = snapshot();
-    for (auto& l : listeners) l(snap);
+    if (!listeners_.empty()) listeners_.notify(snapshot());
 }
 
 void Health::remove(const std::string& component) {
@@ -50,20 +47,16 @@ HealthState Health::overall() const {
     return worst;
 }
 
-v1::Health Health::snapshot() const {
-    v1::Health h;
-    h.set_state(static_cast<v1::ComponentHealth::State>(overall()));
+Health::Report Health::snapshot() const {
+    Report r;
+    r.state = overall();
     std::lock_guard lock(mutex_);
-    for (const auto& [n, e] : components_) {
-        auto* c = h.add_components();
-        c->set_name(n);
-        c->set_state(static_cast<v1::ComponentHealth::State>(e.state));
-        c->set_message(e.message);
-        c->set_critical(e.critical);
-        c->set_since_unix_ms(
-            std::chrono::duration_cast<std::chrono::milliseconds>(e.since.time_since_epoch()).count());
+    for (const auto& [name, e] : components_) {
+        r.components.push_back(
+            {name, e.state, e.message, e.critical,
+             std::chrono::duration_cast<std::chrono::milliseconds>(e.since.time_since_epoch()).count()});
     }
-    return h;
+    return r;
 }
 
 std::optional<double> Health::critical_failed_for() const {
@@ -78,9 +71,16 @@ std::optional<double> Health::critical_failed_for() const {
     return worst;
 }
 
-void Health::on_change(Listener listener) {
-    std::lock_guard lock(mutex_);
-    listeners_.push_back(std::move(listener));
+json to_json(const Health::Report& r) {
+    json components = json::array();
+    for (const auto& c : r.components) {
+        components.push_back({{"name", c.name},
+                              {"state", to_string(c.state)},
+                              {"message", c.message},
+                              {"critical", c.critical},
+                              {"since_unix_ms", c.since_unix_ms}});
+    }
+    return {{"state", to_string(r.state)}, {"components", std::move(components)}};
 }
 
 }  // namespace forge

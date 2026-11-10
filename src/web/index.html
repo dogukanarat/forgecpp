@@ -8,6 +8,7 @@
   <script src="forge.js"></script>
   <script src="dashboard.js" defer></script>
   <script src="system.js" defer></script>
+  <script src="tools.js" defer></script>
 </head>
 <body class="forge">
   <header class="forge-header">
@@ -26,21 +27,75 @@
 
   <nav class="forge-tabs" id="forge-tabs" role="tablist">
     <button type="button" role="tab" data-tab="controls" aria-selected="true">Controls</button>
+    <button type="button" role="tab" data-tab="commands">Commands</button>
     <button type="button" role="tab" data-tab="health">Health</button>
     <button type="button" role="tab" data-tab="metrics">Metrics</button>
     <button type="button" role="tab" data-tab="streams">Streams</button>
     <button type="button" role="tab" data-tab="audit">Audit</button>
     <button type="button" role="tab" data-tab="leases">Leases</button>
     <button type="button" role="tab" data-tab="trace">Trace</button>
-    <span class="forge-muted forge-whoami" id="forge-whoami"></span>
+    <span class="forge-whoami" title="You, and your role">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5.5" r="2.7"/><path d="M2.8 13.6c.7-2.6 2.8-4 5.2-4s4.5 1.4 5.2 4"/></svg>
+      <span id="forge-whoami"></span>
+    </span>
     <button type="button" class="forge-layout-reset" data-forge-layout-reset
-            title="Cards can be moved by their title and resized from their corner">Reset layout</button>
+            title="Put every card back in its original place and size (cards move by their title and resize from their corner)">Reset layout</button>
   </nav>
 
   <main class="forge-main">
     <div id="forge-groups" class="forge-grid" data-pane="controls">
       <div class="forge-empty forge-wide">Loading…</div>
     </div>
+
+    <section class="forge-card forge-pane forge-tmtc" data-pane="commands" hidden>
+      <div class="forge-tmtc-layout">
+        <nav class="forge-tmtc-side" aria-label="Commands">
+          <div class="forge-tmtc-side-head">
+            <h2>Commands</h2>
+            <input type="search" id="forge-tmtc-filter" placeholder="Filter" aria-label="filter commands">
+          </div>
+          <div id="forge-tmtc-list" class="forge-tmtc-list"></div>
+        </nav>
+        <div class="forge-tmtc-main">
+          <div class="forge-tmtc-empty" id="forge-tmtc-empty">
+            <p>Choose a command on the left.</p>
+            <p class="forge-muted">The same commands answer binary c2 frames on a link and JSON here.</p>
+          </div>
+          <div id="forge-tmtc-form" class="forge-tmtc-form" hidden>
+            <header class="forge-tmtc-head">
+              <div class="forge-tmtc-name"><h3 id="forge-tmtc-title"></h3><span class="forge-tmtc-id" id="forge-tmtc-id"></span></div>
+              <div class="forge-tmtc-types" id="forge-tmtc-types"></div>
+            </header>
+            <div id="forge-tmtc-fields" class="forge-tmtc-fields"></div>
+            <div class="forge-code" id="forge-tmtc-editor">
+              <div class="forge-code-head">
+                <label class="forge-code-title" for="forge-tmtc-json">Request <small>JSON</small></label>
+                <span class="forge-code-chip" id="forge-tmtc-valid"></span>
+                <button class="forge-code-btn" type="button" id="forge-tmtc-format" title="Indent the JSON">Format</button>
+                <button class="forge-code-btn" type="button" id="forge-tmtc-reset" title="Back to the form's values">Reset</button>
+              </div>
+              <div class="forge-code-edit">
+                <pre class="forge-code-hl" id="forge-tmtc-hl" aria-hidden="true"></pre>
+                <textarea id="forge-tmtc-json" spellcheck="false" autocomplete="off" autocapitalize="off"
+                          aria-label="Request as JSON"></textarea>
+              </div>
+            </div>
+            <div class="forge-actions forge-send-row">
+              <button class="forge-btn primary" type="button" id="forge-tmtc-send">Send</button>
+              <span class="forge-muted forge-kbd-hint"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
+            </div>
+            <div class="forge-code forge-code-out" id="forge-tmtc-out" hidden>
+              <div class="forge-code-head">
+                <span class="forge-code-title">Reply</span>
+                <span class="forge-code-chip" id="forge-tmtc-status"></span>
+                <button class="forge-code-btn" type="button" id="forge-tmtc-copy">Copy</button>
+              </div>
+              <pre id="forge-tmtc-reply" class="forge-code-view" aria-live="polite"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <section class="forge-card forge-pane" data-pane="health" hidden>
       <header><h2>Health</h2><span id="forge-health-overall"></span></header>
@@ -60,8 +115,16 @@
       <header><h2>Endpoints and streams</h2></header>
       <div id="forge-endpoints"></div>
       <table class="forge-table"><thead><tr><th>Stream</th><th>Type</th><th>Endpoint</th><th>Policy</th>
-        <th>Subscribers</th><th>Sent</th><th>Dropped</th></tr></thead>
+        <th class="num">Subscribers</th><th class="num">Sent</th><th class="num">Dropped</th><th class="forge-th-action">Inspect</th></tr></thead>
         <tbody id="forge-streams-rows"></tbody></table>
+      <div class="forge-code forge-watch" id="forge-watch" hidden>
+        <div class="forge-code-head">
+          <span class="forge-code-title" id="forge-watch-title"></span>
+          <span class="forge-code-chip" id="forge-watch-info"></span>
+          <button class="forge-code-btn" type="button" id="forge-watch-stop">Stop</button>
+        </div>
+        <div id="forge-watch-lines" class="forge-watch-lines" aria-live="polite"></div>
+      </div>
     </section>
 
     <section class="forge-card forge-pane" data-pane="audit" hidden>
@@ -98,6 +161,15 @@
       <header>
         <h2>Logs</h2>
         <span>
+          <input type="search" id="forge-log-filter" placeholder="Search" aria-label="show the lines with this text">
+          <select id="forge-log-level" aria-label="lowest level shown">
+            <option value="trace">all</option>
+            <option value="debug">debug +</option>
+            <option value="info">info +</option>
+            <option value="warning">warning +</option>
+            <option value="error">error +</option>
+          </select>
+          <span class="forge-muted" id="forge-log-count"></span>
           <label class="forge-muted"><input type="checkbox" id="forge-follow" checked> follow</label>
           <button class="forge-btn" id="forge-clear" type="button">Clear</button>
         </span>

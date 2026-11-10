@@ -1,19 +1,21 @@
 #pragma once
 // radio-controller: AD9364 control and IQ streaming daemon.
 //
-//   forge.v1 on ZeroMQ (radio.v1.IqBlock / TxBlock + cs16 blob = interleaved
-//   int16 I/Q, full scale +-32767):
+//   ZeroMQ (radio.iq_block / tx_block + cs16 blob = interleaved int16 I/Q,
+//   full scale +-32767):
 //     [forge].data   PUB   topic "iq": every buffer of the channels it listens to
-//                          ([radio].rx_channels; IqBlock.channel)
+//                          ([radio].rx_channels; iq_block.channel)
 //                          topics "rx1"/"rx2": blocks of the channels it shares
 //                          ([radio].tap_rx), rate limited: e.g. the spectrum analyzer
-//     [zmq].tx       PULL  TxBlock + samples for [radio].tx_channel
-//     [forge].control REP  forge.v1 requests (forgectl, panels; older JSON commands too)
+//     [zmq].tx       PULL  tx_block + samples for [radio].tx_channel
+//     [forge].control REP  c2 commands (forgectl, other programs): forgecpp's and
+//                          "tune", "status" (radio.proto); also on [forge].serial
 //     [forge].events PUB   state, alarms, log, audit, health, metrics
 //   Web UI: /  (spectrum, waterfall, controls)   /forge/  (control panel)
 //   Console: -i  (controls / set / press / alarms)
 
 #include "backend.hpp"
+#include "radio/radio.pb.h"
 
 #include <forge/forge.hpp>
 #include <forge/zmq.hpp>
@@ -42,7 +44,7 @@ public:
 protected:
     void setup_cli(CLI::App& cli) override;
     void setup_config(forge::config::Schema& schema) override;
-    void setup_web(forge::web::Dashboard& ui) override;
+    void setup_controls(forge::Controls& ui) override;
     void on_start() override;
     void on_stop() override;
     void on_reload(const forge::Config& cfg) override;
@@ -54,6 +56,11 @@ private:
     void device_lost(const std::string& why);
     template <class F>
     void control(const char* what, F&& fn);
+    // RX tuning, for the controls and the "tune" command (main loop)
+    void set_rx_lo(double hz);
+    void set_sample_rate(double hz);
+    void set_rx_bandwidth(double hz);
+    void fill_status(radio_status_reply& r) const;
 
     // threads
     void rx_loop();
@@ -123,7 +130,6 @@ private:
     std::vector<std::int16_t> tx_pending_;  // TX thread only
     std::atomic<std::uint64_t> tx_frames_{0}, tx_samples_{0}, tx_underflows_{0}, tx_dropped_{0}, tx_late_{0};
     std::atomic<int> tx_max_age_ms_{0};
-
 
     // derived telemetry (main loop)
     std::uint64_t last_rx_samples_ = 0, last_rx_overflows_ = 0, last_tx_underflows_ = 0;
