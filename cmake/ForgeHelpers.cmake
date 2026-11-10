@@ -506,7 +506,8 @@ function(forge_generate_unit name output)
         # What a daemon never needs. Left out on purpose: PrivateDevices (UARTs,
         # IIO, GPIO), ProtectKernelTunables (libiio writes /sys), RestrictRealtime
         # (real-time threads), MemoryDenyWriteExecute (JIT in some libraries),
-        # PrivateNetwork (the links). AF_NETLINK: libiio and systemd notify.
+        # PrivateNetwork (the links). AF_NETLINK: libiio and systemd notify;
+        # AF_CAN: the CAN bus ([can], forge::can).
         string(APPEND FORGE_UNIT_EXTRA
             "# Hardening (forge_add_app NO_HARDENING leaves it out)\n"
             "NoNewPrivileges=yes\n"
@@ -521,7 +522,7 @@ function(forge_generate_unit name output)
             "ProtectProc=invisible\n"
             "RestrictNamespaces=yes\n"
             "RestrictSUIDSGID=yes\n"
-            "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK\n"
+            "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_CAN\n"
             "SystemCallArchitectures=native\n"
             "LockPersonality=yes\n")
     endif()

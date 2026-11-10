@@ -136,6 +136,16 @@ void Application::Impl::declare_framework_config() {
     s.integer("serial.frame_size", 244, "Largest frame sent; the peer's CONFIG_ZEPHYRUS_COBS_FRAME_SIZE")
         .range(16, 4096)
         .unit("B");
+    s.section("can", "The same commands on a CAN bus (c2 frames, zephyrus framing, over ISO-TP)");
+    s.string("can.interface", "", "The CAN interface, e.g. \"can0\" (empty = off); opened again when it goes away");
+    s.integer("can.tx_id", 0x701, "ISO-TP id this program answers with").range(0, 0x1FFFFFFF);
+    s.integer("can.rx_id", 0x700, "ISO-TP id this program listens to (the peer's tx id)").range(0, 0x1FFFFFFF);
+    s.boolean("can.extended", false, "29-bit ids");
+    s.boolean("can.fd", false, "CAN FD frames (64 bytes) under ISO-TP");
+    s.integer("can.frame_size", 244,
+              "Largest framed piece in one ISO-TP message; the peer's CONFIG_ZEPHYRUS_COBS_FRAME_SIZE")
+        .range(16, 4095)
+        .unit("B");
     s.alias("forge.serial", "serial.device");
     s.alias("forge.serial_baud", "serial.baud");
     s.alias("forge.serial_frame_size", "serial.frame_size");

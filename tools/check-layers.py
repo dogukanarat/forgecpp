@@ -17,10 +17,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # From the lowest level to the highest.
 LEVELS = {
     0: ("core", ["status", "error", "base64", "json", "pb", "trace", "crash", "subscription", "config", "config_schema",
-                 "channel", "thread_pool", "buffer_pool", "rt", "systemd", "version"]),
+                 "channel", "thread_pool", "buffer_pool", "rt", "systemd", "version", "sqlite", "lz4"]),
     1: ("services", ["log", "log_rt", "metrics", "events", "scheduler", "health", "alarms", "audit", "auth",
-                     "assets", "worker"]),
-    2: ("link", ["c2", "tmtc", "zmq", "serial", "remote", "http", "hub"]),
+                     "assets", "worker", "backlog"]),
+    2: ("link", ["c2", "tmtc", "zmq", "serial", "can", "gpio", "remote", "http", "hub"]),
     3: ("front ends", ["console", "telnet", "web"]),
     4: ("application", ["component", "control", "application"]),
 }

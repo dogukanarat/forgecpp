@@ -119,6 +119,7 @@ add_library(forgecpp
     src/auth.cpp
     src/base64.cpp
     src/c2.cpp
+    src/can.cpp
     src/common.cpp
     src/config.cpp
     src/config_schema.cpp
@@ -126,6 +127,7 @@ add_library(forgecpp
     src/control.cpp
     src/crash.cpp
     src/events.cpp
+    src/gpio.cpp
     src/health.cpp
     src/hub.cpp
     src/http.cpp
@@ -204,6 +206,53 @@ if(FORGECPP_WARNINGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(forgecpp PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# Optional components, each a shared library of its own, so that the core
+# library needs neither (find_package(forgecpp) then forgecpp::sqlite, ...):
+#   forgecpp::sqlite   SQLite: forge::sqlite::Database, forge::Backlog (store and forward)
+#   forgecpp::lz4      LZ4 frames: forge::lz4::compress / decompress
+# Their libraries are private dependencies: an application links the
+# component only, and needs the SQLite or LZ4 headers only to use them itself.
+option(FORGECPP_WITH_SQLITE "Build forgecpp::sqlite (needs SQLite 3)" ON)
+option(FORGECPP_WITH_LZ4 "Build forgecpp::lz4 (needs liblz4)" ON)
+set(FORGECPP_COMPONENTS)
+function(_forge_component target name)
+    add_library(forgecpp::${name} ALIAS ${target})
+    set_target_properties(${target} PROPERTIES
+        OUTPUT_NAME forgecpp-${name}
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
+        EXPORT_NAME ${name})
+    target_link_libraries(${target} PUBLIC forgecpp)
+    if(FORGECPP_WARNINGS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endfunction()
+if(FORGECPP_WITH_SQLITE)
+    find_package(SQLite3)
+    if(SQLite3_FOUND)
+        add_library(forgecpp_sqlite SHARED src/sqlite.cpp src/backlog.cpp)
+        _forge_component(forgecpp_sqlite sqlite)
+        target_link_libraries(forgecpp_sqlite PRIVATE SQLite::SQLite3)
+        list(APPEND FORGECPP_COMPONENTS sqlite)
+    else()
+        message(WARNING "SQLite 3 not found: forgecpp::sqlite is not built (-DFORGECPP_WITH_SQLITE=OFF to silence)")
+    endif()
+endif()
+if(FORGECPP_WITH_LZ4)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(FORGE_LZ4 QUIET IMPORTED_TARGET liblz4)
+    endif()
+    if(FORGE_LZ4_FOUND)
+        add_library(forgecpp_lz4 SHARED src/lz4.cpp)
+        _forge_component(forgecpp_lz4 lz4)
+        target_link_libraries(forgecpp_lz4 PRIVATE PkgConfig::FORGE_LZ4)
+        list(APPEND FORGECPP_COMPONENTS lz4)
+    else()
+        message(WARNING "liblz4 not found: forgecpp::lz4 is not built (-DFORGECPP_WITH_LZ4=OFF to silence)")
+    endif()
+endif()
+
 # Test helper target: forgecpp + doctest with a ready-made main(). An
 # INTERFACE target that carries the main() as a source: nothing to install as
 # a library, so find_package(forgecpp) works with the -dev package alone.
@@ -268,6 +317,9 @@ if(TARGET forgecpp_testing)
     set(FORGECPP_HAS_TESTING ON)
 endif()
 list(APPEND _forge_targets forgecpp_zmq)
+foreach(_c IN LISTS FORGECPP_COMPONENTS)
+    list(APPEND _forge_targets forgecpp_${_c})
+endforeach()
 
 # Components: Runtime (the library, forgectl, the Python package) and
 # Development (headers, CMake and pkg-config files, protos, the generators):

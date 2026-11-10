@@ -57,6 +57,7 @@ Left for after 0.4.0, with the reason:
 |---|---|
 | Hidden symbol visibility with an export macro | The header-only libraries in the public headers keep state in templates (quill's frontend, moodycamel's thread registry); hidden visibility would give the application and the library each their own copy. First the facades (pool, channel), then visibility and `abidiff` ([API.md](API.md)). |
 | `async`/`await` (C++20 coroutines: `forge::Task`, `co_await sleep()`, `co_await on_pool()`) | Planned and dropped for now: one example (qam-modem's radio set-up) would read better, nothing else. Sequences are explicit state machines ([threading.md](threading.md#sequences-a-state-machine)): the state is visible on the panel and in telemetry and can be aborted, which a coroutine frame hides; and C++ does not catch a reference that dies while a coroutine waits. Revisit when an application has sequences a state machine handles badly; the design is in CHANGELOG.md (0.4.0, "Added (docs)"). |
+| GPIO and CAN on real hardware | The kernel paths (GPIO ioctls, `CAN_RAW` and `CAN_ISOTP` sockets) build and are written to the kernel headers; the tests run on the simulated chip and on socket pairs, because the build machine has neither `/dev/gpiochip*` nor `AF_CAN`. Check on the board: `payload-power` with `[payload].chip = "gpiochip0"`, `can-node` with `sensor.py` on vcan and on a real bus. zephyrus has no CAN transport yet (Zephyr's ISO-TP plus its COBS framing). |
 | `forge::Remote` finding a program through forge-hub | Needs a hub command that lists registrations with their endpoints; the port plan in field-notes.md covers today's need. |
 | A CMake superbuild (or vcpkg/conan) replacing `install.sh`'s dependency build | The Yocto layer no longer needs it; a host install still uses `install.sh`, which works. |
 | Running `yocto-check-layer` and a bitbake build of the new recipes | The recipes were written against the scarthgap classes and reviewed, not built here; the nightly kas job is the place. |
@@ -103,7 +104,11 @@ Agreed direction for the framework itself (the examples follow it):
    application's commands), local tooling instead of CI (`tools/check.sh`,
    pre-commit hook, presets, `tools/release.sh`, `forgecpp_bench`).
 6. Later: Asio-based I/O, WebSocket server, connector modules (MQTT, Modbus,
-   CAN with ISO-TP for c2, GPIO, OPC UA), Python bindings. Not planned: more
+   OPC UA), Python bindings. Done: CAN (raw frames, c2 over ISO-TP) and GPIO
+   on the kernel interfaces (no libgpiod: its v1 and v2 APIs differ and the
+   kernel's uAPI v2 is what v2 wraps), SQLite with a store-and-forward
+   backlog and LZ4, as optional components (docs/hardware-io.md,
+   docs/storage.md). Not planned: more
    than two `commands` entries per reply page (each entry is about 6 kB;
    a larger page would not fit a zephyrus peer's default buffer).
 

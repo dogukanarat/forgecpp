@@ -145,6 +145,11 @@ struct LinkOptions {
     /// Reports (push frames) from the other end, on the reader thread.
     std::function<void(const c2::Message&)> on_push;
     std::string thread_name = "forge-serial";
+    /// What device() says when `fd` is used ("can0 0x701/0x700"); empty: "fd:<n>".
+    std::string label;
+    /// Write each frame on its own: a transport where one write is one
+    /// message (an ISO-TP socket, can::isotp_link()) instead of a byte stream.
+    bool frame_per_write = false;
 };
 
 /// c2 on a serial line, both ways: requests from here (call), requests from

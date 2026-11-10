@@ -277,6 +277,39 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 - `run()` puts the signal mask back also when it returns early (`--help-config`,
   `--check-config`, a wrong configuration).
 
+### Added (hardware, storage)
+
+- **GPIO** (`forge/gpio.hpp`): `gpio::Output` and `gpio::Input` (bias,
+  active low, edges with `wait()`, debounce) on the kernel's GPIO character
+  device (uAPI v2, Linux 5.10+), the interface libgpiod 2 wraps, used
+  directly: no library to add. Chips by path, name or label; lines by name
+  or offset. A simulated chip (`"sim"`, `gpio::sim::drive()`/`level()`) for
+  tests and PCs.
+- **CAN** (`forge/can.hpp`): `can::Socket` for raw frames (classic and FD,
+  kernel filters) and ISO-TP channels. `[can]` (interface, tx_id, rx_id,
+  extended, fd, frame_size) answers the application's commands on the bus
+  like `[serial]` on a tty: the same c2 frames and zephyrus framing, one
+  framed piece per ISO-TP message (`serial::LinkOptions::frame_per_write`).
+  Health component `can`; it is tried again every second while the interface
+  is missing. Python: `forge.serial.Client.isotp()`. The generated systemd
+  unit allows `AF_CAN`.
+- **forgecpp::sqlite** (optional, `libforgecpp-sqlite`): `sqlite::Database`,
+  `Statement`, `Transaction` (WAL by default), and `forge::Backlog`, a store
+  and forward queue in an SQLite file (in order, at least once, the oldest
+  dropped when full, kept across restarts).
+- **forgecpp::lz4** (optional, `libforgecpp-lz4`): `lz4::compress()` and
+  `decompress()` in the LZ4 frame format (the `lz4` tool reads it), with a
+  checksum and a size limit for untrusted input.
+- Examples: `payload-power` (GPIO power switch and power-good as a state
+  machine), `can-node` (heartbeat, sensor frames, commands over ISO-TP, a
+  Python sensor node), `telemetry-store` (SQLite backlog and LZ4 batches
+  between ground passes), each with a test.
+- docs/hardware-io.md and docs/storage.md; the protocol page has the CAN
+  transport. Yocto: `forgecpp-sqlite` and `forgecpp-lz4` packages
+  (PACKAGECONFIG `sqlite`, `lz4`).
+- The links of `[serial]` and `[can]` share one implementation in the
+  framework (a list of links, each with its health component and metrics).
+
 ### Removed
 
 - `Application::call(fn)`: it did what `invoke(fn)` does (every use waited

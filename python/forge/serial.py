@@ -135,7 +135,11 @@ class Client(c2.Calls):
     program with [forge].serial). Reports (push) that come in are kept in
     `pushes` as (cmd_id, payload)."""
 
-    def __init__(self, device=None, baud=115200, timeout_ms=1000, frame_size=244, fd=None):
+    def __init__(self, device=None, baud=115200, timeout_ms=1000, frame_size=244, fd=None,
+                 frame_per_write=False):
+        """`fd`: an open descriptor instead of a tty. `frame_per_write`: write
+        each frame on its own, for a transport where one write is one message
+        (an ISO-TP socket: Client.isotp())."""
         if fd is None:
             fd = os.open(device, os.O_RDWR | os.O_NOCTTY)
             tty.setraw(fd)
@@ -147,8 +151,34 @@ class Client(c2.Calls):
         self.fd, self.timeout_ms = fd, timeout_ms
         self.device = device or f"fd:{fd}"
         self._framing = Framing(frame_size)
+        self._frame_per_write = frame_per_write
         self._seq = 0
         self.pushes = []
+
+    @classmethod
+    def isotp(cls, interface, tx_id=0x700, rx_id=0x701, extended=False, padding=0xCC, **kwargs):
+        """The same commands on a CAN bus: an ISO-TP channel to a forgecpp
+        program with [can].interface (its rx_id is our tx_id). Linux only."""
+        import socket
+        s = socket.socket(socket.AF_CAN, socket.SOCK_DGRAM, socket.CAN_ISOTP)
+        if padding is not None:
+            sol_can_isotp, can_isotp_opts, tx_padding = 106, 1, 0x004  # <linux/can/isotp.h>
+            s.setsockopt(sol_can_isotp, can_isotp_opts, struct.pack("=IIBBBB", tx_padding, 0, 0, padding, 0, 0))
+        eff = 0x80000000 if extended else 0
+        s.bind((interface, rx_id | eff, tx_id | eff))
+        client = cls(fd=s.detach(), frame_per_write=True, **kwargs)
+        client.device = f"{interface} 0x{tx_id:X}/0x{rx_id:X}"
+        return client
+
+    def _write(self, data):
+        if not self._frame_per_write:
+            os.write(self.fd, data)
+            return
+        start = 0
+        while start < len(data):  # each frame: a delimiter, COBS bytes, a delimiter
+            end = data.index(0, start + 1) + 1
+            os.write(self.fd, data[start:end])
+            start = end
 
     def close(self):
         os.close(self.fd)
@@ -162,7 +192,7 @@ class Client(c2.Calls):
     def _request(self, cmd_id, payload):
         self._seq = (self._seq + 1) & 0xFFFF
         frame = _HEADER.pack(c2.VERSION, c2.REQ, cmd_id, self._seq, len(payload)) + payload
-        os.write(self.fd, self._framing.encode(frame))
+        self._write(self._framing.encode(frame))
         answers, deadline = [], time.monotonic() + self.timeout_ms / 1000
         while True:
             left = deadline - time.monotonic()

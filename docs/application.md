@@ -144,6 +144,14 @@ device = ""              # e.g. "/dev/ttyUSB0"; opened again when it goes away
 baud = 115200
 frame_size = 244         # the peer's CONFIG_ZEPHYRUS_COBS_FRAME_SIZE
 
+[can]                    # the same commands on a CAN bus, over ISO-TP (docs/hardware-io.md)
+interface = ""           # e.g. "can0"; opened again when it goes away
+tx_id = 1793             # 0x701: the id this program answers with
+rx_id = 1792             # 0x700: the id it listens to (the peer's tx id)
+extended = false         # 29-bit ids
+fd = false               # CAN FD frames under ISO-TP
+frame_size = 244         # largest framed piece in one ISO-TP message
+
 [loop]                   # the main loop
 slow_task_ms = 200       # a task longer than this is logged with its name (0 = never)
 request_timeout_ms = 2000 # requests waiting for a busy main loop answer 503 after this

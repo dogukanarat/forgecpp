@@ -95,9 +95,9 @@ browser ──▶ http://<device>/ ──links──▶ http://<device>:<port>/ 
   `ProtectHome=read-only`, `ProtectControlGroups`, `ProtectKernelModules`,
   `ProtectKernelLogs`, `ProtectClock`, `ProtectHostname`,
   `ProtectProc=invisible`, `RestrictNamespaces`, `RestrictSUIDSGID`,
-  `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`,
+  `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_CAN`,
   `SystemCallArchitectures=native`, `LockPersonality`. Devices (`/dev/tty*`,
-  IIO), `/sys` writes and real-time priorities stay allowed. `NO_HARDENING`
+  IIO, `/dev/gpiochip*`, CAN interfaces), `/sys` writes and real-time priorities stay allowed. `NO_HARDENING`
   leaves them out. The unit runs as root unless `USER <name>` or
   `DYNAMIC_USER` is given; both drop every capability except those named with
   `CAPABILITIES` (`CAP_NET_BIND_SERVICE` for a port below 1024). It starts

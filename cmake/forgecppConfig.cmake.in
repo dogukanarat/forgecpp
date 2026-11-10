@@ -31,6 +31,15 @@ if(@FORGECPP_HAS_TESTING@)
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/forgecppTargets.cmake")
+
+# Optional components this install has: find_package(forgecpp COMPONENTS sqlite lz4).
+foreach(_forge_component sqlite lz4)
+    if(TARGET forgecpp::${_forge_component})
+        set(forgecpp_${_forge_component}_FOUND ON)
+    else()
+        set(forgecpp_${_forge_component}_FOUND OFF)
+    endif()
+endforeach()
 include("${CMAKE_CURRENT_LIST_DIR}/ForgeHelpers.cmake")
 
 check_required_components(forgecpp)

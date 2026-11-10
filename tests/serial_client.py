@@ -18,6 +18,26 @@ for payload in (b"", b"\x00", b"\x00" * 300, bytes(range(1, 256)) * 2, bytes(ran
 f = serial.Framing(frame_size=32)
 assert f.receive(b"\x13\x37" + f.encode(b"x" * 500)) == [b"x" * 500]
 
+# One framed piece per write (ISO-TP): each datagram is one whole frame.
+import socket  # noqa: E402
+a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+try:
+    serial.Client(fd=a.detach(), frame_size=32, timeout_ms=50, frame_per_write=True).call(
+        m.set, m.set_request(id="x" * 30, value="y" * 30), m.set_reply)
+except TimeoutError:
+    pass  # nobody answers on the other end
+b.setblocking(False)
+f, pieces, got = serial.Framing(frame_size=32), 0, []
+while True:
+    try:
+        piece = b.recv(4096)
+    except BlockingIOError:
+        break
+    assert piece[0] == 0 and piece[-1] == 0 and 0 not in piece[1:-1] and len(piece) <= 32, piece
+    pieces += 1
+    got += f.receive(piece)
+assert pieces > 1 and len(got) == 1, (pieces, got)
+
 peer, other = pty.openpty()
 device = os.ttyname(other)
 os.close(other)

@@ -111,6 +111,21 @@ Every forgecpp application on the device registers with it by itself
 whose state the hub shows. Port 80 needs root or `CAP_NET_BIND_SERVICE`
 (`forge_add_app(... CAPABILITIES CAP_NET_BIND_SERVICE DYNAMIC_USER)`).
 
+## SQLite, LZ4, CAN, GPIO
+
+The optional components are packages of their own, pulled in by the
+applications that link them (shlibdeps): `forgecpp-sqlite` (with `sqlite3`)
+and `forgecpp-lz4` (with `lz4`). `PACKAGECONFIG:remove:pn-forgecpp =
+"sqlite"` leaves one out of the build.
+
+GPIO and CAN need nothing but the kernel ([docs/hardware-io.md](../docs/hardware-io.md)):
+the GPIO character device (`CONFIG_GPIO_CDEV`, on by default), and for
+commands on a CAN bus the ISO-TP module and a way to bring the interface up:
+
+```
+IMAGE_INSTALL:append = " kernel-module-can-isotp iproute2 can-utils"
+```
+
 ## The example applications
 
 `radio-controller` (`RADIO_BACKEND`, `RADIO_URI`, `RADIO_RX_CHANNELS`,

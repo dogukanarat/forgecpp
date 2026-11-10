@@ -13,7 +13,7 @@ engineer moving between applications finds the same tools everywhere:
 
 - **One message standard, binary and JSON.** Every command is a request and a
   reply with a number, defined in a `.proto` file with fixed bounds (nanopb: no
-  allocation). Links (ZeroMQ, a serial line, later CAN) carry them as c2 frames, byte
+  allocation). Links (ZeroMQ, a serial line, a CAN bus over ISO-TP) carry them as c2 frames, byte
   for byte like [zephyrus](https://github.com/embedded-aviation/zephyrus) on
   the microcontrollers; the web sends the same commands as JSON. One handler
   answers both. Streams carry a header with source, sequence number, time and
@@ -27,6 +27,10 @@ engineer moving between applications finds the same tools everywhere:
 - **Built-in observability.** Metrics (Prometheus `/metrics`), a flight
   recorder of trace spans (Perfetto), crash reports, structured (JSON) logs,
   health checks tied to the systemd watchdog.
+- **The hardware every subsystem has.** GPIO lines (the kernel's character
+  device, with a simulated chip for PCs and tests) and CAN (raw frames, and
+  commands over ISO-TP), without extra libraries; optional components for
+  SQLite (with a store-and-forward backlog) and LZ4.
 
 ```cpp
 #include <forge/forge.hpp>
@@ -169,6 +173,8 @@ Without CMake: `pkg-config --cflags --libs forgecpp`.
 | [Commands and streams](docs/messaging.md) | The message standard; [adding a command](docs/commands.md); [the wire format](docs/protocol.md) |
 | [Running it](docs/operations.md) | Access control, leases, the audit trail, observability, forge-hub |
 | [Threads](docs/threading.md) | Which thread may do what, and how to hand work between them |
+| [GPIO and CAN](docs/hardware-io.md) | Lines, edges, the simulated chip; CAN frames, commands over ISO-TP, vcan |
+| [Storage and compression](docs/storage.md) | SQLite, store and forward (`forge::Backlog`), LZ4 |
 | [Installation](docs/installation.md) | Every `install.sh` option, cross builds, Yocto, build times |
 | [Working on forgecpp](docs/development.md) | `tools/check.sh`, presets, fuzzing, versions, the repository layout |
 | [API rules](docs/API.md), [coding standards](docs/CODING_STANDARDS.md), [roadmap](docs/ROADMAP.md), [changes](CHANGELOG.md) | |
@@ -181,6 +187,9 @@ Without CMake: `pkg-config --cflags --libs forgecpp`.
 | `examples/sensor-service` (`sensor-service`) | Every building block: channel, thread pool, events, control panel, own page, alarm with hysteresis |
 | `examples/pipeline` | **Multi-threaded application:** N producer threads → lock-free `Channel` → dispatcher thread → `ThreadPool` workers → result channel → main loop. Bounded in-flight work (backpressure), atomic counters, alarms raised from worker threads, clean shutdown |
 | `examples/three-threads` | **Three threads in one file:** `acquire` (a dummy sensor) → `Channel` → `process` (blocks) → `Channel` → `downlink`, results into the main loop with `post()`. Named threads with `worker()` (`[threads.<name>]` priorities, clean stop, a thread that throws shows in health and alarms), atomics for what the panel changes, a test that drives it through its controls |
+| `examples/payload-power` | **GPIO:** a payload's power switch (EN) and power-good (PGOOD) as a state machine: edges from a worker thread, retries, alarms, a brown-out; runs on the simulated chip on a PC, `[payload].chip = "gpiochip0"` on a board |
+| `examples/can-node` | **CAN:** a node with a heartbeat frame, a sensor's temperature frames (alarm above a limit) and its commands over ISO-TP; `sensor.py` is the other node (vcan on a PC) |
+| `examples/telemetry-store` | **SQLite + LZ4, store and forward:** housekeeping records wait in a backlog file between passes; during a pass they go out in LZ4 batches (`lz4 -dc` opens them); survives restarts, drops the oldest when full |
 | [`examples/radio-controller`](examples/radio-controller/README.md) | **AD936x radio daemon (libiio + ZeroMQ):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.iq_block` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.tx_block`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe |
 | [`examples/spectrum-analyzer`](examples/spectrum-analyzer/README.md) | **AD936x spectrum analyzer with a web UI** (on its own RX path, or on RX2 next to the radio controller): realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, `sa.spectrum` stream. Shares the AD936x backend with the radio controller |
 | [`examples/qam-modem`](examples/qam-modem/README.md) | **16QAM packet modem over an AD936x:** UDP packets from Ethernet go on the air through radio-controller and come back out over UDP: 750 ksym/s, about 1 MHz wide at 2.1 GHz, 2.9 Mbit/s net. Schmidl & Cox detection and frequency offset, fractional timing, phase loop, CRC-checked packets; TX paced by the RX sample clock; constellation page, test mode, `echo.py` traffic checker. DSP tested through an impaired channel; end-to-end test at 2.3 Mbit/s with the simulator |
@@ -193,6 +202,9 @@ Without CMake: `pkg-config --cflags --libs forgecpp`.
 cd build/forgecpp/examples
 ./pipeline -c pipeline.toml --producers 4 -i      # http://localhost:8080/forge/
 ./three-threads -c three-threads.toml -i          # http://localhost:8080/forge/
+./payload-power -c payload-power.toml             # GPIO on the simulated chip
+./can-node -c can-node.toml                       # on vcan0 (docs/hardware-io.md); python3 sensor.py vcan0
+./telemetry-store -c telemetry-store.toml         # "Contact" on the panel starts a pass
 ./thermostat -c thermostat.toml                    # http://localhost:8080/
 ./sensor-service -c sensor-service.toml -i --simulate-spikes
 ./radio-controller/radio-controller -c radio-controller/radio-controller.toml   # simulated AD9364
@@ -213,8 +225,8 @@ FFT/windows).
 Every example has a generated systemd unit next to its binary
 (`build/forgecpp/examples/<name>.service`, `.../examples/<name>/<name>.service`
 for radio-controller, spectrum-analyzer, qam-modem and channel-emulator) with a restart policy that suits it:
-hello on-failure without a watchdog, sensor-service, pipeline and three-threads
-on-failure with a watchdog, thermostat `always`, radio-controller, spectrum-analyzer,
+hello on-failure without a watchdog, sensor-service, pipeline, three-threads,
+payload-power, can-node and telemetry-store on-failure with a watchdog, thermostat `always`, radio-controller, spectrum-analyzer,
 qam-modem and channel-emulator on-failure (3 in 10 minutes) with a 30 s watchdog.
 
 ## License

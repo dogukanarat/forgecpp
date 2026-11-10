@@ -315,6 +315,9 @@ Status Port::read(std::span<std::uint8_t> buffer, std::chrono::milliseconds time
     const auto n = ::read(fd_, buffer.data(), buffer.size());
     if (n < 0) {
         if (errno == EINTR || errno == EAGAIN) return {};
+        // A datagram transport (ISO-TP) reports a message it could not
+        // receive this way; the next one may be fine.
+        if (errno == ECOMM || errno == EILSEQ || errno == EBADMSG || errno == ETIMEDOUT) return {};
         return Status::error(module_id::serial, errno, "read");
     }
     if (n == 0 && (p.revents & POLLHUP) != 0) return error(EIO, "the line is gone");
@@ -336,7 +339,9 @@ Port open_port(const LinkOptions& o) {
 
 Link::Link(LinkOptions options)
     : options_(std::move(options)),
-      device_(options_.device.empty() ? "fd:" + std::to_string(options_.fd) : options_.device),
+      device_(!options_.device.empty()  ? options_.device
+              : !options_.label.empty() ? options_.label
+                                        : "fd:" + std::to_string(options_.fd)),
       port_(open_port(options_)),
       tx_framing_(options_.framing),
       rx_framing_(options_.framing) {
@@ -437,7 +442,16 @@ Status Link::send(std::span<const std::uint8_t> frame) {
     std::lock_guard lock(tx_mutex_);
     tx_buffer_.clear();
     if (auto s = tx_framing_.encode(frame, tx_buffer_); !s.ok()) return s;
-    return port_.write(tx_buffer_);
+    if (!options_.frame_per_write) return port_.write(tx_buffer_);
+    // Each frame is a delimiter, COBS bytes (never zero) and a delimiter.
+    std::span<const std::uint8_t> rest(tx_buffer_);
+    while (!rest.empty()) {
+        const auto end = std::find(rest.begin() + 1, rest.end(), std::uint8_t{0});
+        const auto size = static_cast<std::size_t>(end - rest.begin()) + (end == rest.end() ? 0 : 1);
+        if (auto s = port_.write(rest.first(size)); !s.ok()) return s;
+        rest = rest.subspan(size);
+    }
+    return {};
 }
 
 Status Link::request(std::uint16_t id, std::span<const std::uint8_t> payload,

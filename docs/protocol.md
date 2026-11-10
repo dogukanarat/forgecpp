@@ -1,6 +1,6 @@
 # The command link: c2 frames and tmtc commands
 
-What goes over `[forge].control` and `[forge].serial` (and, later, CAN), byte
+What goes over `[forge].control`, `[serial]` and `[can]`, byte
 for byte. It is the c2 frame of [zephyrus](https://github.com/embedded-aviation/zephyrus),
 so a forgecpp program and a zephyrus device can talk to each other directly.
 This page is enough to write a client or a device in any language; the
@@ -22,7 +22,8 @@ reference implementation is `include/forge/c2.hpp` and `src/tmtc.cpp`.
 - The **payload** is a protobuf message (the request or reply of the command).
 - There is no sync word, checksum or address: the transport gives whole,
   checked frames. ZeroMQ carries one frame per ZeroMQ frame; a serial line
-  adds its own framing and CRC ([below](#on-a-serial-line)); CAN will use ISO-TP.
+  adds its own framing and CRC ([below](#on-a-serial-line)); a CAN bus carries
+  the same framing over ISO-TP ([below](#on-a-can-bus)).
 
 ### Flags
 
@@ -120,7 +121,7 @@ ways (`forge::Status`, `errno_to_wire()`, `errno_from_wire()`).
 | unknown (a plain errno) | 0 |
 | app (zephyrus `MODULE_ID_APP`) | 64 |
 | first id for modules outside zephyrus | 128 |
-| forgecpp: c2, tmtc, pb, zmq, serial | `0x0100` .. `0x0104` |
+| forgecpp: c2, tmtc, pb, zmq, serial, can, lz4 | `0x0100` .. `0x0106` |
 | Nordic modem library (codes are not errnos) | `0x7FFD` |
 | Zephyr kernel, drivers, libc | `0x7FFE` |
 
@@ -264,6 +265,29 @@ print(serial.Client("/dev/ttyUSB0").call(m.info, m.info_request(), m.info_reply)
 
 `serial::Link` also answers requests from the other end (`on_request`, e.g.
 with a `tmtc::Dispatcher`) and takes its reports (`on_push`).
+
+
+## On a CAN bus
+
+`[can].interface = "can0"` answers the same commands on an ISO-TP channel
+(ISO 15765-2, the kernel's `CAN_ISOTP`, Linux 5.10 and later): this program
+sends with `[can].tx_id` (0x701) and listens to `[can].rx_id` (0x700); the
+peer has them the other way round.
+
+- **The framing is the one of the serial line**: the same fragments, COBS
+  and CRC16, with `[can].frame_size` (244). Each frame, both delimiters
+  included, is one ISO-TP message; ISO-TP cuts it into CAN frames (7 bytes
+  each on classic CAN, 63 with `[can].fd`) and puts it back together.
+- Short CAN frames are padded with `0xCC` (`can::IsotpOptions::padding`).
+- An ISO-TP message the kernel could not receive (a lost consecutive frame,
+  no flow control) is dropped like a bad frame on a serial line; the c2
+  answer, or its timeout, tells the sender.
+- zephyrus has no CAN transport yet; on a Zephyr device it is Zephyr's ISO-TP
+  with zephyrus's COBS framing on top, as on its UART.
+
+From code: `forge::serial::Link link(forge::can::isotp_link({.interface =
+"can0", .tx_id = 0x700, .rx_id = 0x701}))`; Python:
+`forge.serial.Client.isotp("can0", tx_id=0x700, rx_id=0x701)`.
 
 ## The same commands in JSON
 

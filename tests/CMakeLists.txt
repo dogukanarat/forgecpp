@@ -7,6 +7,7 @@ forge_add_test(forgecpp_tests
         test_config.cpp
         test_console.cpp
         test_events.cpp
+        test_gpio.cpp
         test_http.cpp
         test_json.cpp
         test_log.cpp
@@ -18,7 +19,7 @@ forge_add_test(forgecpp_tests
 # The source tree, for the check that defaults are written only in the schema.
 target_compile_definitions(forgecpp_tests PRIVATE FORGE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
-forge_add_test(forgecpp_pb_tests SOURCES test_pb.cpp test_tmtc.cpp test_serial.cpp)
+forge_add_test(forgecpp_pb_tests SOURCES test_pb.cpp test_tmtc.cpp test_serial.cpp test_can.cpp)
 forge_add_proto(forgecpp_pb_tests ROOT proto PROTOS forge_test/all_types.proto forge_test/commands.proto
     PYTHON "${CMAKE_CURRENT_BINARY_DIR}/pb_python")
 # Golden data from Google's protobuf for Python (the generator needs it anyway).
@@ -98,6 +99,14 @@ else()
 endif()
 
 forge_add_test(forgecpp_zmq_tests SOURCES test_zmq.cpp)
+# The optional components (forgecpp::sqlite, forgecpp::lz4), when they are built.
+if(TARGET forgecpp_sqlite AND TARGET forgecpp_lz4)
+    forge_add_test(forgecpp_storage_tests SOURCES test_storage.cpp LIBS forgecpp::sqlite forgecpp::lz4)
+    find_program(FORGE_LZ4_TOOL lz4)
+    if(FORGE_LZ4_TOOL)  # the frame format against the reference tool
+        target_compile_definitions(forgecpp_storage_tests PRIVATE FORGE_LZ4_TOOL="${FORGE_LZ4_TOOL}")
+    endif()
+endif()
 forge_add_test(forgecpp_framework_tests SOURCES test_framework.cpp test_services.cpp)
 # The services are internal (src/app/services.hpp).
 target_include_directories(forgecpp_framework_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")

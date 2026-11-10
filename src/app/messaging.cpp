@@ -3,6 +3,7 @@
 // answered by the application's command registry).
 #include "services.hpp"
 
+#include "forge/can.hpp"
 #include "forge/control.hpp"
 #include "forge/metrics.hpp"
 #include "forge/tmtc.hpp"
@@ -125,84 +126,115 @@ void Messaging::start_control(const Config& cfg) {
     }
     const auto device = cfg.value<std::string>("serial.device");
     if (!device.empty()) {
-        serial_options_.device = device;
-        endpoints_.set("serial", device);
-        serial_options_.baud = cfg.value<int>("serial.baud");
-        serial_options_.framing.frame_size = static_cast<std::size_t>(cfg.value<int>("serial.frame_size"));
-        serial_options_.thread_name = "forge-serial";
-        serial_options_.on_request = [this](std::span<const std::uint8_t> frame, const auto& send) {
-            CallerScope caller(app_.control().identify("link", "serial", {}));
-            tmtc::Dispatcher(app_.commands()).handle(frame, send);
-        };
-        // A device that is not there yet (USB still enumerating) is not fatal:
-        // health says so and the line is tried again every second.
-        open_serial();
-        app_.every(std::chrono::seconds(1), [this] { check_serial(); });
-        auto& m = app_.metrics();
-        const metrics::Registry::Labels link{{"link", "serial"}, {"device", device}};
-        const auto stat = [this](auto member) {
-            return [this, member] {
-                std::lock_guard lock(serial_stats_mutex_);
-                return static_cast<double>(serial_stats_.*member);
-            };
-        };
-        const auto framing = [this](auto member) {
-            return [this, member] {
-                std::lock_guard lock(serial_stats_mutex_);
-                return static_cast<double>(serial_stats_.framing.*member);
-            };
-        };
-        m.gauge_fn("forge.link.requests", link, stat(&serial::Link::Stats::requests_in),
-                   "Commands received on the link");
-        m.gauge_fn("forge.link.refused", link, stat(&serial::Link::Stats::requests_refused),
-                   "Commands refused because the link was busy");
-        m.gauge_fn("forge.serial.messages_received", link, framing(&serial::Framing::Stats::messages_received),
-                   "Messages assembled from the line");
-        m.gauge_fn("forge.serial.frames_dropped", link, framing(&serial::Framing::Stats::frames_dropped),
-                   "Fragments with a bad CRC or COBS");
-        m.gauge_fn("forge.serial.messages_dropped", link, framing(&serial::Framing::Stats::messages_dropped),
-                   "Messages lost to a missing or out-of-order fragment");
+        serial::LinkOptions o;
+        o.device = device;
+        o.baud = cfg.value<int>("serial.baud");
+        o.framing.frame_size = static_cast<std::size_t>(cfg.value<int>("serial.frame_size"));
+        o.thread_name = "forge-serial";
+        add_link("serial", device, [o] { return o; });
     }
+    const auto interface = cfg.value<std::string>("can.interface");
+    if (!interface.empty()) {
+        can::IsotpOptions isotp;
+        isotp.interface = interface;
+        isotp.tx_id = static_cast<std::uint32_t>(cfg.value<std::int64_t>("can.tx_id"));
+        isotp.rx_id = static_cast<std::uint32_t>(cfg.value<std::int64_t>("can.rx_id"));
+        isotp.extended = cfg.value<bool>("can.extended");
+        isotp.fd = cfg.value<bool>("can.fd");
+        serial::LinkOptions o;
+        o.framing.frame_size = static_cast<std::size_t>(cfg.value<int>("can.frame_size"));
+        o.thread_name = "forge-can";
+        // A fresh ISO-TP socket for every attempt: the interface may come later.
+        add_link("can", can::describe(isotp), [isotp, o] { return can::isotp_link(isotp, o); });
+    }
+    if (!links_.empty()) app_.every(std::chrono::seconds(1), [this] { check_links(); });
 }
 
-bool Messaging::open_serial() {
+void Messaging::add_link(const std::string& name, const std::string& where,
+                         std::function<serial::LinkOptions()> options) {
+    auto slot = std::make_unique<LinkSlot>();
+    slot->name = name;
+    slot->where = where;
+    slot->options = [this, name, options = std::move(options)] {
+        auto o = options();
+        o.on_request = [this, name](std::span<const std::uint8_t> frame, const auto& send) {
+            CallerScope caller(app_.control().identify("link", name, {}));
+            tmtc::Dispatcher(app_.commands()).handle(frame, send);
+        };
+        return o;
+    };
+    endpoints_.set(name, where);
+    auto& l = *slot;
+    links_.push_back(std::move(slot));
+    // A device that is not there yet (USB still enumerating, an interface not
+    // up) is not fatal: health says so and it is tried again every second.
+    open_link(l);
+    auto& m = app_.metrics();
+    const metrics::Registry::Labels labels{{"link", name}, {"device", where}};
+    const auto stat = [&l](auto member) {
+        return [&l, member] {
+            std::lock_guard lock(l.stats_mutex);
+            return static_cast<double>(l.stats.*member);
+        };
+    };
+    const auto framing = [&l](auto member) {
+        return [&l, member] {
+            std::lock_guard lock(l.stats_mutex);
+            return static_cast<double>(l.stats.framing.*member);
+        };
+    };
+    m.gauge_fn("forge.link.requests", labels, stat(&serial::Link::Stats::requests_in), "Commands received on the link");
+    m.gauge_fn("forge.link.refused", labels, stat(&serial::Link::Stats::requests_refused),
+               "Commands refused because the link was busy");
+    m.gauge_fn("forge.serial.messages_received", labels, framing(&serial::Framing::Stats::messages_received),
+               "Messages assembled from the line");
+    m.gauge_fn("forge.serial.frames_dropped", labels, framing(&serial::Framing::Stats::frames_dropped),
+               "Fragments with a bad CRC or COBS");
+    m.gauge_fn("forge.serial.messages_dropped", labels, framing(&serial::Framing::Stats::messages_dropped),
+               "Messages lost to a missing or out-of-order fragment");
+}
+
+bool Messaging::open_link(LinkSlot& l) {
     auto logger = app_.logger();
     try {
-        serial_ = std::make_unique<serial::Link>(serial_options_);
+        l.link = std::make_unique<serial::Link>(l.options());
     } catch (const std::exception& e) {
-        if (serial_error_ != e.what()) {  // the same reason again: only in debug
-            logger->warn("forge: cannot open {}: {} (trying again every second)", serial_options_.device, e.what());
-            serial_error_ = e.what();
+        if (l.error != e.what()) {  // the same reason again: only in debug
+            logger->warn("forge: cannot open {}: {} (trying again every second)", l.where, e.what());
+            l.error = e.what();
         } else {
-            logger->debug("forge: cannot open {}: {}", serial_options_.device, e.what());
+            logger->debug("forge: cannot open {}: {}", l.where, e.what());
         }
-        app_.health().set("serial", HealthState::failed, e.what(), false);
+        app_.health().set(l.name, HealthState::failed, e.what(), false);
         return false;
     }
-    serial_error_.clear();
-    logger->info("forge: commands on {} at {} baud", serial_options_.device, serial_options_.baud);
-    app_.health().set("serial", HealthState::ok, "commands on " + serial_options_.device, false);
+    l.error.clear();
+    logger->info("forge: commands on {}", l.where);
+    app_.health().set(l.name, HealthState::ok, "commands on " + l.where, false);
     return true;
 }
 
-void Messaging::check_serial() {
-    if (serial_stopped_) return;
-    if (serial_) {
-        std::lock_guard lock(serial_stats_mutex_);
-        serial_stats_ = serial_->stats();
+void Messaging::check_links() {
+    if (links_stopped_) return;
+    for (auto& slot : links_) {
+        auto& l = *slot;
+        if (l.link) {
+            std::lock_guard lock(l.stats_mutex);
+            l.stats = l.link->stats();
+        }
+        if (l.link && !l.link->connected()) {
+            app_.logger()->warn("forge: {} went away; waiting for it", l.where);
+            app_.health().set(l.name, HealthState::failed, "gone: " + l.where, false);
+            l.link.reset();
+        }
+        if (!l.link) open_link(l);
     }
-    if (serial_ && !serial_->connected()) {
-        app_.logger()->warn("forge: {} went away; waiting for it", serial_options_.device);
-        app_.health().set("serial", HealthState::failed, "line gone: " + serial_options_.device, false);
-        serial_.reset();
-    }
-    if (!serial_) open_serial();
 }
 
 void Messaging::stop_control() {
-    serial_stopped_ = true;
+    links_stopped_ = true;
     if (control_server_) control_server_->stop();
-    serial_.reset();
+    for (auto& l : links_) l->link.reset();
 }
 
 void Messaging::stop() {
@@ -215,16 +247,13 @@ void Messaging::stop() {
 }
 
 void Messaging::reset() {
-    serial_stopped_ = true;
+    links_stopped_ = true;
     auto& m = app_.metrics();
-    for (const auto& name : {"forge.link.requests", "forge.link.refused"}) {
-        m.remove(name, {{"link", "zmq"}});
-        if (!serial_options_.device.empty()) m.remove(name, {{"link", "serial"}, {"device", serial_options_.device}});
-    }
-    if (!serial_options_.device.empty()) {
-        for (const auto& name :
-             {"forge.serial.messages_received", "forge.serial.frames_dropped", "forge.serial.messages_dropped"}) {
-            m.remove(name, {{"link", "serial"}, {"device", serial_options_.device}});
+    for (const auto& name : {"forge.link.requests", "forge.link.refused"}) m.remove(name, {{"link", "zmq"}});
+    for (const auto& l : links_) {
+        for (const auto& name : {"forge.link.requests", "forge.link.refused", "forge.serial.messages_received",
+                                 "forge.serial.frames_dropped", "forge.serial.messages_dropped"}) {
+            m.remove(name, {{"link", l->name}, {"device", l->where}});
         }
     }
     for (const auto& info : stream_list()) {
@@ -232,7 +261,7 @@ void Messaging::reset() {
             m.remove(name, {{"topic", info.name}});
         }
     }
-    serial_.reset();
+    links_.clear();
     control_server_.reset();
     {
         std::lock_guard lock(data_mutex_);

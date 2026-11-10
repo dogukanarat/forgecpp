@@ -143,14 +143,15 @@ private:
 };
 
 /// ZeroMQ: [forge].events, [forge].data (streams), [forge].control (commands),
-/// and the [forge].serial line. The line is opened again when it goes away
-/// (an unplugged USB adapter) and reported under health as "serial".
+/// and the c2 links: [serial] (a tty) and [can] (an ISO-TP channel). A link is
+/// opened again when it goes away (an unplugged USB adapter, an interface
+/// that went down) and reported under health by its name ("serial", "can").
 class Messaging {
 public:
     Messaging(Application& app, Endpoints& endpoints) : app_(app), endpoints_(endpoints) {}
     /// Events and streams (before on_start(): it may publish).
     void start(const Config& cfg);
-    /// The command endpoint and the serial line (after on_start(): everything is ready).
+    /// The command endpoint and the links (after on_start(): everything is ready).
     void start_control(const Config& cfg);
     /// Stop the command endpoint (may wait for commands on the main loop).
     void stop_control();
@@ -167,10 +168,21 @@ public:
 private:
     template <pb::Message T>
     void publish_event(const char* topic, const T& body);
-    /// Open [forge].serial (main loop); false and health "serial" failed when it cannot be.
-    bool open_serial();
-    /// Every second: notice a line that went away, open it again.
-    void check_serial();
+    /// A c2 link the application's commands are answered on.
+    struct LinkSlot {
+        std::string name;   ///< "serial", "can": health component, metric label
+        std::string where;  ///< "/dev/ttyUSB0", "can0 0x701/0x700"
+        std::function<serial::LinkOptions()> options;  ///< for each attempt to open it
+        std::unique_ptr<serial::Link> link;            ///< main loop
+        std::string error;                             ///< the last reason it could not be opened
+        std::mutex stats_mutex;
+        serial::Link::Stats stats;  ///< copied every second for the metrics (any thread reads them)
+    };
+    void add_link(const std::string& name, const std::string& where, std::function<serial::LinkOptions()> options);
+    /// Open a link (main loop); false and its health component failed when it cannot be.
+    bool open_link(LinkSlot& l);
+    /// Every second: notice a link that went away, open it again.
+    void check_links();
 
     Application& app_;
     Endpoints& endpoints_;
@@ -178,12 +190,8 @@ private:
     mutable std::mutex data_mutex_;
     std::unique_ptr<zmq::Publisher> data_pub_;
     std::unique_ptr<zmq::Server> control_server_;
-    std::unique_ptr<serial::Link> serial_;
-    serial::LinkOptions serial_options_;  // of [forge].serial, to open it again
-    std::string serial_error_;            // the last reason it could not be opened
-    bool serial_stopped_ = false;
-    mutable std::mutex serial_stats_mutex_;
-    serial::Link::Stats serial_stats_;  // copied every second for the metrics (any thread reads them)
+    std::vector<std::unique_ptr<LinkSlot>> links_;
+    bool links_stopped_ = false;
     std::vector<Subscription> subscriptions_;
     json last_state_ = json::object();
 };
