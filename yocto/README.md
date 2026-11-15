@@ -39,7 +39,7 @@ local.conf:     IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub
 | `recipes-devtools/forgecpp-tools/forgecpp-tools_git.bb` | `forgecpp-tools`, `nativesdk-forgecpp-tools` | `forgecpp-new`, `forge-proto.py` and nanopb's generator: for the SDK (an application with its own `.proto` files) and, if wanted, the target |
 | `recipes-support/quill`, `cpp-httplib`, `concurrentqueue`, `tomlplusplus`, `sqlite-orm`; `recipes-test/doctest` | the libraries no other layer has | the versions forgecpp is built and tested with (its submodules) |
 | `backfill/meta-oe/*`, `backfill/meta-python/*` | `zeromq`, `cppzmq`, `nlohmann-json`, `cli11`, `libiio`, `protobuf`, `python3-protobuf` | only when meta-oe / meta-python are not in the build |
-| `recipes-connectivity/*` | `radio-controller`, `spectrum-analyzer`, `qam-modem` (each + `-clients`), `channel-emulator` | the example applications, from `recipes-connectivity/forgecpp-app.inc` |
+| `recipes-connectivity/*` | `radio-controller`, `spectrum-analyzer`, `qam-modem` (each + `-clients`), `channel-emulator`, `logic-analyzer` | the example applications, from `recipes-connectivity/forgecpp-app.inc` |
 
 The source and the commit are in one place, `recipes-support/forgecpp/forgecpp-src.inc`:
 `tools/release.sh` writes the release's commit into `FORGECPP_SRCREV`, so a
@@ -59,7 +59,7 @@ not been through a full bitbake build or `yocto-check-layer` yet.
 ## Try it in QEMU (kas)
 
 `kas/qemuarm64-poky.yml` builds a qemuarm64 image (systemd) with forgecpp,
-forge-hub, radio-controller on its simulator, spectrum-analyzer, qam-modem,
+forge-hub, radio-controller on its simulator, spectrum-analyzer, logic-analyzer (simulator), qam-modem,
 channel-emulator and the ptest package, from this checkout, with poky and
 this layer only; `kas/qemuarm64.yml` is the same image with meta-oe and
 meta-python (as most BSPs have them). Both were checked with bitbake's
@@ -165,7 +165,9 @@ IMAGE_INSTALL:append = " kernel-module-can-isotp iproute2 can-utils"
 
 `radio-controller` (`RADIO_BACKEND`, `RADIO_URI`, `RADIO_RX_CHANNELS`,
 `RADIO_TX_CHANNEL`, `RADIO_TAP_RX`), `spectrum-analyzer` (`SA_BACKEND`,
-`SA_URI`, `SA_CHANNEL`, `SA_CONTROL_GAIN`), `qam-modem` (`QAM_LO_HZ`,
+`SA_URI`, `SA_CHANNEL`, `SA_CONTROL_GAIN`), `logic-analyzer` (`LA_SOURCE`: `uio`
+for the capture core of [examples/logic-analyzer/fpga](../examples/logic-analyzer/fpga/README.md),
+whose device tree node and reserved memory the BSP adds, or `sim`; `LA_UIO_DEVICE`), `qam-modem` (`QAM_LO_HZ`,
 `QAM_UDP_LISTEN`; unit installed, not enabled) and `channel-emulator` (unit
 installed, not enabled) set their configuration from these variables in
 `do_install:append`; `IMAGE_INSTALL:append = " radio-controller

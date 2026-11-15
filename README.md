@@ -110,6 +110,11 @@ and the way into each one's panel.
 
 ![The spectrum analyzer's page](docs/images/spectrum-analyzer.jpg)
 
+The logic analyzer of `examples/logic-analyzer` (four inputs on a Zynq-7000,
+UART / I2C / SPI decoders, here on its simulator):
+
+![The logic analyzer's page](docs/images/logic-analyzer.jpg)
+
 ## What's inside
 
 | Library | Version | Purpose | In forgecpp |
@@ -238,6 +243,7 @@ Without CMake: `pkg-config --cflags --libs forgecpp`.
 | `examples/telemetry-store` | **SQLite + LZ4, store and forward:** housekeeping records wait in a backlog file between passes; during a pass they go out in LZ4 batches (`lz4 -dc` opens them); survives restarts, drops the oldest when full. A pass log in plain SQL (`forge::sqlite`: prepared statements, a transaction, the console's `passes`) |
 | `examples/fault-log` | **SQLite without SQL (`forge::orm`, sqlite_orm):** a fault log as two structs (units, faults with a foreign key); a dummy source raises faults, warnings clear themselves, errors wait for the operator (panel button, console `clear`); `faults`, `history`, `stats` are queries written in C++ |
 | [`examples/radio-controller`](examples/radio-controller/README.md) | **AD936x radio daemon (libiio + ZeroMQ):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.iq_block` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.tx_block`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe |
+| [`examples/logic-analyzer`](examples/logic-analyzer/README.md) | **Four-channel logic analyzer on a Zynq-7000 (Arty Z7), web UI like a desktop one:** the FPGA sends changes instead of samples (one word per change, 10 ns resolution, a gap marked where words were lost); waveforms with zoom, pan, overview, cursors and measurements (frequency, duty, pulse widths); edge and pattern triggers with pre-trigger; UART, I2C and SPI decoders drawn over the signals, a searchable data table and a terminal view; saved captures, `.lacap` / VCD / CSV / protocol log exports. The FPGA design, its encoder in Verilog and a testbench are in [`fpga/`](examples/logic-analyzer/fpga/README.md); a simulator stands in for it |
 | [`examples/spectrum-analyzer`](examples/spectrum-analyzer/README.md) | **AD936x spectrum analyzer with a web UI** (on its own RX path, or on RX2 next to the radio controller): realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, `sa.spectrum` stream. Shares the AD936x backend with the radio controller |
 | [`examples/qam-modem`](examples/qam-modem/README.md) | **16QAM packet modem over an AD936x:** UDP packets from Ethernet go on the air through radio-controller and come back out over UDP: 750 ksym/s, about 1 MHz wide at 2.1 GHz, 2.9 Mbit/s net. Schmidl & Cox detection and frequency offset, fractional timing, phase loop, CRC-checked packets; TX paced by the RX sample clock; constellation page, test mode, `echo.py` traffic checker. DSP tested through an impaired channel; end-to-end test at 2.3 Mbit/s with the simulator |
 | [`examples/channel-emulator`](examples/channel-emulator/README.md) | **Radio channel emulator in the TX path:** between a sender (qam-modem) and radio-controller; noise at an SNR, frequency offset and Doppler, phase noise, sample clock error, multipath, Rayleigh/Rician fading, IQ imbalance, DC, pulsed interference, each a control, plus presets. Every receiver behind the splitter sees the result (the modem's EVM, the analyzer's spectrum). Each impairment measured in tests; the modem's packet error rate per preset |
@@ -259,6 +265,7 @@ cd build/forgecpp/examples
 ./radio-controller/radio-controller --backend iio --uri ip:192.168.2.1         # real AD936x via iiod
 ./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml  # http://localhost:8081/
 ./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml --backend radio  # RX2 of the radio controller
+./logic-analyzer/logic-analyzer -c logic-analyzer/logic-analyzer.toml   # http://localhost:8084/ (--scenario spi|uart)
 ./qam-modem/qam-modem -c qam-modem/qam-modem.toml   # 16QAM modem through the radio controller: http://localhost:8082/
 ./channel-emulator/channel-emulator -c channel-emulator/channel-emulator.toml   # impairments for the modem's TX: http://localhost:8083/forge/
 ```

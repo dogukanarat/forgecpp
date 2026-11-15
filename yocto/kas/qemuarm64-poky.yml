@@ -33,24 +33,27 @@ local_conf_header:
   systemd: |
     INIT_MANAGER = "systemd"
   forgecpp: |
-    IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub radio-controller spectrum-analyzer qam-modem channel-emulator \
+    IMAGE_INSTALL:append = " forgecpp forgecpp-forgectl forgecpp-hub radio-controller spectrum-analyzer logic-analyzer qam-modem channel-emulator \
                              python3-forge curl"
     DISTRO_FEATURES:append = " ptest"
     IMAGE_INSTALL:append = " forgecpp-ptest"
     # No transceiver in QEMU: the radio's simulator.
     RADIO_BACKEND:pn-radio-controller = "sim"
+    LA_SOURCE:pn-logic-analyzer = "sim"
     # Build this checkout, not the recipes' git URL.
     INHERIT += "externalsrc"
     EXTERNALSRC:pn-forgecpp = "${FORGECPP_SRC}"
     EXTERNALSRC:pn-forgecpp-tools = "${FORGECPP_SRC}"
     EXTERNALSRC:pn-radio-controller = "${FORGECPP_SRC}"
     EXTERNALSRC:pn-spectrum-analyzer = "${FORGECPP_SRC}"
+    EXTERNALSRC:pn-logic-analyzer = "${FORGECPP_SRC}"
     EXTERNALSRC:pn-qam-modem = "${FORGECPP_SRC}"
     EXTERNALSRC:pn-channel-emulator = "${FORGECPP_SRC}"
     PV:pn-forgecpp = "0.4.0+ci"
     PV:pn-forgecpp-tools = "0.4.0+ci"
     PV:pn-radio-controller = "1.0.0+ci"
     PV:pn-spectrum-analyzer = "1.0.0+ci"
+    PV:pn-logic-analyzer = "1.0.0+ci"
     PV:pn-qam-modem = "1.0.0+ci"
     PV:pn-channel-emulator = "1.0.0+ci"
   testimage: |

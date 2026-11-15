@@ -68,7 +68,8 @@ examples/          hello, pump (the tutorials'), sensor-service, pipeline (multi
                    fault-log (SQLite through sqlite_orm),
                    thermostat (web site),
                    radio-controller (AD9364 over libiio + ZeroMQ),
-                   spectrum-analyzer (AD936x spectrum analyzer), qam-modem (16QAM over
+                   spectrum-analyzer (AD936x spectrum analyzer), logic-analyzer (Zynq FPGA
+                   capture core, decoders, web UI), qam-modem (16QAM over
                    radio-controller), channel-emulator, common/ad936x, common/channel
 tests/             doctest unit tests
 yocto/             the meta-forgecpp layer (needs only oe-core): forgecpp, forgecpp-tools, the

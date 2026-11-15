@@ -99,6 +99,7 @@ endif()
 
 add_subdirectory(radio-controller)
 add_subdirectory(spectrum-analyzer)
+add_subdirectory(logic-analyzer)
 add_subdirectory(qam-modem)
 add_subdirectory(channel-emulator)  # after qam-modem: its tests use the modem
 

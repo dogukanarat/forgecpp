@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Logic analyzer</title>
+  <link rel="stylesheet" href="forge/forge.css">
+  <link rel="stylesheet" href="assets/la.css">
+  <script src="forge/forge.js" data-manual></script>
+  <script src="assets/la.js" defer></script>
+</head>
+<body class="forge la">
+  <header class="forge-header">
+    <div class="forge-brand">
+      <span class="forge-dot" data-forge-connection></span>
+      <h1>Logic analyzer</h1>
+    </div>
+    <nav>
+      <a href="./" aria-current="page">Analyzer</a>
+      <a href="forge/">Control panel</a>
+    </nav>
+    <div class="forge-meta">
+      <span id="m-source">–</span>
+    </div>
+    <div class="forge-alarms-host" data-forge-alarms></div>
+  </header>
+
+  <!-- ================================================================= toolbar -->
+  <div class="la-toolbar" role="toolbar" aria-label="Capture">
+    <button class="la-run" id="run" type="button" title="Start / stop (Space)">
+      <span class="la-run-icon" aria-hidden="true"></span><span id="run-label">Start</span>
+    </button>
+    <div class="la-state" id="state">
+      <span class="la-state-dot"></span>
+      <span id="state-text">Idle</span>
+      <span class="la-progress" id="progress" hidden><i></i></span>
+    </div>
+
+    <div class="la-group">
+      <label class="la-field"><span>Rate</span><select id="t-rate" data-forge-bind="sample_rate"></select></label>
+      <label class="la-field"><span>Duration</span>
+        <span class="la-in"><input id="t-duration" type="number" min="0" step="any" data-forge-bind="duration_s"><i>s</i></span>
+      </label>
+    </div>
+
+    <div class="la-group">
+      <label class="la-field"><span>Trigger</span>
+        <select id="t-trigger" data-forge-bind="trigger">
+          <option value="none">None</option>
+          <option value="rising">Rising edge</option>
+          <option value="falling">Falling edge</option>
+          <option value="any">Any edge</option>
+          <option value="pattern">Pattern</option>
+        </select>
+      </label>
+      <label class="la-field" id="f-trigch"><span>on</span><select id="t-trigch" data-forge-bind="trigger_channel"></select></label>
+      <label class="la-field" id="f-pattern" hidden><span>D0‥D3</span>
+        <input id="t-pattern" class="la-pattern" type="text" maxlength="4" spellcheck="false" data-forge-bind="pattern" title="0, 1 or X for each channel, D0 first">
+      </label>
+      <label class="la-field" id="f-pre"><span>Pre</span>
+        <span class="la-in"><input type="number" min="0" step="any" data-forge-bind="pre_trigger_ms"><i>ms</i></span>
+      </label>
+      <label class="la-check" title="Arm again after each capture"><input type="checkbox" data-forge-bind="repeat"> Repeat</label>
+    </div>
+
+    <div class="la-spacer"></div>
+
+    <div class="la-group la-zoom" role="group" aria-label="Zoom">
+      <button class="forge-btn small" id="zoom-out" type="button" title="Zoom out (−)">−</button>
+      <button class="forge-btn small" id="zoom-in" type="button" title="Zoom in (+)">+</button>
+      <button class="forge-btn small" id="zoom-fit" type="button" title="Show the whole capture (F)">Fit</button>
+    </div>
+    <details class="la-menu" id="export">
+      <summary class="forge-btn small">Export ▾</summary>
+      <div class="la-menu-list">
+        <a data-export="/api/export/capture.lacap">Capture file (.lacap)<small>opens here again</small></a>
+        <a data-export="/api/export/capture.vcd">VCD<small>GTKWave, PulseView</small></a>
+        <a data-export="/api/export/capture.csv">Changes (.csv)<small>one row per change</small></a>
+        <hr>
+        <a data-export="/api/export/decoded.csv">Protocol log (.csv)<small>every decoded frame</small></a>
+        <a data-export="/api/export/decoded.txt">Protocol log (.txt)<small>easy to read</small></a>
+        <hr>
+        <a id="export-png">Screenshot (.png)<small>the waveforms as shown</small></a>
+      </div>
+    </details>
+  </div>
+
+  <!-- ==================================================================== main -->
+  <main class="la-main">
+    <section class="la-scope" aria-label="Waveforms">
+      <div class="la-labels" id="labels"></div>
+      <div class="la-canvas-box" id="canvas-box">
+        <canvas id="wave" tabindex="0" aria-label="Waveforms: drag to pan, wheel to zoom, click to place cursor A"></canvas>
+        <div class="la-tip" id="tip" hidden></div>
+        <div class="la-empty" id="empty">
+          <b>No capture yet</b>
+          <span>Press <kbd>Start</kbd> or <kbd>Space</kbd>. Set a trigger to wait for an event.</span>
+        </div>
+      </div>
+    </section>
+
+    <aside class="la-side">
+      <div class="la-tabs" role="tablist">
+        <button role="tab" data-tab="analyzers" aria-selected="true">Analyzers</button>
+        <button role="tab" data-tab="data">Data</button>
+        <button role="tab" data-tab="measure">Measure</button>
+        <button role="tab" data-tab="captures">Captures</button>
+        <button role="tab" data-tab="inputs">Inputs</button>
+      </div>
+
+      <!-- Analyzers -->
+      <div class="la-pane" data-pane="analyzers" role="tabpanel">
+        <div class="la-list" id="an-list"></div>
+        <div class="la-add">
+          <select id="an-type" aria-label="Analyzer type"></select>
+          <button class="forge-btn primary" id="an-add" type="button">Add analyzer</button>
+        </div>
+        <p class="la-hint">The frames are drawn over their channel and listed in <b>Data</b>. Click a frame to find it there.</p>
+      </div>
+
+      <!-- Data -->
+      <div class="la-pane" data-pane="data" role="tabpanel" hidden>
+        <div class="la-data-bar">
+          <input type="search" id="q" placeholder="Search: 0x48, 'A', NACK, error …" aria-label="Search the decoded data">
+          <select id="q-an" aria-label="Analyzer"><option value="">All</option></select>
+          <span class="segmented" role="group" aria-label="View">
+            <label><input type="radio" name="dview" value="table" checked><span>Table</span></label>
+            <label><input type="radio" name="dview" value="terminal"><span>Terminal</span></label>
+          </span>
+        </div>
+        <div class="la-table-box" id="table-box">
+          <table class="la-table">
+            <thead><tr><th>Time</th><th>Analyzer</th><th>Data</th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+          <div class="la-table-empty" id="rows-empty">Nothing decoded yet.</div>
+        </div>
+        <pre class="la-terminal" id="terminal" hidden></pre>
+        <div class="la-pager">
+          <button class="forge-btn small" id="pg-prev" type="button">‹</button>
+          <span id="pg-info">–</span>
+          <button class="forge-btn small" id="pg-next" type="button">›</button>
+          <span class="la-spacer"></span>
+          <a class="forge-btn small" data-export="/api/export/decoded.csv">CSV</a>
+          <a class="forge-btn small" data-export="/api/export/decoded.txt">TXT</a>
+        </div>
+      </div>
+
+      <!-- Measure -->
+      <div class="la-pane" data-pane="measure" role="tabpanel" hidden>
+        <dl class="la-readout" id="cursors">
+          <dt><i class="la-flag a">A</i> Cursor A</dt><dd id="c-a">click the waveforms</dd>
+          <dt><i class="la-flag b">B</i> Cursor B</dt><dd id="c-b">shift + click</dd>
+          <dt>Δt</dt><dd id="c-dt">–</dd>
+          <dt>1 / Δt</dt><dd id="c-f">–</dd>
+        </dl>
+        <p class="la-hint" id="m-range">Measured over the visible part. Shift + drag to measure a stretch.</p>
+        <table class="la-mtable">
+          <thead><tr><th></th><th>Frequency</th><th>Duty</th><th>Edges</th></tr></thead>
+          <tbody id="m-rows"></tbody>
+        </table>
+        <table class="la-mtable" id="m-widths">
+          <thead><tr><th></th><th>High min‥max</th><th>Low min‥max</th></tr></thead>
+          <tbody id="m-wrows"></tbody>
+        </table>
+        <div class="la-keys">
+          <button class="forge-btn small" id="c-clear" type="button">Clear cursors</button>
+          <button class="forge-btn small" id="c-view" type="button">Zoom to A‥B</button>
+        </div>
+      </div>
+
+      <!-- Captures -->
+      <div class="la-pane" data-pane="captures" role="tabpanel" hidden>
+        <div class="la-loaded" id="loaded" hidden>
+          Showing <b id="loaded-file"></b>
+          <button class="forge-btn small" id="go-live" type="button">Back to live</button>
+        </div>
+        <div class="la-list" id="cap-list"></div>
+        <div class="la-add">
+          <label class="forge-btn" for="import">Open a .lacap file…</label>
+          <input type="file" id="import" accept=".lacap" hidden>
+        </div>
+        <p class="la-hint">Every finished capture is saved on the device (oldest removed). Download them as <b>.lacap</b> and open them here later.</p>
+      </div>
+
+      <!-- Inputs -->
+      <div class="la-pane" data-pane="inputs" role="tabpanel" hidden>
+        <h3>Channel names</h3>
+        <div class="la-names" id="names"></div>
+        <h3>Input stage</h3>
+        <label class="la-row"><span>Logic level</span><select id="t-level" data-forge-bind="logic_level"></select></label>
+        <label class="la-row"><span>Threshold</span><span class="la-in"><input type="number" step="0.01" min="0.1" max="3.2" data-forge-bind="threshold_v"><i>V</i></span></label>
+        <label class="la-row"><span>Glitch filter</span><span class="la-in"><input type="number" step="10" min="0" data-forge-bind="glitch_ns"><i>ns</i></span></label>
+        <p class="la-hint">The threshold sets the comparators of the shield (PWM from the FPGA). The glitch filter drops pulses shorter than it, in the FPGA.</p>
+        <h3>Source</h3>
+        <dl class="la-readout" id="src-info"></dl>
+      </div>
+    </aside>
+  </main>
+
+  <!-- ================================================================== footer -->
+  <footer class="la-status">
+    <span id="s-cap">–</span>
+    <span id="s-view">–</span>
+    <span id="s-hover"></span>
+    <span class="la-spacer"></span>
+    <span class="la-help">Drag: pan · Wheel: zoom · Click: cursor A · Shift+click: B · Shift+drag: measure · Double-click: zoom in</span>
+  </footer>
+</body>
+</html>

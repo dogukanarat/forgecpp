@@ -16,6 +16,16 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
   listed by the console's `passes`. Its test reads the log back with its own
   connection. Fixed: `passes <n>` ignored `<n>` (a console handler gets the
   words after the command name).
+- `examples/logic-analyzer`: a four-channel logic analyzer for a Zynq-7000
+  (Arty Z7) used from the browser. The FPGA sends one 32-bit word per change
+  (with its time) instead of samples; the program records them with edge and
+  pattern triggers and a pre-trigger, decodes UART, I2C and SPI, and the page
+  shows waveforms (zoom, pan, overview, cursors, measurements), decoded
+  bubbles, a searchable data table and a terminal view. Captures are saved on
+  the device; exports as `.lacap`, VCD, CSV and protocol logs. A simulator
+  stands in for the FPGA; `fpga/` has the design (registers, device tree,
+  shield), the input stage and encoder in Verilog, and a testbench. Yocto
+  recipe `logic-analyzer`.
 - `examples/fault-log`: a fault log with `forge::orm`, no SQL. Two tables,
   a dummy fault source, faults that clear by time or by the operator, the
   console's `faults`, `history`, `stats`, `clear`; tests for each.
