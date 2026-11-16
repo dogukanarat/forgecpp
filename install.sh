@@ -261,6 +261,13 @@ if [[ "${ACTION}" == "uninstall" ]]; then
         while IFS= read -r f || [[ -n "$f" ]]; do
             [[ -n "$f" ]] || continue
             if [[ -e "$f" || -L "$f" ]]; then ${SUDO} rm -f "$f"; fi
+            # Python writes bytecode next to a module it imports (the forge
+            # package, the nanopb generator); no manifest lists it.
+            if [[ "$f" == *.py ]]; then
+                pyc=("$(dirname "$f")/__pycache__/$(basename "$f" .py)".*.pyc)
+                [[ ${#pyc[@]} -gt 0 ]] && ${SUDO} rm -f "${pyc[@]}"
+                ${SUDO} rmdir "$(dirname "$f")/__pycache__" 2>/dev/null || true
+            fi
         done < "$m"
     done
     if [[ -f "${SAVED_MANIFEST}" ]]; then ${SUDO} rm -f "${SAVED_MANIFEST}"; fi

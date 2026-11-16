@@ -163,6 +163,10 @@ def main():
     args = ap.parse_args()
 
     generator = os.path.join(args.nanopb, "generator")
+    # The generator usually lives in an install prefix: write no bytecode
+    # there (here and in the nanopb process below), or uninstall leaves it.
+    sys.dont_write_bytecode = True
+    os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     sys.path.insert(0, generator)
     os.makedirs(args.out, exist_ok=True)
     # nanopb builds nanopb_pb2 with protoc; keep it out of the source tree.
