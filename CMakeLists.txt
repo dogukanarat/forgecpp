@@ -378,7 +378,7 @@ foreach(py framing.py c2.py serial.py)
 endforeach()
 # pip install <build>/python (a ground segment without the C++ toolchain).
 configure_file(python/pyproject.toml.in "${PROJECT_BINARY_DIR}/python/pyproject.toml" @ONLY)
-forge_install_python(DIRECTORY "${PROJECT_BINARY_DIR}/python")
+forge_install_python(DIRECTORY "${PROJECT_BINARY_DIR}/python" NANOPB)
 install(TARGETS forgectl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
 install(FILES "${PROJECT_BINARY_DIR}/include/forge/version.hpp"
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/forge)

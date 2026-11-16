@@ -54,13 +54,16 @@
 #     to the other end) are in <build>/forge_proto/<target>/proto/.
 #     Needs on the build machine: protoc and Python 3 with the protobuf module.
 #
-#   forge_install_python(DIRECTORY <dir>)
+#   forge_install_python(DIRECTORY <dir> [NANOPB])
 #     Install the Python modules under <dir> (e.g. the PYTHON dir of
 #     forge_add_proto: <dir>/radio/radio_pb2.py) into site-packages, next to
 #     forgecpp's forge package, so clients simply `from radio import radio_pb2`.
 #     The directory is FORGE_PYTHON_SITEDIR (relative to the install prefix);
 #     by default the interpreter's own for this prefix, else lib/python3.X/site-packages.
 #     Yocto: -DFORGE_PYTHON_SITEDIR=${PYTHON_SITEPACKAGES_DIR}.
+#     nanopb_pb2.py (made in the same directory) is installed only with NANOPB:
+#     forgecpp's own install has it, next to the forge package, and an
+#     application leaves it out so that two packages never own the same file.
 
 include_guard(GLOBAL)
 include(GNUInstallDirs)
@@ -263,13 +266,17 @@ function(_forge_python_sitedir out)
 endfunction()
 
 function(forge_install_python)
-    cmake_parse_arguments(ARG "" "DIRECTORY" "" ${ARGN})
+    cmake_parse_arguments(ARG "NANOPB" "DIRECTORY" "" ${ARGN})
     if(NOT ARG_DIRECTORY)
         message(FATAL_ERROR "forge_install_python: DIRECTORY is required")
     endif()
     _forge_python_sitedir(site)
+    set(skip)
+    if(NOT ARG_NANOPB)
+        set(skip PATTERN "nanopb_pb2.py" EXCLUDE)
+    endif()
     install(DIRECTORY "${ARG_DIRECTORY}/" DESTINATION "${site}"
-            FILES_MATCHING PATTERN "*.py" PATTERN "__pycache__" EXCLUDE)
+            FILES_MATCHING PATTERN "*.py" PATTERN "__pycache__" EXCLUDE ${skip})
 endfunction()
 
 # Precompiled <forge/forge.hpp>: parsed once per target instead of in every
