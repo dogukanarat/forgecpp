@@ -26,5 +26,6 @@ EXTRA_OECMAKE = "-DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF"
 # Header-only: the package is its CMake config and the header.
 ALLOW_EMPTY:${PN} = "1"
 FILES:${PN}-dev += "${libdir}/cmake"
-RDEPENDS:${PN}-dev = "sqlite3-dev"
+# oe-core packages the SQLite library as libsqlite3 (headers: libsqlite3-dev).
+RDEPENDS:${PN}-dev = "libsqlite3-dev"
 BBCLASSEXTEND = "native nativesdk"
