@@ -10,6 +10,11 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 
 ### Added (project)
 
+- Workflow `yocto-check`, whenever the layer, CMake or a bundled library
+  changes: `tools/yocto-files.py` checks that each recipe packages every file
+  its project installs (and that no two install the same one), and
+  `bitbake -n` resolves the image with both kas files. The full image build
+  (`yocto`) runs weekly, on release tags and on demand instead of nightly.
 - The repository is prepared to be public: a new README (purpose, features,
   screenshots, quick start, strengths and limitations, roadmap, licenses),
   CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, issue forms and a pull

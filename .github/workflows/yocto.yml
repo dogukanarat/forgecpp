@@ -1,6 +1,6 @@
 name: yocto
 
-# Nightly: build the qemuarm64 image (forgecpp, forge-hub, radio-controller on
+# Weekly, on a release tag and on demand: build the qemuarm64 image (forgecpp, forge-hub, radio-controller on
 # its simulator, spectrum-analyzer) from this checkout and boot it in QEMU
 # with the runtime tests (testimage), twice: with meta-oe and meta-python
 # (yocto/kas/qemuarm64.yml, a usual BSP) and with poky and this layer only
@@ -9,9 +9,15 @@ name: yocto
 # A Yocto build needs tens of GB and hours: the job frees the runner's disk and
 # keeps downloads and sstate between runs. For a faster, roomier machine set
 # the repository variable YOCTO_RUNNER to a self-hosted runner's label.
+#
+# yocto-check.yml checks the layer in minutes whenever it, CMake or a bundled
+# library changes (the packaging of every recipe, and bitbake's dependency
+# resolution); this full build is what boots the image and runs its tests.
 on:
   schedule:
-    - cron: "17 2 * * *"
+    - cron: "17 2 * * 0"   # Sundays
+  push:
+    tags: ["v*"]
   workflow_dispatch:
 
 concurrency:

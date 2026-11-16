@@ -77,7 +77,17 @@ The runtime tests (`lib/oeqa/runtime/cases/forgecpp.py`) check that the units
 are active, forge-hub lists the applications, `forgectl` reaches
 radio-controller and the `forge` Python package imports; `ptest-runner
 forgecpp` runs the framework's own tests on the target. The `yocto` workflow
-runs this nightly (and on demand).
+runs this weekly, on a release tag and on demand.
+
+Two quicker checks run whenever the layer, the CMake files or a bundled
+library change (workflow `yocto-check`, a few minutes):
+
+- `tools/yocto-files.py`: every file the bundled libraries, forgecpp and the
+  applications install is in a package of its recipe (bitbake's
+  installed-vs-shipped error, without the hour of building), and no two
+  recipes install the same file;
+- `bitbake -n core-image-minimal` with both kas files: the layer parses and
+  every dependency of the image has a provider.
 
 ## The SDK
 

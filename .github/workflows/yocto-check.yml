@@ -1,0 +1,127 @@
+name: yocto-check
+
+# Quick checks of the Yocto layer, in minutes instead of the hours of the image
+# build (yocto.yml, weekly). They run when something that can break the layer
+# changes:
+#
+#   packaging  the layer's recipes package every file their CMake projects
+#              install (tools/yocto-files.py), from staged installs of the
+#              bundled libraries, forgecpp and the five applications: what
+#              bitbake reports as "installed-vs-shipped" after an hour
+#   dry-run    bitbake parses the layer and resolves every dependency of the
+#              image, both kas files, without building anything (bitbake -n):
+#              a package name that nothing provides, a missing recipe
+on:
+  push:
+    branches: [develop, master]
+    paths:
+      - "yocto/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "examples/**/CMakeLists.txt"
+      - "python/**"
+      - "third_party/**"
+      - ".gitmodules"
+      - "install.sh"
+      - "tools/yocto-files.py"
+      - ".github/workflows/yocto-check.yml"
+  pull_request:
+    paths:
+      - "yocto/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "examples/**/CMakeLists.txt"
+      - "python/**"
+      - "third_party/**"
+      - ".gitmodules"
+      - "install.sh"
+      - "tools/yocto-files.py"
+      - ".github/workflows/yocto-check.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packaging:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev python3-protobuf
+      # The ccache of ci.yml's g++ build (the same compiler and flags) when this one has none yet.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-yocto-files-${{ github.sha }}
+          restore-keys: |
+            ccache-yocto-files-
+            ccache-g++--
+      - name: Build and install the libraries and forgecpp
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 400M
+        run: |
+          ./install.sh --prefix "$HOME/forgecpp" --quiet \
+            --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Stage each project, the applications built on their own as their recipes do
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: |
+          set -euo pipefail
+          st="$RUNNER_TEMP/stage"
+          stage() { DESTDIR="$st/$1" cmake --install "$2" --prefix /usr > /dev/null; }
+          # install.sh's build directory -> the recipe (PN) that builds the same project
+          for pair in quill:quill CLI11:cli11 concurrentqueue:concurrentqueue json:nlohmann-json \
+                      tomlplusplus:tomlplusplus cpp-httplib:cpp-httplib doctest:doctest libzmq:zeromq \
+                      cppzmq:cppzmq libiio:libiio sqlite_orm:sqlite-orm forgecpp:forgecpp; do
+            stage "${pair##*:}" "build/${pair%%:*}"
+          done
+          for app in radio-controller spectrum-analyzer logic-analyzer qam-modem channel-emulator; do
+            cmake -S "examples/$app" -B "build/app-$app" -G Ninja -DBUILD_TESTING=OFF \
+              -DCMAKE_PREFIX_PATH="$HOME/forgecpp" -DCMAKE_INSTALL_PREFIX="$HOME/forgecpp" \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache > /dev/null
+            cmake --build "build/app-$app" > /dev/null
+            stage "examples/$app" "build/app-$app"
+          done
+      - name: The recipes package every installed file
+        run: |
+          st="$RUNNER_TEMP/stage"
+          args=()
+          for d in "$st"/*/; do
+            [[ "$(basename "$d")" == examples ]] || args+=(--stage "$(basename "$d")=$d")
+          done
+          python3 tools/yocto-files.py --orig-prefix "$HOME/forgecpp" "${args[@]}" --examples "$st/examples"
+
+  dry-run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        kas: [qemuarm64.yml, qemuarm64-poky.yml]
+    env:
+      KAS_WORK_DIR: ${{ github.workspace }}/../kas
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build host packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gawk wget git diffstat unzip texinfo gcc build-essential chrpath socat \
+            cpio python3 python3-pip python3-pexpect xz-utils debianutils iputils-ping python3-git \
+            python3-jinja2 python3-subunit zstd liblz4-tool file locales libacl1 lz4
+          sudo locale-gen en_US.UTF-8
+          pip3 install --user --break-system-packages kas==4.5
+          sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0 || true
+          mkdir -p "$KAS_WORK_DIR"
+      - name: bitbake resolves the image (nothing is built)
+        env:
+          FORGECPP_SRC: ${{ github.workspace }}
+          LANG: en_US.UTF-8
+        run: ~/.local/bin/kas shell yocto/kas/${{ matrix.kas }} -c "bitbake -n core-image-minimal"

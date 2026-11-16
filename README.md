@@ -317,7 +317,8 @@ The API reference is built with Doxygen: `cmake --build build --target forgecpp_
   application in a test, and a manual clock for timer logic.
 - **Checked broadly.** Unit and integration tests, fuzz targets, AddressSanitizer,
   UBSan and ThreadSanitizer jobs, browser tests of the panel, real systemd units in
-  CI, an armhf cross build run under QEMU, and a nightly Yocto image with runtime tests.
+  CI, an armhf cross build run under QEMU, and a weekly Yocto image with runtime tests
+  (and quick packaging and dependency checks of the layer on every change to it).
 - **Ready for embedded Linux.** Shared libraries, generated and hardened systemd
   units with watchdogs, a Yocto layer on oe-core only, a Zynq-7000 toolchain.
 - **Real applications as examples**, not toys: a radio daemon, a spectrum analyzer,
