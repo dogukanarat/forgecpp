@@ -73,7 +73,11 @@ jobs:
       - name: Logs
         if: failure()
         run: |
-          find "$KAS_WORK_DIR/build/tmp/work" -name 'log.do_*' -newer yocto/kas/${{ matrix.kas }} -path '*forgecpp*' \
-            -o -name 'log.do_*' -newer yocto/kas/${{ matrix.kas }} -path '*radio-controller*' | head -20 | xargs -r tail -n 80
+          # The latest log of each task of this layer's own programs (bitbake has
+          # already printed the error of a failed task of any other recipe).
+          # The checkout is under .../forgecpp/ too: match the recipe directory.
+          find "$KAS_WORK_DIR/build/tmp/work" -regextype posix-extended -newer yocto/kas/${{ matrix.kas }} \
+            -regex '.*/tmp/work/[^/]+/(forgecpp|radio-controller)/[^/]+/temp/log\.do_[a-z_]+' |
+            head -20 | xargs -r tail -n 80
           find "$KAS_WORK_DIR/build/tmp/log/oeqa" -type f | xargs -r tail -n 200
           df -h /
