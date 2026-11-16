@@ -71,8 +71,18 @@ def message():
     return m
 
 
+def to_dict(m):
+    # Fields without presence are printed with their defaults too. protobuf
+    # 5.26 renamed the option; Ubuntu 24.04 and Yocto scarthgap have 4.21.
+    try:
+        return json_format.MessageToDict(m, always_print_fields_with_no_presence=True,
+                                         preserving_proto_field_name=True)
+    except TypeError:
+        return json_format.MessageToDict(m, including_default_value_fields=True, preserving_proto_field_name=True)
+
+
 with open(sys.argv[2], "w") as out:
     for _ in range(500):
         m = message()
-        j = json_format.MessageToDict(m, always_print_fields_with_no_presence=True, preserving_proto_field_name=True)
+        j = to_dict(m)
         out.write(json.dumps({"json": j, "hex": m.SerializeToString().hex()}, ensure_ascii=False) + "\n")
