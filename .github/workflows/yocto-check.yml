@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - name: Dependencies
@@ -56,7 +56,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build ccache libssl-dev zlib1g-dev libxml2-dev python3-protobuf
       # The ccache of ci.yml's g++ build (the same compiler and flags) when this one has none yet.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.ccache
           key: ccache-yocto-files-${{ github.sha }}
@@ -109,7 +109,7 @@ jobs:
     env:
       KAS_WORK_DIR: ${{ github.workspace }}/../kas
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Build host packages
         run: |
           sudo apt-get update
