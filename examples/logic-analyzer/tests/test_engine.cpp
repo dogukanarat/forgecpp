@@ -9,6 +9,7 @@
 #include <atomic>
 #include <fstream>
 #include <sstream>
+#include <thread>
 
 using namespace la;
 using namespace std::chrono_literals;
@@ -118,6 +119,23 @@ TEST_CASE("engine: a pattern trigger, and pre-trigger time that is dropped while
     CHECK((c.before(c.lower(*c.trigger)) & 0b0111) != 0b0110);
     CHECK(c.begin == *c.trigger - 500);  // 0.05 ms at 10 MHz
     for (const auto t : c.t) CHECK(t >= c.begin);
+}
+
+TEST_CASE("engine: status can be read from another thread while a capture runs") {
+    // The panel asks for the status from HTTP threads; the source is used by
+    // the engine thread only (run under ThreadSanitizer in CI).
+    Run r(sim("mixed"));
+    std::atomic<bool> quit{false};
+    std::uint64_t seen = 0;
+    std::thread reader([&] {
+        while (!quit) seen = std::max(seen, r.engine.status().source.words);
+    });
+    r.capture({.sample_hz = 100e6, .duration_s = 0.05});
+    quit = true;
+    reader.join();
+    const auto words = r.engine.status().source.words;
+    CHECK(words > 0);
+    CHECK(seen <= words);
 }
 
 TEST_CASE("engine: until stopped, and the edge limit") {

@@ -55,9 +55,7 @@ std::shared_ptr<SharedCapture> Engine::current() const {
 
 EngineStatus Engine::status() const {
     std::lock_guard lock(mutex_);
-    auto s = status_;
-    s.source = source_->stats();
-    return s;
+    return status_;  // status_.source is copied by the engine thread, the only one that uses source_
 }
 
 void Engine::set_names(const std::array<std::string, kChannels>& names) {
@@ -106,14 +104,17 @@ void Engine::capture(const CaptureSettings& s) {
         status_.state = st;
     };
     const auto finish = [&](const std::string& reason, const std::string& error = {}) {
+        SourceStats st;
         try {
             source_->stop();
+            st = source_->stats();
         } catch (...) {
         }
         shared->write([](Capture& c) { c.done = true; });
         {
             std::lock_guard lock(mutex_);
             status_.state = State::idle;
+            status_.source = st;
             status_.words_per_s = status_.edges_per_s = 0;
             status_.stop_reason = reason;
             status_.error = error;
@@ -175,6 +176,11 @@ void Engine::capture(const CaptureSettings& s) {
             return;
         }
         words_n += words.size();
+        {
+            const SourceStats st = source_->stats();
+            std::lock_guard lock(mutex_);
+            status_.source = st;
+        }
         State new_state = state;
         shared->write([&](Capture& c) {
             dec.feed(words, [&](const WireEvent& e) {

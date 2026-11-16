@@ -12,6 +12,7 @@
 #include "source.hpp"
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 
 namespace la {
@@ -41,8 +42,14 @@ public:
     explicit UioSource(std::string device);
     ~UioSource() override;
 
-    std::string name() const override { return "uio:" + path_; }
-    double base_clock_hz() const override { return clock_hz_; }
+    std::string name() const override {
+        std::lock_guard lock(info_mutex_);
+        return "uio:" + path_;
+    }
+    double base_clock_hz() const override {
+        std::lock_guard lock(info_mutex_);
+        return clock_hz_;
+    }
     void start(const SourceConfig& config) override;
     void stop() override;
     std::size_t read(std::vector<std::uint32_t>& out, std::chrono::milliseconds timeout) override;
@@ -55,6 +62,9 @@ private:
     std::uint32_t rd(std::uint32_t offset) const;
     void wr(std::uint32_t offset, std::uint32_t value);
 
+    // open() runs on the engine thread at the first start; name() and info()
+    // are asked from others: the fields open() sets are read under this lock.
+    mutable std::mutex info_mutex_;
     std::string device_, path_;
     int fd_ = -1;
     volatile std::uint32_t* regs_ = nullptr;
