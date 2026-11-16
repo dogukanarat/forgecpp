@@ -396,8 +396,11 @@ install(PROGRAMS tools/forge-proto.py DESTINATION ${CMAKE_INSTALL_DATADIR}/forge
 # Native builds also install the protoc they used, so applications built
 # against this install need no protobuf of their own.
 if(FORGE_PROTOC AND NOT CMAKE_CROSSCOMPILING)
-    # A program of this machine: libexec, not share.
-    install(PROGRAMS "${FORGE_PROTOC}" DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/forgecpp RENAME protoc
+    # A program of this machine: libexec, not share. protobuf installs protoc
+    # as a link to protoc-<version>: install the file, not the link (which
+    # would point at nothing).
+    get_filename_component(_forge_protoc_file "${FORGE_PROTOC}" REALPATH)
+    install(PROGRAMS "${_forge_protoc_file}" DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/forgecpp RENAME protoc
             COMPONENT Development)
 endif()
 

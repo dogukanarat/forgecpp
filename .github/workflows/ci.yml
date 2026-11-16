@@ -48,7 +48,7 @@ jobs:
             --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           ccache --show-stats
       - name: The messages stay compatible with the released API
-        run: python3 tools/proto-compat.py --protoc "$HOME/forgecpp/share/forgecpp/protoc"
+        run: python3 tools/proto-compat.py --protoc "$HOME/forgecpp/libexec/forgecpp/protoc"
       - name: C++ API (exported symbols) and configuration keys stay compatible within the series
         if: ${{ !contains(matrix.flags, '--static') }}
         run: python3 tools/api-check.py --lib "$HOME/forgecpp/lib/libforgecpp.so" --app build/forgecpp/examples/hello

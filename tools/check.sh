@@ -119,7 +119,7 @@ if [[ ${do_compat} == 1 && -f build/check-release/libforgecpp.so ]]; then
     step "messages (proto/forge/API.json)"
     protoc="$(command -v protoc || true)"
     [[ -z "${protoc}" && -x "${DEPS%%;*}/bin/protoc" ]] && protoc="${DEPS%%;*}/bin/protoc"
-    [[ -z "${protoc}" && -x "${DEPS%%;*}/share/forgecpp/protoc" ]] && protoc="${DEPS%%;*}/share/forgecpp/protoc"
+    [[ -z "${protoc}" && -x "${DEPS%%;*}/libexec/forgecpp/protoc" ]] && protoc="${DEPS%%;*}/libexec/forgecpp/protoc"
     if [[ -n "${protoc}" ]]; then
         python3 tools/proto-compat.py --protoc "${protoc}" || fail "proto-compat"
     else
