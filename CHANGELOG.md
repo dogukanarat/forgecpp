@@ -10,6 +10,11 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 
 ### Added (project)
 
+- Workflow `yocto-check`, whenever the layer, CMake or a bundled library
+  changes: `tools/yocto-files.py` checks that each recipe packages every file
+  its project installs (and that no two install the same one), and
+  `bitbake -n` resolves the image with both kas files. The full image build
+  (`yocto`) runs weekly, on release tags and on demand instead of nightly.
 - The repository is prepared to be public: a new README (purpose, features,
   screenshots, quick start, strengths and limitations, roadmap, licenses),
   CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, issue forms and a pull
@@ -160,6 +165,10 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 
 ### Changed
 
+- `forge_install_python()` no longer installs `nanopb_pb2.py` for an
+  application: forgecpp's install has it, next to the `forge` package, and two
+  packages (Yocto: `python3-forge` and the application's) owned the same file.
+  forgecpp's own call passes the new `NANOPB` option.
 - A refusal by an application command's handler (a `forge::Error` it throws)
   goes out on a link with module **app** (64) instead of tmtc; forgecpp's own
   commands and forgecpp's checks (role, busy main loop) stay tmtc.

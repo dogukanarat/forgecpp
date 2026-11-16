@@ -53,6 +53,7 @@ UioSource::~UioSource() {
 
 void UioSource::open() {
     if (fd_ >= 0) return;
+    std::lock_guard lock(info_mutex_);
     path_ = resolve(device_);
     const std::string uio = std::filesystem::path(path_).filename().string();
     const std::filesystem::path maps = "/sys/class/uio/" + uio + "/maps";
@@ -173,6 +174,7 @@ SourceStats UioSource::stats() const {
 }
 
 forge::json UioSource::info() const {
+    std::lock_guard lock(info_mutex_);
     return {{"device", path_},
             {"core_version", id_ & 0xFFFF},
             {"clock_hz", clock_hz_},

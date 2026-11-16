@@ -25,6 +25,9 @@ struct SourceStats {
     std::uint64_t overflows = 0;  ///< times the buffer was full
 };
 
+/// start(), stop(), read() and stats() are called from the engine thread only.
+/// name(), info(), channel_names() and suggested_analyzers() may be called from
+/// any thread at any time.
 class Source {
 public:
     virtual ~Source() = default;

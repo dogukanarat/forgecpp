@@ -5,7 +5,7 @@
 #   FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml                 # image
 #   FORGECPP_SRC=$PWD kas build yocto/kas/qemuarm64.yml -c testimage    # boot it in QEMU and test
 #
-# Used by .github/workflows/yocto.yml (nightly).
+# Used by .github/workflows/yocto.yml (weekly) and yocto-check.yml (bitbake -n).
 header:
   version: 14
   includes:

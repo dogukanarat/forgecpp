@@ -48,7 +48,7 @@ jobs:
             --cmake-arg -DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           ccache --show-stats
       - name: The messages stay compatible with the released API
-        run: python3 tools/proto-compat.py --protoc "$HOME/forgecpp/share/forgecpp/protoc"
+        run: python3 tools/proto-compat.py --protoc "$HOME/forgecpp/libexec/forgecpp/protoc"
       - name: C++ API (exported symbols) and configuration keys stay compatible within the series
         if: ${{ !contains(matrix.flags, '--static') }}
         run: python3 tools/api-check.py --lib "$HOME/forgecpp/lib/libforgecpp.so" --app build/forgecpp/examples/hello
@@ -253,7 +253,7 @@ jobs:
           [[ "$(cat /tmp/health.json)" == *'"status":"ok"'* ]]
           out=$(qemu-arm "$root/usr/local/bin/forgectl" -e tcp://127.0.0.1:15757 get rx_lo_mhz)
           echo "forgectl (armhf): rx_lo_mhz = $out"
-          [ "$out" = 2412 ]
+          awk -v v="$out" 'BEGIN { exit !(v + 0 == 2412) }'  # a double: 2412.0
           kill -TERM $pid
           wait $pid
       - uses: actions/upload-artifact@v4

@@ -28,4 +28,6 @@ EXTRA_OECMAKE = " \
 "
 
 FILES:${PN}-dev += "${libdir}/cmake"
+# 0.65 also installs README.md (docdir) and LICENSE (datadir/licenses).
+FILES:${PN}-doc += "${datadir}/licenses"
 BBCLASSEXTEND = "native nativesdk"
