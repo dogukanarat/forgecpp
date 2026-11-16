@@ -1,36 +1,53 @@
-# forgecpp
+<h1 align="center">forgecpp</h1>
 
-A **batteries-included** C++20 framework for Linux daemons and services.
+<p align="center">
+  <b>A batteries-included C++20 framework for embedded Linux daemons.</b><br>
+  Write the application logic once; get a web control panel, a command link, a remote console,
+  metrics, health checks and a systemd unit with it.
+</p>
 
-Best-in-class libraries are bundled as git submodules, installed with a single
-`install.sh`, and wired together into an application skeleton under the
-`forge::` namespace. Every daemon you build shares the same foundation:
-logging, configuration, CLI, thread pool, HTTP, **web UI**, **ZeroMQ**,
-console, signal handling and systemd integration.
+<p align="center">
+  <a href="https://github.com/dogukanarat/forgecpp/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/dogukanarat/forgecpp/actions/workflows/ci.yml/badge.svg?branch=master"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <img alt="C++20" src="https://img.shields.io/badge/C%2B%2B-20-00599C.svg">
+  <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-lightgrey.svg">
+  <img alt="Yocto scarthgap" src="https://img.shields.io/badge/Yocto-scarthgap-informational.svg">
+  <img alt="Version 0.4" src="https://img.shields.io/badge/version-0.4%20(pre--1.0)-orange.svg">
+</p>
 
-Every application is operated, observed and connected **the same way**, so an
-engineer moving between applications finds the same tools everywhere:
+<p align="center">
+  <img src="docs/images/panel-controls.png" alt="The built-in control panel of a forgecpp application" width="880">
+</p>
 
-- **One message standard, binary and JSON.** Every command is a request and a
-  reply with a number, defined in a `.proto` file with fixed bounds (nanopb: no
-  allocation). Links (ZeroMQ, a serial line, a CAN bus over ISO-TP) carry them as c2 frames, byte
-  for byte like [zephyrus](https://github.com/embedded-aviation/zephyrus) on
-  the microcontrollers; the web sends the same commands as JSON. One handler
-  answers both. Streams carry a header with source, sequence number, time and
-  trace context, so data can be followed from one daemon to the next and gaps
-  are detected.
-- **The same ways in.** You declare controls and commands once in C++;
-  forgecpp publishes them as a web control panel (`/forge/`), `data-forge-*`
-  attributes for your own pages, the command link (`forgectl`), the local
-  console (`-i`) and a **remote console over telnet**. All of them go through one
-  control service with roles, leases and an audit trail.
-- **Built-in observability.** Metrics (Prometheus `/metrics`), a flight
-  recorder of trace spans (Perfetto), crash reports, structured (JSON) logs,
-  health checks tied to the systemd watchdog.
-- **The hardware every subsystem has.** GPIO lines (the kernel's character
-  device, with a simulated chip for PCs and tests) and CAN (raw frames, and
-  commands over ISO-TP), without extra libraries; optional components for
-  SQLite (with a store-and-forward backlog) and LZ4.
+---
+
+## Contents
+
+- [Why forgecpp](#why-forgecpp)
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Quick start](#quick-start)
+- [Using it in your project](#using-it-in-your-project)
+- [Examples](#examples)
+- [Documentation](#documentation)
+- [Strengths and limitations](#strengths-and-limitations)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Why forgecpp
+
+A device on a satellite, a radio, a test bench or a lab instrument usually runs
+several Linux programs: one per piece of hardware or per job. Each of them
+needs the same things besides its own logic: configuration, logging, a way to
+change settings and send commands while it runs, a way to see what it is doing,
+a clean shutdown, a restart when it hangs, and a way to be tested without the
+hardware. Written again for every program, these parts differ from one program
+to the next, and an engineer has to learn each one.
+
+forgecpp gives every program the same foundation. You subclass
+`forge::Application`, declare your controls and commands in C++, and the
+framework publishes them everywhere at once:
 
 ```cpp
 #include <forge/forge.hpp>
@@ -63,22 +80,68 @@ private:
 FORGE_MAIN(Pump)
 ```
 
+That program now has all of these, with no extra code (the endpoints are
+usually set in its configuration file; here on the command line):
+
 ```sh
-./pump --http 8080                 # http://device:8080/forge/ -> control panel
-./pump --http 8080 -i              # + backup console: controls / set speed 1500 / press flush
+./pump --http 8080                              # web control panel: http://device:8080/forge/
+./pump --http 8080 -i                           # + an interactive console: set speed 1500, press flush
 ./pump -D forge.control=tcp://*:5557 -D console.telnet=0.0.0.0:2323
-forgectl -e tcp://device:5557 set speed 1500    # the same controls from anywhere
+forgectl -e tcp://device:5557 set speed 1500    # the same controls over ZeroMQ, from another machine
 telnet device 2323                              # the console, remotely
-kill -HUP $(pidof pump)            # reload the configuration
+curl device:8080/metrics                        # Prometheus metrics; /health for the watchdog and probes
+kill -HUP $(pidof pump)                         # reload the configuration
 ```
 
-## What it looks like
+Every forgecpp program on a device is operated, observed and connected the
+same way, so a team learns one set of tools.
 
-**The control panel** at `/forge/`, in every application without a line of
-HTML: the controls declared in C++, live values, alarms, the log
-(`examples/sensor-service`).
+## Features
 
-![The control panel of sensor-service](docs/images/panel-controls.png)
+**Application skeleton**
+- `forge::Application` with a main loop, timers, signal handling, clean shutdown and
+  configuration reload; typed configuration (TOML) with a schema, defaults and
+  validation; command line (CLI11) and `-D key=value` overrides.
+- Threads done safely: named workers with real-time priorities, a thread pool,
+  lock-free channels, `post()` / `invoke()` onto the main loop, and checks that
+  refuse the most common mistakes ([threading](docs/threading.md)).
+- Asynchronous logging (Quill) to the terminal, files, syslog, the web panel and telnet.
+
+**Control and commands**
+- One declaration of a control or command serves the **web panel**, your own web
+  pages (`data-forge-*` attributes), the **command link** (`forgectl`), the local
+  console and a **remote console over telnet**.
+- Roles, leases (who may change what) and an audit trail of every change.
+- **One message standard, binary and JSON**: commands are numbered request/reply pairs in
+  `.proto` files with fixed bounds (nanopb: no allocation). Links carry them as
+  c2 frames, byte for byte like [zephyrus](https://github.com/embedded-aviation/zephyrus)
+  on microcontrollers: over **ZeroMQ**, a **serial line** or a **CAN bus** (ISO-TP).
+  The web sends the same commands as JSON; one handler answers both.
+- Streams with a header (source, sequence, time, trace context): gaps are detected
+  and data can be followed from one program to the next.
+
+**Observability and operations**
+- Metrics (Prometheus `/metrics`), a flight recorder of trace spans (Perfetto),
+  crash reports, structured JSON logs, alarms with acknowledgement.
+- Health checks tied to the systemd watchdog; `forge_add_app()` generates the
+  systemd unit with its restart policy and hardening.
+- **forge-hub**: a dashboard of every forgecpp program on the device (health, alarms,
+  CPU, memory, restarts), with a proxy to each program's page.
+
+**Hardware and storage**
+- GPIO (the kernel's character device, with a simulated chip for PCs and tests) and
+  CAN (raw frames, commands over ISO-TP) without extra libraries.
+- Optional components: SQLite with a store-and-forward backlog, LZ4, and SQLite
+  tables as C++ structs (sqlite_orm).
+
+**Built for embedded Linux**
+- Shared libraries, built from git submodules by one `install.sh`, or by a
+  **Yocto layer** that needs only oe-core.
+- Cross builds (a Zynq-7000 armhf toolchain file and CI job).
+- A project scaffolder (`forgecpp-new`) and test helpers that run a whole
+  application in a test with a **manual clock** (no sleeps, no flaky timing).
+
+## Screenshots
 
 <table>
 <tr>
@@ -86,131 +149,135 @@ HTML: the controls declared in C++, live values, alarms, the log
 <td width="50%"><img src="docs/images/panel-metrics.png" alt="The Metrics page"></td>
 </tr>
 <tr>
-<td><b>Commands:</b> every command of the program, with a JSON form; the same
+<td><b>Commands.</b> Every command of the program with a JSON form. The same
 commands answer binary c2 frames on ZeroMQ, a serial line or a CAN bus.</td>
-<td><b>Metrics:</b> the framework's and the application's, with a trend;
-also <code>/metrics</code> for Prometheus. Health, streams, audit, leases and
-the flight recorder have their pages too.</td>
+<td><b>Metrics.</b> The framework's and the application's, with a trend; also
+<code>/metrics</code> for Prometheus. Health, streams, audit, leases and the
+flight recorder have pages too.</td>
+</tr>
+<tr>
+<td><img src="docs/images/console.png" alt="The interactive console"></td>
+<td><img src="docs/images/hub.png" alt="forge-hub"></td>
+</tr>
+<tr>
+<td><b>Console.</b> The same controls and commands without a browser: <code>-i</code>
+on the terminal, or telnet on a remote device.</td>
+<td><b>forge-hub.</b> Every forgecpp program on the device: health, alarms,
+CPU and memory, systemd restarts, and the way into each one's panel.</td>
 </tr>
 </table>
 
-**The console**, the same commands without a browser: `-i` on the terminal,
-or over telnet (`[console].telnet`) on a remote device.
+Applications add their own pages next to the panel. Two of the examples:
 
-<img src="docs/images/console.png" alt="The interactive console of the pump" width="720">
+**Spectrum analyzer** (`examples/spectrum-analyzer`) on an AD936x transceiver, here on its simulator:
 
-**forge-hub**, the device's dashboard: every forgecpp program on the device
-registers with it; their health, alarms, CPU and memory, systemd restarts,
-and the way into each one's panel.
+![The spectrum analyzer](docs/images/spectrum-analyzer.jpg)
 
-![forge-hub](docs/images/hub.png)
+**Logic analyzer** (`examples/logic-analyzer`) for a Zynq-7000 with an FPGA capture
+core: UART, I2C and SPI decoded, a searchable data table, cursors and measurements:
 
-**An application's own page** next to the panel: the spectrum analyzer of
-`examples/spectrum-analyzer`, here on its simulated AD9364.
+![The logic analyzer](docs/images/logic-analyzer.jpg)
 
-![The spectrum analyzer's page](docs/images/spectrum-analyzer.jpg)
+## Quick start
 
-The logic analyzer of `examples/logic-analyzer` (four inputs on a Zynq-7000,
-UART / I2C / SPI decoders, here on its simulator):
-
-![The logic analyzer's page](docs/images/logic-analyzer.jpg)
-
-## What's inside
-
-| Library | Version | Purpose | In forgecpp |
-|---|---|---|---|
-| [Quill](https://github.com/odygrd/quill) | v13.1.0 | Asynchronous logging (header-only): a background thread writes the terminal, file, syslog and history | `forge::log`, `FORGE_INFO(...)`, `FORGE_RT_*` |
-| [CLI11](https://github.com/CLIUtils/CLI11) | v2.7.2 | Command line parsing | `Application::cli()`, `setup_cli()` |
-| [linenoise](https://github.com/antirez/linenoise) | a473823 (2026-05) | Console line editing: history, tab completion, hints, output while typing (compiled into libforgecpp) | `forge::Console` |
-| [BS::thread_pool](https://github.com/bshoshany/thread-pool) | v5.1.0 | Lightweight, fast thread pool | `forge::ThreadPool`, `Application::pool()` |
-| [moodycamel::ConcurrentQueue](https://github.com/cameron314/concurrentqueue) | v1.0.5 | Lock-free inter-thread data transfer | `forge::Channel<T>` |
-| [nlohmann/json](https://github.com/nlohmann/json) | v3.12.0 | JSON reading/writing | `forge::json`, `save_json()` |
-| [toml++](https://github.com/marzer/tomlplusplus) | v3.4.0 | TOML configuration | `forge::Config` |
-| [cpp-httplib](https://github.com/yhirose/cpp-httplib) | v0.65.0 | HTTP/HTTPS client and server | `forge::http::Server`, `forge::http::Client` |
-| [doctest](https://github.com/doctest/doctest) | v2.5.3 | Unit testing | `forge/testing.hpp`, `forge_add_test()` |
-| [libzmq](https://github.com/zeromq/libzmq) + [cppzmq](https://github.com/zeromq/cppzmq) | v4.3.5 / v4.11.0 | ZeroMQ messaging (pub/sub, push/pull, request/reply) | `forge/zmq.hpp`, `[forge]` endpoints |
-| [nanopb](https://github.com/nanopb/nanopb) | 0.4.9.2 | Protobuf messages as C structs with fixed bounds (compiled in) | `forge/pb.hpp`, `proto/forge`, `forge_add_proto()` |
-| [protobuf](https://github.com/protocolbuffers/protobuf) | v21.12 | `protoc`, on the build machine only (nothing links libprotobuf) | `forge_add_proto()` |
-| [libiio](https://github.com/analogdevicesinc/libiio) | v0.26 | Industrial I/O devices (ADI transceivers, ADCs, ...) | `examples/radio-controller`, `examples/spectrum-analyzer` |
-| [SQLite](https://github.com/sqlite/sqlite) | 3.54.1 | Database in a file (optional component `forgecpp::sqlite`; `--without-sqlite`) | `forge/sqlite.hpp`, `forge::Backlog` |
-| [LZ4](https://github.com/lz4/lz4) | v1.10.0 | Fast compression, frame format (optional component `forgecpp::lz4`; `--without-lz4`) | `forge/lz4.hpp` |
-| [sqlite_orm](https://github.com/fnc12/sqlite_orm) | v1.9.1 | SQLite tables as C++ structs, no SQL (header-only, optional component `forgecpp::orm`; `--without-sqlite-orm`). **AGPL-3.0** or bought MIT: see [docs/storage.md](docs/storage.md#license-of-sqlite_orm) | `forge/orm.hpp` |
-
-## Installation
-
-Requirements: CMake ≥ 3.16, a C++20 compiler (GCC ≥ 13 / Clang ≥ 17 with libstdc++ 13), git,
-libxml2 (for libiio; skip with `--without-iio`). Python 3 with `protobuf`
-(the message generator runs at build time; `apt install python3-protobuf`), and
-`pyzmq` for the Python clients (optional).
-Optional: `ninja`, OpenSSL (for HTTPS), zlib (for compression), libusb-1.0 (`--iio-usb`).
+**Requirements:** Linux; CMake ≥ 3.16; GCC ≥ 13 or Clang ≥ 17 (with libstdc++ 13);
+git; Python 3 with `protobuf` (`apt install python3-protobuf`; the message
+generator runs at build time). Optional: ninja, OpenSSL (HTTPS), zlib,
+libxml2 (for libiio; or `--without-iio`).
 
 ```sh
 git clone --recursive https://github.com/dogukanarat/forgecpp.git
 cd forgecpp
-./install.sh                         # installs into /usr/local (uses sudo if needed)
+./install.sh --prefix ~/.local          # builds the bundled libraries and forgecpp
 ```
 
-One-liner (clones into a temporary directory, installs and cleans up):
+Or in one line (clones into a temporary directory, installs, cleans up):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh | bash
-curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh | bash -s -- --prefix /opt/forgecpp --ref v0.4.0
+curl -fsSL https://raw.githubusercontent.com/dogukanarat/forgecpp/master/get.sh | bash -s -- --prefix ~/.local
 ```
 
-Every `install.sh` option, cross builds and Yocto: [docs/installation.md](docs/installation.md).
-
-## Starting a new application
+Make a new application and run it:
 
 ```sh
-forgecpp-new my-daemon
-cd my-daemon
-cmake -B build && cmake --build build -j
-ctest --test-dir build
-./build/my-daemon -c config/my-daemon.toml      # http://localhost:8080/ and /forge/
-./build/my-daemon -c config/my-daemon.toml -i   # + backup console
-sudo cmake --install build     # binary (web/ embedded) + /etc/my-daemon/my-daemon.toml + systemd unit
+forgecpp-new my-daemon && cd my-daemon
+cmake -B build -DCMAKE_PREFIX_PATH=~/.local && cmake --build build -j
+ctest --test-dir build                                  # its tests
+./build/my-daemon -c config/my-daemon.toml -i           # http://localhost:8080/forge/ + console
+sudo cmake --install build                              # binary, config, systemd unit
 ```
 
-`forgecpp-new --minimal my-daemon` makes the smallest shape: a schema, the
-controls, a timer, the configuration and tests, about 100 lines of C++ (no
-messages, web page, Python client, CLI flag, REST route, console command,
-action, metric or trace span); `--with-command` and `--with-stream` add a
-command or a stream back.
+The generated project has an `Application` subclass with controls and a
+command, its own messages, its own web page (embedded in the binary), a
+configuration file, tests and a Python client. `forgecpp-new --minimal` makes
+the smallest shape (about 100 lines). Every `install.sh` option, cross builds
+and Yocto: [docs/installation.md](docs/installation.md).
 
-Generated project:
+To try the examples instead:
 
-```
-my-daemon/
-├── CMakeLists.txt              find_package(forgecpp) + forge_add_app() (systemd unit with
-│                               its restart policy) + forge_proto + forge_add_test()
-├── src/my_daemon.hpp, main.cpp forge::Application subclass (schema, controls, commands, stream)
-├── proto/my_daemon/my_daemon.proto   its own messages (a "status" command, a "ticks" stream)
-├── web/index.html              the application's own page (embedded in the binary)
-├── config/my-daemon.toml       default configuration
-├── tests/test_my_daemon.cpp    doctest + forge::testing::AppRunner
-├── clients/watch.py            Python client of the stream (forge package)
-└── README.md
+```sh
+./install.sh --prefix ~/.local --examples
+cd build/forgecpp/examples
+./sensor-service -c sensor-service.toml -i            # http://localhost:8080/forge/
+./logic-analyzer/logic-analyzer -c logic-analyzer/logic-analyzer.toml   # http://localhost:8084/
 ```
 
-In your own CMake project:
+## Using it in your project
 
 ```cmake
-find_package(forgecpp REQUIRED)
+find_package(forgecpp 0.4 REQUIRED)
 forge_add_app(mydaemon
     SOURCES src/main.cpp
     CONFIG  config/mydaemon.toml        # installed as <sysconfdir>/mydaemon/mydaemon.toml
     WEB     web                         # every file under web/ is embedded in the binary
-    SERVICE mydaemon.service)           # installed under lib/systemd/system
-# to embed pages into another target:
-forge_add_web(mytool DIR web PREFIX /)
-# or the classic way:
-target_link_libraries(mytool PRIVATE forgecpp::forgecpp)
-# the optional components (docs/storage.md):
-find_package(forgecpp REQUIRED COMPONENTS sqlite lz4)
+    RESTART on-failure WATCHDOG 30)     # the generated systemd unit
+forge_add_test(mydaemon_tests SOURCES tests/test_main.cpp)
+
+# optional components (docs/storage.md)
+find_package(forgecpp 0.4 REQUIRED COMPONENTS sqlite lz4)
 target_link_libraries(recorder PRIVATE forgecpp::sqlite forgecpp::lz4)
 ```
 
-Without CMake: `pkg-config --cflags --libs forgecpp`.
+Without CMake: `pkg-config --cflags --libs forgecpp`. On a Yocto build, add
+the layer in [`yocto/`](yocto/README.md) and your application's recipe on top
+of it.
+
+A test runs the whole application, with time under the test's control:
+
+```cpp
+#include <forge/testing.hpp>
+
+TEST_CASE("the pump builds pressure") {
+    forge::testing::AppRunner<Pump> r({}, {.manual_time = true});
+    r->invoke([&] { r->dashboard()->set("running", true); });
+    r.advance(1s);                       // every timer due in 1 s has run, no sleeping
+    CHECK(r->invoke([&] { return r->dashboard()->get("pressure").get<double>(); }) == doctest::Approx(1.2));
+}
+```
+
+## Examples
+
+| Example | What it shows |
+|---|---|
+| [`hello`](examples/hello/main.cpp) | The smallest daemon (lambda style) with a console command |
+| [`pump`](examples/pump) | The application of the [tutorials](docs/tutorials/README.md): controls, configuration, timers, alarms, a command, a stream, tests |
+| `sensor-service` | Every building block: channel, thread pool, events, control panel, own page, an alarm with hysteresis |
+| `pipeline`, `three-threads` | Multi-threaded processing: producer threads, lock-free channels, a thread pool, back-pressure, named worker threads with priorities, clean shutdown |
+| `thermostat` | A web-first application: its own multi-page site, REST API with validation, live data, persisted settings |
+| `payload-power` | **GPIO**: a payload's power switch and power-good line as a state machine (retries, alarms, brown-out); runs on the simulated chip |
+| `can-node` | **CAN**: heartbeat and sensor frames, commands over ISO-TP; a Python node on the other side (vcan on a PC) |
+| `telemetry-store` | **SQLite + LZ4**: store and forward between ground passes, survives restarts, a pass log in SQL |
+| `fault-log` | **SQLite without SQL** (`forge::orm`): a fault log as two C++ structs |
+| [`radio-controller`](examples/radio-controller/README.md) | **AD936x radio daemon** (libiio + ZeroMQ): tuning, gain, IQ streaming with zero copy, live spectrum page, reconnect, a hardware simulator, Yocto recipe |
+| [`spectrum-analyzer`](examples/spectrum-analyzer/README.md) | **Spectrum analyzer** on an AD936x: realtime and swept spans to 6 GHz, traces, markers, peak search, waterfall, channel power, limit line |
+| [`qam-modem`](examples/qam-modem/README.md) | **16QAM packet modem**: UDP in, radio out and back, 2.9 Mbit/s net in 1 MHz; synchronization, timing and phase recovery, constellation page |
+| [`channel-emulator`](examples/channel-emulator/README.md) | **Radio channel emulator**: noise, frequency offset, multipath, fading, IQ imbalance, each a control |
+| [`logic-analyzer`](examples/logic-analyzer/README.md) | **Four-channel logic analyzer** on a Zynq-7000 (Arty Z7): the FPGA sends changes instead of samples; triggers, UART/I2C/SPI decoders, data table, measurements, saved captures, VCD export. FPGA design and Verilog in [`fpga/`](examples/logic-analyzer/fpga/README.md) |
+
+Every example builds with `./install.sh --examples` and runs on a PC, with a
+simulator where it needs hardware; all but the smallest ones (hello,
+sensor-service, pipeline, thermostat) have tests. The radio examples and the logic
+analyzer are also standalone CMake projects with Yocto recipes.
 
 ## Documentation
 
@@ -218,80 +285,115 @@ Without CMake: `pkg-config --cflags --libs forgecpp`.
 |---|---|
 | [Tutorials](docs/tutorials/README.md) | A pump controller, step by step: controls, configuration, timers, alarms, threads, testing, streams, deployment |
 | [The application and its services](docs/application.md) | `forge::Application`, the command line, configuration keys, logging, channels, the thread pool, HTTP, alarms, the console, testing |
+| [Threads](docs/threading.md) | Which thread may do what, and how to hand work between them |
 | [The web panel](docs/web.md) | The control panel at `/forge/`, `data-forge-*` attributes for your own pages |
 | [Commands and streams](docs/messaging.md) | The message standard; [adding a command](docs/commands.md); [the wire format](docs/protocol.md) |
-| [Running it](docs/operations.md) | Access control, leases, the audit trail, observability, forge-hub |
-| [Threads](docs/threading.md) | Which thread may do what, and how to hand work between them |
-| [Field notes](docs/field-notes.md) | The first weeks on a device: ports, debugging, persisted controls, time without an RTC, a busy main loop |
 | [GPIO and CAN](docs/hardware-io.md) | Lines, edges, the simulated chip; CAN frames, commands over ISO-TP, vcan |
-| [Storage and compression](docs/storage.md) | SQLite, store and forward (`forge::Backlog`), LZ4 |
+| [Storage and compression](docs/storage.md) | SQLite, store and forward, LZ4, tables as structs (sqlite_orm) |
+| [Running it](docs/operations.md) | Access control, leases, the audit trail, observability, forge-hub |
+| [Field notes](docs/field-notes.md) | The first weeks on a device: ports, debugging, persisted controls, time without an RTC |
 | [Installation](docs/installation.md) | Every `install.sh` option, cross builds, Yocto, build times |
-| [Working on forgecpp](docs/development.md) | `tools/check.sh`, presets, fuzzing, versions, the repository layout |
-| [API rules](docs/API.md), [coding standards](docs/CODING_STANDARDS.md), [roadmap](docs/ROADMAP.md), [changes](CHANGELOG.md) | |
+| [Yocto layer](yocto/README.md) | The `meta-forgecpp` layer, its recipes, kas builds |
+| [Working on forgecpp](docs/development.md) | `tools/check.sh`, presets, fuzzing, releases, the repository layout |
+| [API stability](docs/API.md) · [Coding standards](docs/CODING_STANDARDS.md) · [Roadmap](docs/ROADMAP.md) · [Changelog](CHANGELOG.md) | |
 
-## Examples
+The API reference is built with Doxygen: `cmake --build build --target forgecpp_docs`.
 
-| Example | What it shows |
-|---|---|
-| `examples/hello` | The smallest daemon (lambda style), a console command |
-| `examples/pump` | The application of the [tutorials](docs/tutorials/README.md): controls, configuration, timers, alarms, a command of its own, a stream, tests |
-| `examples/sensor-service` (`sensor-service`) | Every building block: channel, thread pool, events, control panel, own page, alarm with hysteresis |
-| `examples/pipeline` | **Multi-threaded application:** N producer threads → lock-free `Channel` → dispatcher thread → `ThreadPool` workers → result channel → main loop. Bounded in-flight work (backpressure), atomic counters, alarms raised from worker threads, clean shutdown |
-| `examples/three-threads` | **Three threads in one file:** `acquire` (a dummy sensor) → `Channel` → `process` (blocks) → `Channel` → `downlink`, results into the main loop with `post()`. Named threads with `worker()` (`[threads.<name>]` priorities, clean stop, a thread that throws shows in health and alarms), atomics for what the panel changes, a test that drives it through its controls |
-| `examples/payload-power` | **GPIO:** a payload's power switch (EN) and power-good (PGOOD) as a state machine: edges from a worker thread, retries, alarms, a brown-out; runs on the simulated chip on a PC, `[payload].chip = "gpiochip0"` on a board |
-| `examples/can-node` | **CAN:** a node with a heartbeat frame, a sensor's temperature frames (alarm above a limit) and its commands over ISO-TP; `sensor.py` is the other node (vcan on a PC) |
-| `examples/telemetry-store` | **SQLite + LZ4, store and forward:** housekeeping records wait in a backlog file between passes; during a pass they go out in LZ4 batches (`lz4 -dc` opens them); survives restarts, drops the oldest when full. A pass log in plain SQL (`forge::sqlite`: prepared statements, a transaction, the console's `passes`) |
-| `examples/fault-log` | **SQLite without SQL (`forge::orm`, sqlite_orm):** a fault log as two structs (units, faults with a foreign key); a dummy source raises faults, warnings clear themselves, errors wait for the operator (panel button, console `clear`); `faults`, `history`, `stats` are queries written in C++ |
-| [`examples/radio-controller`](examples/radio-controller/README.md) | **AD936x radio daemon (libiio + ZeroMQ):** controls the transceiver (LO, sample rate, bandwidth, AGC/gain, TX attenuation) through libiio and streams IQ samples as `radio.iq_block` streams (zero copy from pooled DMA buffers; TX via PULL with `radio.tx_block`); the channels it listens to, drives and shares come from its configuration (e.g. RX2 for the spectrum analyzer). Real-time RX thread settings, metrics, health. Live spectrum and waterfall page, alarms for overflows, underflows, temperature and a lost device (with automatic reconnect), state persistence, a hardware simulator, Python clients, systemd unit and its own Yocto recipe |
-| [`examples/logic-analyzer`](examples/logic-analyzer/README.md) | **Four-channel logic analyzer on a Zynq-7000 (Arty Z7), web UI like a desktop one:** the FPGA sends changes instead of samples (one word per change, 10 ns resolution, a gap marked where words were lost); waveforms with zoom, pan, overview, cursors and measurements (frequency, duty, pulse widths); edge and pattern triggers with pre-trigger; UART, I2C and SPI decoders drawn over the signals, a searchable data table and a terminal view; saved captures, `.lacap` / VCD / CSV / protocol log exports. The FPGA design, its encoder in Verilog and a testbench are in [`fpga/`](examples/logic-analyzer/fpga/README.md); a simulator stands in for it |
-| [`examples/spectrum-analyzer`](examples/spectrum-analyzer/README.md) | **AD936x spectrum analyzer with a web UI** (on its own RX path, or on RX2 next to the radio controller): realtime (one capture) or swept (LO stepping) spans from 10 kHz to 70 MHz - 6 GHz, RBW/window/video averaging, peak/sample/average/negative-peak detectors, three traces (clear/write, max hold, min hold, average, view), four markers with delta, peak search/next/left/right, peak track and signal track, waterfall, channel power and occupied bandwidth, limit line alarm, CSV/PNG/IQ export, `sa.spectrum` stream. Shares the AD936x backend with the radio controller |
-| [`examples/qam-modem`](examples/qam-modem/README.md) | **16QAM packet modem over an AD936x:** UDP packets from Ethernet go on the air through radio-controller and come back out over UDP: 750 ksym/s, about 1 MHz wide at 2.1 GHz, 2.9 Mbit/s net. Schmidl & Cox detection and frequency offset, fractional timing, phase loop, CRC-checked packets; TX paced by the RX sample clock; constellation page, test mode, `echo.py` traffic checker. DSP tested through an impaired channel; end-to-end test at 2.3 Mbit/s with the simulator |
-| [`examples/channel-emulator`](examples/channel-emulator/README.md) | **Radio channel emulator in the TX path:** between a sender (qam-modem) and radio-controller; noise at an SNR, frequency offset and Doppler, phase noise, sample clock error, multipath, Rayleigh/Rician fading, IQ imbalance, DC, pulsed interference, each a control, plus presets. Every receiver behind the splitter sees the result (the modem's EVM, the analyzer's spectrum). Each impairment measured in tests; the modem's packet error rate per preset |
-| `forgecpp-new` | Scaffolds an application with all of the above: its own proto + stream, commands, schema, `[forge]` endpoints, telnet, an `AppRunner` test and a Python client |
-| `examples/thermostat` | **Web-first application:** its own multi-page site (overview, live SVG chart, settings form), custom REST API with per-field validation, live data via `publish_web`, radio/segmented controls, alarms, settings persisted with `save_json` |
+## Strengths and limitations
 
-```sh
-./install.sh --prefix ~/.local --examples
-cd build/forgecpp/examples
-./pipeline -c pipeline.toml --producers 4 -i      # http://localhost:8080/forge/
-./three-threads -c three-threads.toml -i          # http://localhost:8080/forge/
-./payload-power -c payload-power.toml             # GPIO on the simulated chip
-./can-node -c can-node.toml                       # on vcan0 (docs/hardware-io.md); python3 sensor.py vcan0
-./telemetry-store -c telemetry-store.toml         # "Contact" on the panel starts a pass
-./fault-log -c fault-log.toml                     # console: faults, history, stats, clear
-./thermostat -c thermostat.toml                    # http://localhost:8080/
-./sensor-service -c sensor-service.toml -i --simulate-spikes
-./radio-controller/radio-controller -c radio-controller/radio-controller.toml   # simulated AD9364
-./radio-controller/radio-controller --backend iio --uri ip:192.168.2.1         # real AD936x via iiod
-./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml  # http://localhost:8081/
-./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml --backend radio  # RX2 of the radio controller
-./logic-analyzer/logic-analyzer -c logic-analyzer/logic-analyzer.toml   # http://localhost:8084/ (--scenario spi|uart)
-./qam-modem/qam-modem -c qam-modem/qam-modem.toml   # 16QAM modem through the radio controller: http://localhost:8082/
-./channel-emulator/channel-emulator -c channel-emulator/channel-emulator.toml   # impairments for the modem's TX: http://localhost:8083/forge/
-```
+**What forgecpp does well**
 
-The radio controller and the spectrum analyzer are also standalone CMake
-projects (`cmake -S examples/radio-controller -B build
--DCMAKE_PREFIX_PATH=<forgecpp prefix>`) that install the daemon, its config
-and systemd unit; their Yocto recipes in `yocto/recipes-connectivity` build
-them that way. Both use `examples/common/ad936x` (libiio backend, simulator,
-FFT/windows).
+- **One way to operate every program.** The panel, the command link, the console,
+  telnet, metrics, health and logs are the same in every application, and a new
+  control appears in all of them from one line of C++.
+- **Talks to microcontrollers natively.** The c2 frames are byte-compatible with
+  zephyrus, checked in CI against its C code; the same command reaches a program
+  on Linux or a microcontroller over ZeroMQ, a UART or CAN.
+- **Allocation-free, bounded messages** with compatibility rules enforced in CI
+  (`tools/proto-compat.py`, `tools/api-check.py`): released messages and
+  configuration keys do not break within a minor version.
+- **Testable without hardware.** Simulators for the hardware the examples use
+  (GPIO chip, AD936x, the logic analyzer's FPGA), an `AppRunner` that runs a whole
+  application in a test, and a manual clock for timer logic.
+- **Checked broadly.** Unit and integration tests, fuzz targets, AddressSanitizer,
+  UBSan and ThreadSanitizer jobs, browser tests of the panel, real systemd units in
+  CI, an armhf cross build run under QEMU, and a nightly Yocto image with runtime tests.
+- **Ready for embedded Linux.** Shared libraries, generated and hardened systemd
+  units with watchdogs, a Yocto layer on oe-core only, a Zynq-7000 toolchain.
+- **Real applications as examples**, not toys: a radio daemon, a spectrum analyzer,
+  a QAM modem, a channel emulator and a logic analyzer.
 
-Every example has a generated systemd unit next to its binary
-(`build/forgecpp/examples/<name>.service`, `.../examples/<name>/<name>.service`
-for radio-controller, spectrum-analyzer, qam-modem and channel-emulator) with a restart policy that suits it:
-hello on-failure without a watchdog, pump, sensor-service, pipeline, three-threads,
-payload-power, can-node and telemetry-store on-failure with a watchdog, thermostat `always`, radio-controller, spectrum-analyzer,
-qam-modem and channel-emulator on-failure (3 in 10 minutes) with a 30 s watchdog.
+**What is not there yet**
+
+- **Security is not done.** There is no authentication unless `[auth]` is
+  configured, HTTP has no TLS, telnet is plain text, and commands on a link carry
+  no credentials. forgecpp is meant for the lab and trusted networks today; the
+  [pre-production security work](docs/ROADMAP.md#3-security) is planned. Do not
+  expose a forgecpp program to an untrusted network.
+- **Pre-1.0.** A new minor version (0.5) may change the C++ API; every break is in
+  the changelog. Messages and configuration keys change only compatibly.
+- **Hardware paths not yet run on hardware.** GPIO, CAN, the AD936x radio on a
+  real board and the logic analyzer's FPGA core are written to the kernel and
+  register interfaces and tested against simulators and socket pairs; bring-up on
+  the boards is next. The Yocto recipes are parsed and resolved on scarthgap but
+  have not been through a full bitbake build.
+- **Linux only**, GCC 13+ or Clang 17+; no Windows or macOS.
+- **Dependencies are built from source** by `install.sh` (or Yocto): no vcpkg or
+  Conan packages yet.
+- **Not included yet:** WebSockets (the panel uses Server-Sent Events), MQTT,
+  Modbus and OPC UA connectors, Python bindings, an `async`/`await` API
+  (sequences are explicit state machines, see [threading](docs/threading.md#sequences-a-state-machine)).
+
+## Roadmap
+
+The near-term plan, in [docs/ROADMAP.md](docs/ROADMAP.md):
+
+1. **Hardware bring-up** on a Zynq-7000 board: GPIO and CAN on real lines and
+   buses, the radio examples on an FMCOMMS5, the logic analyzer's FPGA core
+   (register block, DDR writer, block design).
+2. **Security** before production use: secure defaults, TLS, ssh instead of
+   telnet, roles for commands on links.
+3. **1.0**: a stable C++ API with symbol visibility and ABI checks.
+4. Later: connectors (MQTT, Modbus, OPC UA), WebSockets, Python bindings, package
+   manager support.
+
+## Contributing
+
+Contributions are welcome: bug reports, documentation, examples and code.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test and send a
+change, and the [Code of Conduct](CODE_OF_CONDUCT.md). Report security issues
+privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT (see [LICENSE](LICENSE)). The bundled libraries come with their own
-licenses (MIT, BSD-2/3-Clause, BSL-1.0; nanopb Zlib; GridStack.js MIT in
-`src/web/vendor/gridstack`; SQLite public domain; LZ4's library BSD-2-Clause (its
-command line tool GPL-2.0); sqlite_orm AGPL-3.0 or bought MIT, a header compiled
-only into the programs that include `forge/orm.hpp` (see
-[docs/storage.md](docs/storage.md#license-of-sqlite_orm)); libzmq MPL-2.0; libiio LGPL-2.1-or-later
-with GPL-2.0-or-later command line tools); see `third_party/*/LICENSE*` and
-`third_party/libiio/COPYING*.txt`. Link libzmq and libiio dynamically (the
-default) to keep the LGPL/MPL obligations simple.
+forgecpp is released under the [MIT License](LICENSE).
+
+The bundled libraries keep their own licenses. The compiled ones are shared
+libraries; header-only ones and those marked "compiled in" become part of the
+programs:
+
+| Library | Version | License | Used for |
+|---|---|---|---|
+| [Quill](https://github.com/odygrd/quill) | v13.1.0 | MIT | logging |
+| [CLI11](https://github.com/CLIUtils/CLI11) | v2.7.2 | BSD-3-Clause | command line |
+| [linenoise](https://github.com/antirez/linenoise) | a473823 | BSD-2-Clause (compiled in) | console line editing |
+| [BS::thread_pool](https://github.com/bshoshany/thread-pool) | v5.1.0 | MIT (compiled in) | thread pool |
+| [moodycamel::ConcurrentQueue](https://github.com/cameron314/concurrentqueue) | v1.0.5 | BSD-2-Clause / BSL-1.0 | lock-free channels |
+| [nlohmann/json](https://github.com/nlohmann/json) | v3.12.0 | MIT | JSON |
+| [toml++](https://github.com/marzer/tomlplusplus) | v3.4.0 | MIT | configuration |
+| [cpp-httplib](https://github.com/yhirose/cpp-httplib) | v0.65.0 | MIT | HTTP server and client |
+| [libzmq](https://github.com/zeromq/libzmq) + [cppzmq](https://github.com/zeromq/cppzmq) | v4.3.5 / v4.11.0 | MPL-2.0 / MIT | command link, streams |
+| [nanopb](https://github.com/nanopb/nanopb) | 0.4.9.2 | Zlib (compiled in) | messages |
+| [protobuf](https://github.com/protocolbuffers/protobuf) | v21.12 | BSD-3-Clause | `protoc` on the build machine only |
+| [doctest](https://github.com/doctest/doctest) | v2.5.3 | MIT | tests |
+| [SQLite](https://github.com/sqlite/sqlite) | 3.54.1 | public domain | optional `forgecpp::sqlite` |
+| [LZ4](https://github.com/lz4/lz4) | v1.10.0 | BSD-2-Clause (tool: GPL-2.0) | optional `forgecpp::lz4` |
+| [sqlite_orm](https://github.com/fnc12/sqlite_orm) | v1.9.1 | **AGPL-3.0** or commercial MIT | optional `forgecpp::orm`, header-only |
+| [libiio](https://github.com/analogdevicesinc/libiio) | v0.26 | LGPL-2.1-or-later | the AD936x examples |
+| [GridStack.js](https://github.com/gridstack/gridstack.js) | | MIT (in `src/web/vendor`) | panel card layout |
+
+sqlite_orm is only compiled into programs that include `forge/orm.hpp`; such a
+program is under the AGPL unless its commercial license is bought
+([details](docs/storage.md#license-of-sqlite_orm)). Leave it out with
+`./install.sh --without-sqlite-orm`. Linking libzmq and libiio dynamically (the
+default) keeps the MPL and LGPL obligations simple.

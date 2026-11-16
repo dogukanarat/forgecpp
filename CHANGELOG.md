@@ -8,6 +8,15 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 
 ## Unreleased (0.4.0)
 
+### Added (project)
+
+- The repository is prepared to be public: a new README (purpose, features,
+  screenshots, quick start, strengths and limitations, roadmap, licenses),
+  CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, issue forms and a pull
+  request template. docs/ROADMAP.md is reorganized into where the project
+  stands, what comes next (release, hardware bring-up, security, 1.0), later
+  work and what was done.
+
 ### Changed (examples)
 
 - `examples/telemetry-store` uses `forge::sqlite` directly too, not only

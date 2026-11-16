@@ -1,0 +1,54 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Security problems: please report them privately (SECURITY.md), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: A small program, an example and its `-D` options, or the steps. Logs help (`-v` for debug logging).
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: forgecpp version or commit
+      placeholder: "0.4.0, or the output of git rev-parse --short HEAD"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: "Ubuntu 24.04 x86_64, GCC 13.3; or Yocto scarthgap on a Zynq-7000"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Application, configuration, threads
+        - Web panel, HTTP
+        - Commands, streams, links (ZeroMQ, serial, CAN)
+        - Console, telnet, forgectl
+        - forge-hub
+        - GPIO, CAN, storage components
+        - Build, install.sh, CMake
+        - Yocto layer
+        - An example application
+        - Documentation
+    validations:
+      required: true
