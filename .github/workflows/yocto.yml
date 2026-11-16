@@ -33,11 +33,12 @@ jobs:
       max-parallel: 1   # one build at a time: they share the downloads and sstate
       matrix:
         kas: [qemuarm64.yml, qemuarm64-poky.yml]
-    env:
-      KAS_WORK_DIR: ${{ github.workspace }}/../kas
-      DL_DIR: ${{ github.workspace }}/../kas/downloads
-      SSTATE_DIR: ${{ github.workspace }}/../kas/sstate-cache
     steps:
+      # Next to the checkout, as absolute paths: actions/cache refuses ".." in a path.
+      - name: Work directories
+        run: |
+          kas="$(dirname "$GITHUB_WORKSPACE")/kas"
+          { echo "KAS_WORK_DIR=$kas"; echo "DL_DIR=$kas/downloads"; echo "SSTATE_DIR=$kas/sstate-cache"; } >> "$GITHUB_ENV"
       - uses: actions/checkout@v5
         with:
           submodules: recursive
@@ -65,8 +66,8 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: |
-            ${{ github.workspace }}/../kas/downloads
-            ${{ github.workspace }}/../kas/sstate-cache
+            ${{ env.DL_DIR }}
+            ${{ env.SSTATE_DIR }}
           key: yocto-scarthgap-qemuarm64-${{ matrix.kas }}-${{ github.run_id }}
           restore-keys: yocto-scarthgap-qemuarm64-
       - name: Build the image
@@ -95,6 +96,6 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            ${{ github.workspace }}/../kas/downloads
-            ${{ github.workspace }}/../kas/sstate-cache
+            ${{ env.DL_DIR }}
+            ${{ env.SSTATE_DIR }}
           key: yocto-scarthgap-qemuarm64-${{ matrix.kas }}-${{ github.run_id }}

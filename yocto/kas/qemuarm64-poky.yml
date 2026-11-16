@@ -59,6 +59,9 @@ local_conf_header:
   testimage: |
     IMAGE_CLASSES += "testimage"
     IMAGE_FEATURES += "ssh-server-dropbear"
+    # testimage logs in as root with an empty password (serial console and ssh);
+    # only this test image, never a product image
+    IMAGE_FEATURES += "empty-root-password allow-empty-password allow-root-login"
     TEST_SUITES = "ping ssh ptest forgecpp"
     TEST_RUNQEMUPARAMS = "slirp nographic"
     TEST_QEMUBOOT_TIMEOUT = "1500"
