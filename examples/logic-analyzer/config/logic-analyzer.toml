@@ -1,0 +1,39 @@
+# logic-analyzer configuration
+#
+#   ./logic-analyzer -c logic-analyzer.toml           # the simulator: http://localhost:8084/
+#   ./logic-analyzer -c logic-analyzer.toml --source uio   # the FPGA core (fpga/README.md)
+
+[analyzer]
+source = "sim"                # sim | uio (also: --source)
+scenario = "mixed"            # sim: mixed (UART, I2C, PWM) | spi | uart (also: --scenario)
+uio_device = "logic-analyzer" # uio: /dev/uioN, or the name of the UIO node in the device tree
+captures_dir = "captures"     # on a device: /var/lib/logic-analyzer/captures
+keep_captures = 20            # the oldest captures go beyond this
+max_edges = 4000000           # changes per capture (9 bytes each: 36 MB)
+analyzers_file = "analyzers.json"  # the protocol analyzers set up in the UI
+start_on_boot = false
+
+# The capture settings and channel names of the UI are kept here.
+[state]
+file = "logic-analyzer-state.json"
+
+# Standard endpoints (the same in every forgecpp application; forgectl, panels)
+[forge]
+control = "tcp://*:5597"      # requests: controls, commands, alarms, logs, metrics
+events = "tcp://*:5599"       # PUB: state, alarms, log, audit, health, metrics
+data = "tcp://*:5595"
+
+[console]
+telnet = "0.0.0.0:2327"       # telnet board 2327: capture, status, analyzers, decode
+
+[hub]
+critical = false
+group = "Instruments"
+
+[http]
+enabled = true
+host = "0.0.0.0"
+port = 8084                   # radio-controller 8080, spectrum-analyzer 8081, qam-modem 8082
+
+[log]
+level = "info"

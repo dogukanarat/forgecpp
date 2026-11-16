@@ -76,6 +76,7 @@ jobs:
           ./hello --version
           run_app 18105 ./radio-controller/radio-controller --backend sim -D http.enabled=true -D radio.sample_rate_hz=5e6
           run_app 18106 ./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml --backend sim
+          run_app 18108 ./logic-analyzer/logic-analyzer -c logic-analyzer/logic-analyzer.toml -D analyzer.captures_dir=/tmp/la-captures
           ./spectrum-analyzer/spectrum-analyzer -c spectrum-analyzer/spectrum-analyzer.toml --backend sim \
             -D http.port=18107 -D log.console=false -D analyzer.span_hz=20e6 &
           pid=$!

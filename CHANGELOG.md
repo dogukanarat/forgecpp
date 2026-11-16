@@ -8,8 +8,48 @@ the last release (`proto/forge/API.json`, `tools/proto-compat.py`).
 
 ## Unreleased (0.4.0)
 
+### Added (project)
+
+- The repository is prepared to be public: a new README (purpose, features,
+  screenshots, quick start, strengths and limitations, roadmap, licenses),
+  CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md, issue forms and a pull
+  request template. docs/ROADMAP.md is reorganized into where the project
+  stands, what comes next (release, hardware bring-up, security, 1.0), later
+  work and what was done.
+
+### Changed (examples)
+
+- `examples/telemetry-store` uses `forge::sqlite` directly too, not only
+  through `forge::Backlog`: a pass log (table `passes` in the same file)
+  written with prepared statements and a transaction, shown on the panel and
+  listed by the console's `passes`. Its test reads the log back with its own
+  connection. Fixed: `passes <n>` ignored `<n>` (a console handler gets the
+  words after the command name).
+- `examples/logic-analyzer`: a four-channel logic analyzer for a Zynq-7000
+  (Arty Z7) used from the browser. The FPGA sends one 32-bit word per change
+  (with its time) instead of samples; the program records them with edge and
+  pattern triggers and a pre-trigger, decodes UART, I2C and SPI, and the page
+  shows waveforms (zoom, pan, overview, cursors, measurements), decoded
+  bubbles, a searchable data table and a terminal view. Captures are saved on
+  the device; exports as `.lacap`, VCD, CSV and protocol logs. A simulator
+  stands in for the FPGA; `fpga/` has the design (registers, device tree,
+  shield), the input stage and encoder in Verilog, and a testbench. Yocto
+  recipe `logic-analyzer`.
+- `examples/fault-log`: a fault log with `forge::orm`, no SQL. Two tables,
+  a dummy fault source, faults that clear by time or by the operator, the
+  console's `faults`, `history`, `stats`, `clear`; tests for each.
+
 ### Added
 
+- **forgecpp::orm** (`forge/orm.hpp`): SQLite tables as C++ structs through
+  sqlite_orm 1.9.1 (`third_party/sqlite_orm`, header-only, built into the
+  programs that include it). `forge::orm::open()` keeps one connection with
+  WAL, a busy timeout and `synchronous=NORMAL`, and updates the tables; it
+  refuses an update that sqlite_orm would do by dropping a table with its
+  rows (a new NOT NULL column without a default) unless `allow_data_loss`.
+  `install.sh` installs it (`--without-sqlite-orm`), CMake
+  `-DFORGECPP_WITH_SQLITE_ORM`, Yocto recipe `sqlite-orm` and PACKAGECONFIG
+  `orm`. sqlite_orm is AGPL-3.0 or bought MIT (docs/storage.md).
 - **c2** (`forge/c2.hpp`): the command-and-control message of zephyrus, byte for
   byte: the 8-byte header (version, flags, command number, sequence number,
   length), the flags, and the NACK status. forgecpp and zephyrus devices can

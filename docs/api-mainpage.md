@@ -21,7 +21,7 @@ messages; systemd units and the forge-hub device dashboard.
 - `forge::zmq::Stream`, `forge::zmq::Client`, `forge::zmq::Receiver`, `forge::Remote`: messaging.
 - `forge::serial::Link`, `forge::can`: c2 commands on a UART or a CAN bus (ISO-TP), framed as zephyrus does.
 - `forge::gpio`: GPIO lines (the kernel's character device, a simulated chip for tests).
-- `forge::sqlite`, `forge::Backlog`, `forge::lz4`: the optional components (`forgecpp::sqlite`, `forgecpp::lz4`).
+- `forge::sqlite`, `forge::Backlog`, `forge::lz4`, `forge::orm`: the optional components (`forgecpp::sqlite`, `forgecpp::lz4`, `forgecpp::orm`).
 - `forge::Worker`, `forge::Application::worker()`: threads that stop when asked.
 - `forge::testing::AppRunner`: an application in a test (also with manual time).
 - `forge::Error`: errors of requests, on every channel.

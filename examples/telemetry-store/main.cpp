@@ -12,6 +12,13 @@
 // Without contact the backlog grows; when it is full the oldest records go
 // and are counted. With LZ4 a pass carries about four times as many records.
 //
+// SQLite, twice in the same file:
+//   - forge::Backlog keeps the records (its own table and connection);
+//   - the pass log is plain SQL with forge::sqlite: every pass, its start
+//     and end and what it carried, in the table "passes" (main loop only).
+//     The console's `passes` lists them; any SQLite tool reads the file:
+//       sqlite3 backlog.db "SELECT * FROM passes"
+//
 // The batches open with the standard tool:
 //   lz4 -dc outbox/batch-000001.jsonl.lz4 | head
 //
@@ -20,6 +27,7 @@
 #include <forge/backlog.hpp>
 #include <forge/forge.hpp>
 #include <forge/lz4.hpp>
+#include <forge/sqlite.hpp>
 
 #include <atomic>
 #include <cmath>
@@ -55,7 +63,8 @@ protected:
 
     void setup_controls(forge::Controls& ui) override {
         auto& pass = ui.group("Pass");
-        pass.toggle("contact", "Contact", contact_);
+        // A setter of its own: starting and ending a pass are written to the pass log.
+        pass.toggle("contact", "Contact", [this] { return contact_.load(); }, [this](bool on) { set_contact(on); });
         pass.value("batches", "Batches sent", batches_);
         pass.value("records_sent", "Records sent", records_sent_);
         pass.value("ratio", "Compression", [this] {
@@ -69,6 +78,27 @@ protected:
             .unit("kB")
             .precision(1);
         store.value("dropped", "Dropped (full)", [this] { return backlog_ ? backlog_->dropped() : 0; });
+
+        auto& log = ui.group("Pass log");
+        log.value("passes", "Passes", passes_);
+        log.value("last_pass", "Last pass", last_pass_);
+    }
+
+    void setup_console(forge::Console& console) override {
+        // passes [n]: the newest passes, from the database (console commands run on the main loop).
+        console.add("passes", "passes [n]  the last n ground passes (default 10)", [this, &console](const auto& args) {
+            auto q =
+                db_->prepare("SELECT id, start_ms, end_ms, records, packed_bytes FROM passes ORDER BY id DESC LIMIT ?");
+            q.bind(1, args.empty() ? 10 : std::stoi(args[0]));  // args: after the command name
+            console.print("{:>4}  {:>19}  {:>8}  {:>8}  {:>9}", "pass", "start (UTC)", "length", "records", "sent");
+            while (q.step()) {
+                const auto start = q.integer(1);
+                const auto length =
+                    q.null(2) ? std::string("open") : std::format("{} s", (q.integer(2) - start) / 1000);
+                console.print("{:>4}  {:>19}  {:>8}  {:>8}  {:>7} kB", q.integer(0), utc(start), length, q.integer(3),
+                              q.integer(4) / 1024);
+            }
+        });
     }
 
     void on_start() override {
@@ -80,14 +110,79 @@ protected:
         std::filesystem::create_directories(outbox_);
         batch_bytes_ = cfg.value<std::size_t>("telemetry.batch_bytes");
         downlink_bps_ = cfg.value<std::int64_t>("telemetry.downlink_bps");
-        contact_ = cfg.value<bool>("telemetry.contact");
         if (backlog_->size() > 0) logger()->info("backlog: {} records from before", backlog_->size());
+
+        // The pass log: a second connection to the same file (WAL lets the
+        // backlog's worker write meanwhile), used on the main loop only.
+        db_ = std::make_unique<forge::sqlite::Database>(cfg.value<std::string>("telemetry.backlog"));
+        db_->exec(
+            "CREATE TABLE IF NOT EXISTS passes ("
+            " id INTEGER PRIMARY KEY, start_ms INTEGER NOT NULL, end_ms INTEGER,"
+            " records INTEGER NOT NULL DEFAULT 0, packed_bytes INTEGER NOT NULL DEFAULT 0)");
+        // A pass the program did not see end (a crash, a power cut): closed where it started.
+        db_->exec("UPDATE passes SET end_ms = start_ms WHERE end_ms IS NULL");
+        auto count = db_->prepare("SELECT COUNT(*) FROM passes");
+        if (count.step()) passes_ = count.integer(0);
+        if (cfg.value<bool>("telemetry.contact")) set_contact(true);
 
         every(std::chrono::milliseconds(cfg.value<int>("telemetry.period_ms")), [this] { collect(); });
         worker("downlink", [this](std::stop_token stop) { downlink(stop); });
     }
 
+    void on_stop() override {
+        if (contact_.load()) end_pass();  // the downlink has stopped: the pass ends here
+    }
+
 private:
+    // --- main loop: the pass log (forge::sqlite) ----------------------------------------
+    void set_contact(bool on) {
+        if (on == contact_.load()) return;
+        if (on) {
+            start_pass();
+            contact_ = true;  // the downlink may go
+        } else {
+            contact_ = false;
+            end_pass();
+        }
+    }
+
+    void start_pass() {
+        db_->prepare("INSERT INTO passes (start_ms) VALUES (?)").bind(1, now_ms()).run();
+        pass_id_ = db_->last_insert_id();
+        records_at_start_ = records_sent_.load();
+        packed_at_start_ = packed_bytes_.load();
+        logger()->info("pass {} begins", pass_id_);
+    }
+
+    void end_pass() {
+        const auto records = static_cast<std::int64_t>(records_sent_.load() - records_at_start_);
+        const auto packed = static_cast<std::int64_t>(packed_bytes_.load() - packed_at_start_);
+        // Both or neither: the pass is closed, and the log keeps its newest 1000 passes.
+        forge::sqlite::Transaction tx(*db_);
+        db_->prepare("UPDATE passes SET end_ms = ?, records = ?, packed_bytes = ? WHERE id = ?")
+            .bind(1, now_ms())
+            .bind(2, records)
+            .bind(3, packed)
+            .bind(4, pass_id_)
+            .run();
+        db_->prepare("DELETE FROM passes WHERE id <= ?").bind(1, pass_id_ - 1000).run();
+        tx.commit();
+        ++passes_;
+        last_pass_ = std::format("#{}: {} records, {} kB", pass_id_, records, packed / 1024);
+        logger()->info("pass {} ends: {} records, {} bytes sent", pass_id_, records, packed);
+    }
+
+    static std::int64_t now_ms() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::system_clock::now().time_since_epoch())
+            .count();
+    }
+
+    static std::string utc(std::int64_t ms) {
+        const auto t = std::chrono::sys_seconds(std::chrono::seconds(ms / 1000));
+        return std::format("{:%Y-%m-%d %H:%M:%S}", t);
+    }
+
     // --- main loop: one housekeeping record -------------------------------------------
     void collect() {
         ++seq_;
@@ -150,6 +245,10 @@ private:
     }
 
     std::unique_ptr<forge::Backlog> backlog_;  // thread safe
+    std::unique_ptr<forge::sqlite::Database> db_;  // the pass log: main loop only
+    std::int64_t pass_id_ = 0, passes_ = 0;
+    std::uint64_t records_at_start_ = 0, packed_at_start_ = 0;
+    std::string last_pass_ = "none yet";
     std::filesystem::path outbox_;
     std::size_t batch_bytes_ = 16384;
     std::int64_t downlink_bps_ = 64000;

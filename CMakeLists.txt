@@ -212,10 +212,13 @@ endif()
 # built and installed by install.sh like the others:
 #   forgecpp::sqlite   SQLite: forge::sqlite::Database, forge::Backlog (store and forward)
 #   forgecpp::lz4      LZ4 frames: forge::lz4::compress / decompress
+#   forgecpp::orm      sqlite_orm: tables as C++ structs, no SQL (forge/orm.hpp;
+#                      header-only; sqlite_orm is AGPL-3.0 or bought MIT)
 # Their libraries are private dependencies: an application links the
 # component only, and needs the SQLite or LZ4 headers only to use them itself.
 option(FORGECPP_WITH_SQLITE "Build forgecpp::sqlite (needs SQLite 3)" ON)
 option(FORGECPP_WITH_LZ4 "Build forgecpp::lz4 (needs liblz4)" ON)
+option(FORGECPP_WITH_SQLITE_ORM "Provide forgecpp::orm (needs sqlite_orm)" ON)
 set(FORGECPP_COMPONENTS)
 function(_forge_component target name)
     add_library(forgecpp::${name} ALIAS ${target})
@@ -262,6 +265,20 @@ if(FORGECPP_WITH_LZ4)
         list(APPEND FORGECPP_COMPONENTS lz4)
     else()
         message(WARNING "liblz4 not found: forgecpp::lz4 is not built (-DFORGECPP_WITH_LZ4=OFF to silence)")
+    endif()
+endif()
+if(FORGECPP_WITH_SQLITE_ORM)
+    # Header-only: nothing of it goes into a forgecpp library. An application
+    # that links forgecpp::orm compiles sqlite_orm.h and links libsqlite3.
+    find_package(SqliteOrm CONFIG QUIET)
+    if(TARGET sqlite_orm::sqlite_orm)
+        add_library(forgecpp_orm INTERFACE)
+        add_library(forgecpp::orm ALIAS forgecpp_orm)
+        set_target_properties(forgecpp_orm PROPERTIES EXPORT_NAME orm)
+        target_link_libraries(forgecpp_orm INTERFACE forgecpp sqlite_orm::sqlite_orm)
+        list(APPEND FORGECPP_COMPONENTS orm)
+    else()
+        message(WARNING "sqlite_orm not found: forgecpp::orm is not provided (-DFORGECPP_WITH_SQLITE_ORM=OFF to silence)")
     endif()
 endif()
 
@@ -324,6 +341,10 @@ set(FORGECPP_CMAKE_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/forgecpp")
 
 set(_forge_targets forgecpp)
 set(FORGECPP_HAS_TESTING OFF)
+set(FORGECPP_HAS_ORM OFF)
+if(TARGET forgecpp_orm)
+    set(FORGECPP_HAS_ORM ON)
+endif()
 if(TARGET forgecpp_testing)
     list(APPEND _forge_targets forgecpp_testing)
     set(FORGECPP_HAS_TESTING ON)

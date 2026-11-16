@@ -32,6 +32,7 @@ WITH_ZLIB="auto"
 WITH_IIO="ON"
 WITH_SQLITE="ON"
 WITH_LZ4="ON"
+WITH_SQLITE_ORM="ON"
 WITH_HUB="ON"
 SYSTEM_PROTOBUF="OFF"
 HOST_PROTOC=""
@@ -53,7 +54,7 @@ USE_SUDO="auto"
 QUIET="OFF"
 
 # name | source dir | extra cmake args
-DEPS=(quill CLI11 concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq libiio lz4 sqlite)
+DEPS=(quill CLI11 concurrentqueue json tomlplusplus cpp-httplib doctest libzmq cppzmq libiio lz4 sqlite sqlite_orm)
 
 usage() {
     cat <<EOF
@@ -87,6 +88,8 @@ Build
   --without-iio         Skip libiio (the AD9364 examples then only have their simulator)
   --without-sqlite      Skip SQLite (no forgecpp::sqlite: forge::sqlite, forge::Backlog)
   --without-lz4         Skip LZ4 (no forgecpp::lz4)
+  --without-sqlite-orm  Skip sqlite_orm (no forgecpp::orm: tables as C++ structs, no SQL).
+                        sqlite_orm is AGPL-3.0 (or MIT if bought): see docs/storage.md
   --without-hub         Do not build forge-hub (the dashboard of the device's applications)
   --iio-usb             Build libiio's USB backend (needs libusb-1.0)
   --no-rpath            Do not set \$ORIGIN rpaths on installed libraries
@@ -175,6 +178,7 @@ while [[ $# -gt 0 ]]; do
         --without-iio)  WITH_IIO="OFF"; shift ;;
         --without-sqlite) WITH_SQLITE="OFF"; shift ;;
         --without-lz4)  WITH_LZ4="OFF"; shift ;;
+        --without-sqlite-orm) WITH_SQLITE_ORM="OFF"; shift ;;
         --without-hub)  WITH_HUB="OFF"; shift ;;
         --iio-usb)      IIO_USB="ON"; shift ;;
         --with-zlib)    WITH_ZLIB="ON"; shift ;;
@@ -302,6 +306,7 @@ for d in "${DEPS[@]}" thread-pool; do
     case "${d}" in
         lz4) marker="build/cmake/CMakeLists.txt" ;;
         sqlite) marker="VERSION" ;;
+        sqlite_orm) marker="include/sqlite_orm/sqlite_orm.h" ;;
         thread-pool) marker="include/BS_thread_pool.hpp" ;;
         *) marker="CMakeLists.txt" ;;
     esac
@@ -424,6 +429,10 @@ dep_args() {
             if [[ "${SHARED}" == "ON" ]]; then echo "-DBUILD_STATIC_LIBS=OFF"; else echo "-DBUILD_STATIC_LIBS=ON"; fi ;;
         sqlite)
             echo "-DBUILD_SHARED_LIBS=${SHARED} -DSQLITE_AMALGAMATION_DIR=${BUILD_DIR}/sqlite-amalgamation" ;;
+        sqlite_orm)
+            # header-only: installs sqlite_orm.h and SqliteOrmConfig.cmake
+            # (its tests would download Catch2).
+            echo "-DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF" ;;
         *) ;;
     esac
 }
@@ -535,6 +544,9 @@ if [[ "${SKIP_DEPS}" != "ON" ]]; then
         if [[ "${WITH_IIO}" == "OFF" && "${dep}" == "libiio" ]]; then continue; fi
         if [[ "${WITH_SQLITE}" == "OFF" && "${dep}" == "sqlite" ]]; then continue; fi
         if [[ "${WITH_LZ4}" == "OFF" && "${dep}" == "lz4" ]]; then continue; fi
+        if [[ "${dep}" == "sqlite_orm" && ( "${WITH_SQLITE_ORM}" == "OFF" || "${WITH_SQLITE}" == "OFF" ) ]]; then
+            continue
+        fi
         src="${TP_DIR}/${dep}"
         case "${dep}" in
             lz4) src="${TP_DIR}/lz4/build/cmake" ;;
@@ -553,6 +565,7 @@ if [[ "${DEPS_ONLY}" != "ON" ]]; then
         "-DFORGECPP_BUILD_HUB=${WITH_HUB}" \
         "-DFORGECPP_WITH_SQLITE=${WITH_SQLITE}" \
         "-DFORGECPP_WITH_LZ4=${WITH_LZ4}" \
+        "-DFORGECPP_WITH_SQLITE_ORM=${WITH_SQLITE_ORM}" \
         "-DFORGECPP_WARNINGS=ON" \
         "-DFORGECPP_SANITIZE=${SANITIZE//,/;}"
 

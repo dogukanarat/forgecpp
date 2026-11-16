@@ -23,7 +23,8 @@ CVE_PRODUCT = "forgecpp"
 # The libraries: zeromq, cppzmq, nlohmann-json, cli11, protobuf (protoc on the
 # build machine) from meta-oe, or from this layer's backfill without it; this
 # layer's quill, cpp-httplib, concurrentqueue, tomlplusplus and doctest; SQLite
-# and LZ4 (PACKAGECONFIG sqlite, lz4) from oe-core. The messages are generated on the build
+# and LZ4 (PACKAGECONFIG sqlite, lz4) from oe-core; sqlite_orm (PACKAGECONFIG
+# orm, header-only, AGPL-3.0) from this layer. The messages are generated on the build
 # machine with protoc and nanopb's generator (python3-protobuf); the target
 # gets C code only.
 DEPENDS = " \
@@ -42,10 +43,15 @@ inherit cmake pkgconfig systemd python3-dir python3native ptest
 # The optional components, each in a package of its own (forgecpp-sqlite,
 # forgecpp-lz4): an image only gets SQLite or liblz4 when an application
 # links them. PACKAGECONFIG:remove:pn-forgecpp = "sqlite" leaves one out.
-PACKAGECONFIG ??= "hub sqlite lz4 ${@bb.utils.contains('DISTRO_FEATURES', 'ptest', 'ptest', '', d)}"
+# "orm" (forgecpp::orm, forge/orm.hpp) is headers only: nothing of sqlite_orm
+# is in a forgecpp package, it goes into the applications that include it.
+# sqlite_orm is AGPL-3.0: a distribution with INCOMPATIBLE_LICENSE = "AGPL-3.0*"
+# removes it (PACKAGECONFIG:remove:pn-forgecpp = "orm").
+PACKAGECONFIG ??= "hub sqlite lz4 orm ${@bb.utils.contains('DISTRO_FEATURES', 'ptest', 'ptest', '', d)}"
 PACKAGECONFIG[hub] = "-DFORGECPP_BUILD_HUB=ON,-DFORGECPP_BUILD_HUB=OFF"
 PACKAGECONFIG[sqlite] = "-DFORGECPP_WITH_SQLITE=ON,-DFORGECPP_WITH_SQLITE=OFF,sqlite3"
 PACKAGECONFIG[lz4] = "-DFORGECPP_WITH_LZ4=ON,-DFORGECPP_WITH_LZ4=OFF,lz4"
+PACKAGECONFIG[orm] = "-DFORGECPP_WITH_SQLITE_ORM=ON,-DFORGECPP_WITH_SQLITE_ORM=OFF,sqlite-orm sqlite3"
 PACKAGECONFIG[ptest] = "-DFORGECPP_BUILD_TESTS=ON,-DFORGECPP_BUILD_TESTS=OFF,doctest"
 FORGECPP_HUB_PORT ?= "80"
 
@@ -67,7 +73,7 @@ do_install:append() {
 # The framework's own test programs on the target (ptest -r forgecpp).
 do_install_ptest() {
     install -d ${D}${PTEST_PATH}/tests
-    for t in forgecpp_tests forgecpp_pb_tests forgecpp_zmq_tests forgecpp_framework_tests forgecpp_storage_tests \
+    for t in forgecpp_tests forgecpp_pb_tests forgecpp_zmq_tests forgecpp_framework_tests forgecpp_storage_tests forgecpp_orm_tests \
              fuzz_c2 fuzz_pb fuzz_serial; do
         [ -f ${B}/tests/$t ] && install -m 0755 ${B}/tests/$t ${D}${PTEST_PATH}/tests/
     done
@@ -102,7 +108,7 @@ RCONFLICTS:python3-forge = "python3-forge-v1"
 # target with testing_main.cpp as its source: no static library), pkg-config,
 # the .proto files and the message generator.
 FILES:${PN}-dev += "${libdir}/cmake ${datadir}/forgecpp ${includedir}/forgecpp"
-RDEPENDS:${PN}-dev += "doctest-dev"
+RDEPENDS:${PN}-dev += "doctest-dev ${@bb.utils.contains('PACKAGECONFIG', 'orm', 'sqlite-orm-dev', '', d)}"
 RDEPENDS:${PN}-ptest += "python3-core"
 LICENSE:${PN}-dev = "MIT"
 LICENSE:${PN}-forgectl = "MIT"

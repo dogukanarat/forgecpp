@@ -25,6 +25,11 @@ find_dependency(cppzmq          CONFIG)
 find_package(protobuf CONFIG QUIET)
 set(forgecpp_zmq_FOUND ON)
 
+# Needed for forgecpp::orm (header-only: the application compiles sqlite_orm.h).
+if(@FORGECPP_HAS_ORM@)
+    find_dependency(SqliteOrm   CONFIG)
+endif()
+
 # Needed for forgecpp::testing.
 if(@FORGECPP_HAS_TESTING@)
     find_dependency(doctest     CONFIG)
@@ -32,8 +37,8 @@ endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/forgecppTargets.cmake")
 
-# Optional components this install has: find_package(forgecpp COMPONENTS sqlite lz4).
-foreach(_forge_component sqlite lz4)
+# Optional components this install has: find_package(forgecpp COMPONENTS sqlite lz4 orm).
+foreach(_forge_component sqlite lz4 orm)
     if(TARGET forgecpp::${_forge_component})
         set(forgecpp_${_forge_component}_FOUND ON)
     else()
