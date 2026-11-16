@@ -18,4 +18,6 @@ EXTRA_OECMAKE = " \
 "
 
 FILES:${PN}-dev += "${datadir}/cmake ${libdir}/cmake"
+# AUTHORS, NEWS and LICENSE (.txt), installed to share/zmq.
+FILES:${PN}-doc += "${datadir}/zmq"
 BBCLASSEXTEND = "native nativesdk"
